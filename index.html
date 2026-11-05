@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AsiaFlix Prime | Official Private K-Drama & Movies Portal</title>
   <meta name="description" content="Stream Asian Dramas & Movies In Clean Hindi Audio & 1080p HD. Zero Ads, 100% Free VIP Network." />
-  <meta name="google-site-verification" content="5W32DK-hsI3Sz0mxtFz-ViEhQTDXh5QPCBOyRCvDV00" />
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,13 +12,13 @@
   
   <style>
     :root {
-      --bg: #08080c;
-      --card-bg: #111218;
+      --bg: #060709;
+      --card-bg: #0f1016;
       --card-border: rgba(255, 255, 255, 0.08);
-      --card-border-hover: rgba(229, 9, 20, 0.45);
+      --card-border-hover: rgba(229, 9, 20, 0.6);
       --netflix-red: #e50914;
       --neon-red: #ff2b54;
-      --accent-glow: rgba(229, 9, 20, 0.4);
+      --accent-glow: rgba(229, 9, 20, 0.45);
       --accent-grad: linear-gradient(135deg, #e50914, #ff335c);
       --text: #ffffff;
       --muted: #9ca3af;
@@ -36,6 +35,7 @@
       overflow-x: hidden;
       min-height: 100vh;
       position: relative;
+      padding-bottom: 60px;
     }
 
     /* Sakura Floating Animation */
@@ -62,9 +62,9 @@
 
     /* Top Notice Running Marquee */
     .notice-marquee {
-      background: #0f1016;
-      border-bottom: 1px solid rgba(229, 9, 20, 0.25);
-      padding: 7px 16px;
+      background: #0b0c10;
+      border-bottom: 1px solid rgba(229, 9, 20, 0.3);
+      padding: 8px 16px;
       font-size: 0.78rem;
       white-space: nowrap;
       overflow: hidden;
@@ -83,14 +83,11 @@
       margin-right: 12px;
       flex-shrink: 0;
       letter-spacing: 0.5px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
     }
     .marquee-track {
       display: inline-block;
       white-space: nowrap;
-      animation: marqueeScroll 26s linear infinite;
+      animation: marqueeScroll 28s linear infinite;
       color: #e4e4e7;
     }
     .marquee-track:hover { animation-play-state: paused; }
@@ -115,18 +112,18 @@
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       text-decoration: none;
     }
     .brand-logo {
-      width: 42px;
-      height: 42px;
+      width: 44px;
+      height: 44px;
       border-radius: 12px;
       object-fit: cover;
-      box-shadow: 0 0 16px rgba(229, 9, 20, 0.45);
+      box-shadow: 0 0 18px rgba(229, 9, 20, 0.5);
     }
     .brand-title {
-      font-size: 1.25rem;
+      font-size: 1.3rem;
       font-weight: 900;
       color: #fff;
       display: flex;
@@ -202,7 +199,6 @@
       box-shadow: 0 6px 24px rgba(229, 9, 20, 0.6);
     }
 
-    /* Admin Nav Trigger */
     .admin-nav-trigger {
       background: none;
       border: none;
@@ -302,7 +298,7 @@
     }
     .btn-cta-glass:hover { background: rgba(255, 255, 255, 0.1); }
 
-    /* Top Trending Spotlight Strip */
+    /* Spotlight Strip */
     .spotlight-box {
       max-width: 1320px;
       margin: 0 auto 35px;
@@ -311,8 +307,8 @@
       z-index: 30;
     }
     .spotlight-inner {
-      background: linear-gradient(135deg, rgba(229, 9, 20, 0.08), #111219);
-      border: 1px solid rgba(229, 9, 20, 0.25);
+      background: linear-gradient(135deg, rgba(229, 9, 20, 0.08), #0f1016);
+      border: 1px solid rgba(229, 9, 20, 0.3);
       border-radius: 16px;
       padding: 16px 20px;
     }
@@ -338,7 +334,6 @@
       padding: 2px 7px;
       border-radius: 4px;
     }
-
     .sync-motion-tag {
       font-size: 0.72rem;
       color: var(--gold);
@@ -462,7 +457,6 @@
       border-color: var(--netflix-red);
     }
 
-    /* Year Dropdown Filter Box */
     .year-filter-box {
       display: flex;
       justify-content: center;
@@ -481,22 +475,14 @@
       outline: none;
       cursor: pointer;
     }
-    .year-select-dropdown:focus {
-      border-color: var(--netflix-red);
-    }
-    .year-select-dropdown option {
-      background: #14151b;
-      color: #fff;
-    }
+    .year-select-dropdown:focus { border-color: var(--netflix-red); }
+    .year-select-dropdown option { background: #101116; color: #fff; }
 
-    /* STRICT ISOLATED SEARCH CONTAINER FOR MOBILE & DESKTOP */
     #searchContainer {
       display: none;
       margin-bottom: 40px;
     }
-    #searchContainer.active {
-      display: block;
-    }
+    #searchContainer.active { display: block; }
     .search-grid-box {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -540,7 +526,7 @@
       padding-bottom: 12px;
       scrollbar-width: thin;
       scrollbar-color: rgba(229, 9, 20, 0.4) transparent;
-      min-height: 380px;
+      min-height: 390px;
     }
     .row-carousel::-webkit-scrollbar { height: 6px; }
     .row-carousel::-webkit-scrollbar-thumb { background: rgba(229, 9, 20, 0.4); border-radius: 8px; }
@@ -551,7 +537,7 @@
       overflow-x: visible;
     }
 
-    /* CARD STYLING - FULLY MOBILE RESPONSIVE */
+    /* CARD STYLING */
     .card {
       width: 175px;
       min-width: 175px;
@@ -563,8 +549,9 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      height: 375px;
+      height: 385px;
       transition: all 0.25s ease;
+      position: relative;
     }
     .row-carousel.expanded .card, .search-grid-box .card {
       width: 100%;
@@ -574,16 +561,16 @@
     .card:hover {
       transform: translateY(-5px);
       border-color: var(--card-border-hover);
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.8);
     }
 
     .poster-box {
       position: relative;
       width: 100%;
-      height: 260px;
-      min-height: 260px;
-      max-height: 260px;
-      background: #181920;
+      height: 255px;
+      min-height: 255px;
+      max-height: 255px;
+      background: #14151b;
       overflow: hidden;
     }
     .poster-box img {
@@ -594,7 +581,7 @@
       transition: transform 0.4s ease;
       display: block;
     }
-    .card:hover .poster-box img { transform: scale(1.05); }
+    .card:hover .poster-box img { transform: scale(1.06); }
 
     .badge-top-left {
       position: absolute;
@@ -614,15 +601,6 @@
       padding: 3px 6px;
       border-radius: 4px;
       letter-spacing: 0.3px;
-    }
-    .tag-subcat {
-      background: var(--gold);
-      color: #000;
-      font-size: 0.58rem;
-      font-weight: 900;
-      padding: 2px 5px;
-      border-radius: 3px;
-      letter-spacing: 0.4px;
     }
     .tag-cat {
       position: absolute;
@@ -693,14 +671,20 @@
       justify-content: space-between;
       font-size: 0.72rem;
       color: var(--muted);
-      margin: 4px 0 8px;
+      margin: 4px 0 6px;
+    }
+    
+    .card-btn-row {
+      display: flex;
+      gap: 6px;
+      margin-top: auto;
     }
     .card-action-btn {
-      margin-top: auto;
+      flex: 1;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--card-border);
       color: #fff;
-      font-size: 0.74rem;
+      font-size: 0.72rem;
       font-weight: 700;
       padding: 7px;
       border-radius: 8px;
@@ -709,7 +693,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 4px;
       transition: all 0.2s;
     }
     .card-action-btn:hover {
@@ -717,10 +701,21 @@
       border-color: var(--netflix-red);
       box-shadow: 0 4px 15px var(--accent-glow);
     }
+    .fav-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--muted);
+      padding: 7px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+    .fav-btn.active { color: #ff335c; background: rgba(255, 51, 92, 0.15); border-color: rgba(255, 51, 92, 0.4); }
 
     /* Policy & Safety Section */
     .policy-box {
-      background: #0d0e12;
+      background: #0b0c10;
       border: 1px solid var(--card-border);
       border-radius: 18px;
       padding: 35px 30px;
@@ -774,11 +769,11 @@
     .policy-item h4 { font-size: 0.95rem; font-weight: 800; color: #fff; margin-bottom: 6px; }
     .policy-item p { font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
 
-    /* Modal Overlay & Styling */
+    /* Modal Styling */
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.8);
+      background: rgba(0, 0, 0, 0.82);
       backdrop-filter: blur(6px);
       z-index: 100;
       display: none;
@@ -788,7 +783,7 @@
     }
     .modal-overlay.active { display: flex; }
     .modal-window {
-      background: #14151b;
+      background: #111218;
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 18px;
       width: 100%;
@@ -897,7 +892,7 @@
       font-family: inherit;
     }
     .input-field:focus { border-color: var(--netflix-red); }
-    select.input-field { background-color: #161720; }
+    select.input-field { background-color: #14151b; }
     .btn-submit-form {
       width: 100%;
       background: var(--accent-grad);
@@ -915,14 +910,48 @@
       margin-top: 8px;
     }
 
-    /* Footer Branding */
+    /* Mobile Bottom Navigation Bar */
+    .mobile-bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(10, 11, 15, 0.95);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid var(--card-border);
+      display: none;
+      justify-content: space-around;
+      padding: 10px 0;
+      z-index: 90;
+    }
+    @media (max-width: 768px) {
+      .mobile-bottom-bar { display: flex; }
+      body { padding-bottom: 75px; }
+    }
+    .mob-nav-item {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .mob-nav-item.active, .mob-nav-item:hover { color: var(--netflix-red); }
+    .mob-icon { font-size: 1.2rem; }
+
+    /* Footer */
     footer {
       border-top: 1px solid var(--card-border);
       padding: 35px 20px 25px;
       text-align: center;
       position: relative;
       z-index: 30;
-      background: #090a0f;
+      background: #08090d;
     }
     .footer-brand {
       display: inline-flex;
@@ -957,7 +986,7 @@
     .footer-links a:hover { color: var(--netflix-red); }
     .footer-sub { color: #71717a; font-size: 0.72rem; }
 
-    /* 3-in-1 Arcade Multi-Game Styling */
+    /* Arcade Game Hub Styles */
     .arcade-tabs {
       display: flex;
       gap: 6px;
@@ -1068,7 +1097,7 @@
 
   <div class="sakura-container" id="sakuraArea"></div>
 
-  <!-- 1. Top Notice Running Marquee -->
+  <!-- Top Notice Marquee -->
   <div class="notice-marquee">
     <span class="notice-badge">📢 LIVE NOTICE</span>
     <div class="marquee-track" id="liveMarqueeText">
@@ -1079,7 +1108,6 @@
   <!-- Header / Navigation -->
   <header class="navbar">
     <a href="#" class="brand">
-      <!-- HARDCODED PERMANENT LOGO -->
       <img src="https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png" id="brandLogoImg" alt="Logo" class="brand-logo" />
       <div>
         <div class="brand-title">AsiaFlix <span>PRIME</span></div>
@@ -1113,6 +1141,7 @@
     <div class="hero-cta-btns">
       <a href="https://t.me/+yJH68LvfrT9hZDVl" id="heroCtaLink" target="_blank" class="btn-cta btn-cta-red">✈️ GET FREE ACCESS</a>
       <button class="btn-cta btn-cta-glass" onclick="copyInviteLink()">📋 Copy Invite Link</button>
+      <button class="btn-cta btn-cta-glass" onclick="toggleWatchlistModal()" id="watchlistHeroBtn">❤️ My Watchlist (0)</button>
     </div>
   </section>
 
@@ -1146,7 +1175,6 @@
       <button class="f-pill" onclick="applyTagFilter('orig', this)">💬 Eng Sub / Orig</button>
     </div>
 
-    <!-- Year Dropdown Filter (2000 to Auto-incrementing Current Year) -->
     <div class="year-filter-box">
       <span style="font-size: 0.78rem; font-weight: 700; color: var(--muted);">📅 Filter by Year:</span>
       <select id="yearDropdown" class="year-select-dropdown" onchange="applyYearFilter(this.value)">
@@ -1154,12 +1182,21 @@
       </select>
     </div>
 
-    <!-- STRICT ISOLATED SEARCH CONTAINER -->
+    <!-- Search Container -->
     <div id="searchContainer">
       <div class="sec-head">
         <h3 class="sec-title">🐰🔍 Search Results</h3>
       </div>
       <div class="search-grid-box" id="searchGridBox"></div>
+    </div>
+
+    <!-- Watchlist Container (Toggleable) -->
+    <div id="watchlistContainer" style="display:none; margin-bottom: 40px;">
+      <div class="sec-head">
+        <h3 class="sec-title">❤️ My Saved Watchlist</h3>
+        <button class="view-btn" onclick="toggleWatchlistModal()">Close Watchlist ✕</button>
+      </div>
+      <div class="search-grid-box" id="watchlistGridBox"></div>
     </div>
 
     <!-- 1. COMING SOON -->
@@ -1180,7 +1217,7 @@
       <div class="row-carousel" id="trendingRow"></div>
     </section>
 
-    <!-- 3. ONGOING DROPS & LATEST -->
+    <!-- 3. ONGOING DROPS -->
     <section class="section-wrap" id="secOngoing">
       <div class="sec-head">
         <h3 class="sec-title">✨🆕 Ongoing Drops & Latest Releases</h3>
@@ -1216,7 +1253,7 @@
       <div class="row-carousel" id="asianMoviesRow"></div>
     </section>
 
-    <!-- 7. HOLLYWOOD & BOLLYWOOD -->
+    <!-- 7. HOLLYWOOD / BOLLYWOOD -->
     <section class="section-wrap" id="secHollyBolly">
       <div class="sec-head">
         <h3 class="sec-title">🍿🎬 Hollywood & Bollywood in Hindi Dubbed</h3>
@@ -1225,7 +1262,7 @@
       <div class="row-carousel" id="hollyBollyRow"></div>
     </section>
 
-    <!-- 8. COMPLETED FULL SERIES -->
+    <!-- 8. COMPLETED -->
     <section class="section-wrap" id="secCompleted">
       <div class="sec-head">
         <h3 class="sec-title">🟢✨ Completed Full Series (Binge Ready)</h3>
@@ -1234,7 +1271,7 @@
       <div class="row-carousel" id="completedRow"></div>
     </section>
 
-    <!-- Policy Section -->
+    <!-- Policy Box -->
     <section class="policy-box">
       <div class="policy-tagline">CHANNEL POLICY & SAFETY 🐾</div>
       <h2 class="policy-title">Why is AsiaFlix Prime a Private Network?</h2>
@@ -1260,7 +1297,31 @@
     </section>
   </main>
 
-  <!-- MODAL 1: REQUEST DRAMA (DIRECT BOT REDIRECT) -->
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="mobile-bottom-bar">
+    <button class="mob-nav-item active" onclick="window.scrollTo({top:0, behavior:'smooth'})">
+      <span class="mob-icon">🏠</span>
+      <span>Home</span>
+    </button>
+    <button class="mob-nav-item" onclick="document.getElementById('catalogSearch').focus()">
+      <span class="mob-icon">🔍</span>
+      <span>Search</span>
+    </button>
+    <button class="mob-nav-item" onclick="openGameModal()">
+      <span class="mob-icon">🎮</span>
+      <span>Arcade</span>
+    </button>
+    <button class="mob-nav-item" onclick="toggleWatchlistModal()">
+      <span class="mob-icon">❤️</span>
+      <span>Watchlist</span>
+    </button>
+    <a href="https://t.me/+yJH68LvfrT9hZDVl" target="_blank" class="mob-nav-item">
+      <span class="mob-icon">✈️</span>
+      <span>Telegram</span>
+    </a>
+  </nav>
+
+  <!-- MODALS -->
   <div class="modal-overlay" id="requestModal">
     <div class="modal-window">
       <button class="modal-close-x" onclick="closeModal('requestModal')">✕</button>
@@ -1298,12 +1359,11 @@
           <label>Custom Note (Optional)</label>
           <input type="text" class="input-field" id="rqNote" placeholder="e.g. 1080p FHD" />
         </div>
-        <button type="submit" class="btn-submit-form" id="rqSubmitBtn" style="background: linear-gradient(135deg, #229ed9, #1778b5);">✈️ Open Bot in Telegram & Send</button>
+        <button type="submit" class="btn-submit-form" style="background: linear-gradient(135deg, #229ed9, #1778b5);">✈️ Open Bot in Telegram & Send</button>
       </form>
     </div>
   </div>
 
-  <!-- MODAL 2: SUPPORT DESK (DIRECT BOT REDIRECT) -->
   <div class="modal-overlay" id="supportModal">
     <div class="modal-window">
       <button class="modal-close-x" onclick="closeModal('supportModal')">✕</button>
@@ -1314,25 +1374,23 @@
           <p>Report issues directly to Telegram Bot</p>
         </div>
       </div>
-
       <div class="modal-tab-bar">
-        <div class="m-tab active" onclick="switchSupportTab('tabSubmit', this)">Submit Issue / Complaint</div>
-        <div class="m-tab" onclick="switchSupportTab('tabReplies', this)">Admin Replies & Tickets (3)</div>
+        <div class="m-tab active" onclick="switchSupportTab('tabSubmit', this)">Submit Issue</div>
+        <div class="m-tab" onclick="switchSupportTab('tabReplies', this)">Admin Replies (3)</div>
       </div>
-
       <div class="tab-content active" id="tabSubmit">
         <form onsubmit="submitSupportToBot(event)">
           <div class="form-row">
-            <label>Your Telegram Username / Name *</label>
+            <label>Your Telegram Username *</label>
             <input type="text" class="input-field" id="spUser" placeholder="@ e.g. rahul_korea" required />
           </div>
           <div class="form-row">
             <label>Issue Category *</label>
             <select class="input-field" id="spCat">
-              <option value="Telegram Link Broken">🔗 Telegram Link Not Working / Broken</option>
+              <option value="Telegram Link Broken">🔗 Telegram Link Not Working</option>
               <option value="Audio Issue">🔊 Audio Mismatch / Low Quality</option>
-              <option value="Missing Episodes">📁 Missing Episodes in Series</option>
-              <option value="Feedback">💬 General Feedback / Thank You</option>
+              <option value="Missing Episodes">📁 Missing Episodes</option>
+              <option value="Feedback">💬 General Feedback</option>
             </select>
           </div>
           <div class="form-row">
@@ -1341,72 +1399,39 @@
           </div>
           <div class="form-row">
             <label>Explain Your Issue *</label>
-            <textarea class="input-field" id="spMsg" rows="3" placeholder="Describe clearly kya issue hai..." required></textarea>
+            <textarea class="input-field" id="spMsg" rows="3" placeholder="Describe issue..." required></textarea>
           </div>
-          <button type="submit" class="btn-submit-form" id="spSubmitBtn" style="background: linear-gradient(135deg, #229ed9, #1778b5);">✈️ Open Bot in Telegram & Send</button>
+          <button type="submit" class="btn-submit-form" style="background: linear-gradient(135deg, #229ed9, #1778b5);">✈️ Open Bot in Telegram & Send</button>
         </form>
       </div>
-
       <div class="tab-content" id="tabReplies">
         <div class="ticket-card" style="margin-bottom: 12px;">
           <div class="ticket-head">
             <span>🎟️ #TKT-9042 • Rain or Shine</span>
-            <span class="badge-status">Resolved / Updated</span>
+            <span class="badge-status">Resolved</span>
           </div>
-          <div class="ticket-issue">Issue: "Episode 11 Hindi audio track mute issue after 18 mins"</div>
+          <div class="ticket-issue">Issue: "Episode 11 Hindi audio track issue"</div>
           <div class="admin-reply-box">
-            <strong style="color:var(--netflix-red);">🛡️ AsiaFlix Official Support 🌸:</strong><br>
-            "Fixed! Fixed Hindi audio file channel par replace ho chuki hai. Aap redownload ya online stream kar sakte hain. Thank you for reporting! 🌸"
-          </div>
-        </div>
-
-        <div class="ticket-card" style="margin-bottom: 12px;">
-          <div class="ticket-head">
-            <span>🎟️ #TKT-8985 • Telegram VIP Link</span>
-            <span class="badge-status">Active Notice</span>
-          </div>
-          <div class="ticket-issue">Issue: "Invite link expired / User unable to join network"</div>
-          <div class="admin-reply-box">
-            <strong style="color:var(--netflix-red);">🛡️ AsiaFlix Official Support 🌸:</strong><br>
-            "Naya fresh VIP invite link website ke header aur hero buttons par update kar diya gaya hai. Ab sabhi direct join kar sakte hain."
-          </div>
-        </div>
-
-        <div class="ticket-card">
-          <div class="ticket-head">
-            <span>🎟️ #TKT-8950 • Series Request</span>
-             <span class="badge-status">Resolved / Uploaded</span>
-          </div>
-          <div class="ticket-issue">Request: "The Table (2026) & Between Steps (2026) 1080p FHD Hindi Dubbed"</div>
-          <div class="admin-reply-box">
-            <strong style="color:var(--netflix-red);">🛡️ AsiaFlix Official Support 🌸:</strong><br>
-            "Uploaded! Yeh titles ab channel par upload ho chuke hain aur website ke catalog mein live hain. Enjoy watching! 🍿✨"
+            <strong style="color:var(--netflix-red);">🛡️ Support 🌸:</strong> "Fixed! Hindi audio replaced on channel."
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: ADMIN AUTH PIN -->
   <div class="modal-overlay" id="adminAuthModal">
     <div class="modal-window" style="max-width: 400px; text-align: center;">
       <button class="modal-close-x" onclick="closeModal('adminAuthModal')">✕</button>
       <div style="font-size: 2rem; margin-bottom: 8px;">🔐</div>
       <h3 style="font-size: 1.15rem; font-weight: 800; margin-bottom: 4px;">Admin Control Center</h3>
-      <p style="font-size: 0.75rem; color: var(--muted); margin-bottom: 16px;">Update notices, spotlights, catalog & security</p>
-      
+      <p style="font-size: 0.75rem; color: var(--muted); margin-bottom: 16px;">Security PIN Required</p>
       <div class="form-row">
-        <label style="text-align: left; display: flex; justify-content: space-between;">
-          <span>Enter Security PIN:</span>
-          <span style="color: var(--muted); font-size: 0.68rem;">Default: 1234</span>
-        </label>
         <input type="password" id="adminPinInput" class="input-field pin-input" maxlength="5" placeholder="•••••" />
       </div>
       <button class="btn-submit-form" onclick="unlockAdminDashboard()">Unlock Dashboard</button>
     </div>
   </div>
 
-  <!-- MODAL: ADMIN DASHBOARD -->
   <div class="modal-overlay" id="adminDashModal">
     <div class="modal-window">
       <button class="modal-close-x" onclick="closeModal('adminDashModal')">✕</button>
@@ -1414,100 +1439,76 @@
         <div class="modal-avatar" style="background: rgba(16, 185, 129, 0.2); color: var(--green);">📊</div>
         <div>
           <h3>Admin Control Center</h3>
-          <p>Real-Time Google Sheets Master Database</p>
+          <p>Google Sheets Cloud Database</p>
         </div>
       </div>
-
-      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;">
         <span style="font-size: 0.78rem; font-weight: 700; color: var(--green);">🟢 Admin Access Unlocked</span>
-        <button onclick="closeModal('adminDashModal')" style="background: none; border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer;">Lock Panel</button>
       </div>
-
       <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--card-border); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
-        <h4 style="font-size: 0.88rem; font-weight: 800; margin-bottom: 6px;">📑 Google Sheets Cloud Database</h4>
-        <p style="font-size: 0.74rem; color: var(--muted); line-height: 1.4; margin-bottom: 12px;">
-          Website ka live catalog aur updates Google Sheet se sync hote hain.
-        </p>
-        <a href="https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/edit" target="_blank" class="card-action-btn" style="background: #10b981; border: none; font-weight: 800; padding: 10px;">
+        <h4 style="font-size: 0.88rem; font-weight: 800; margin-bottom: 6px;">📑 Google Sheets Master Database</h4>
+        <a href="https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/edit" target="_blank" class="card-action-btn" style="background: #10b981; border: none; font-weight: 800; padding: 10px; margin-top: 8px;">
           📂 Open Google Sheet
         </a>
       </div>
-
       <button class="card-action-btn" onclick="syncLiveSheetCatalog()" style="background: rgba(255, 255, 255, 0.08); width: 100%;">
         🔄 Force Re-sync Live Data
       </button>
     </div>
   </div>
 
-  <!-- MODAL: 3-IN-1 ARCADE HUB -->
+  <!-- Arcade Modal -->
   <div class="modal-overlay" id="gameModal">
     <div class="modal-window" style="max-width: 440px; text-align: center;">
       <button class="modal-close-x" onclick="closeModal('gameModal')">✕</button>
-      
       <div class="modal-title-row" style="justify-content: center; margin-bottom: 12px;">
         <div class="modal-avatar" style="background: rgba(245, 158, 11, 0.2); color: var(--gold);">🎮</div>
         <div style="text-align: left;">
           <h3 style="font-size: 1.1rem;">AsiaFlix Arcade Hub 🌸</h3>
-          <p style="font-size: 0.72rem;">Choose game & play while streaming</p>
+          <p style="font-size: 0.72rem;">Mini games while streaming</p>
         </div>
       </div>
-
       <div class="arcade-tabs">
         <button class="arcade-tab-btn active" onclick="switchArcadeGame('tabMemory', this)">🃏 Memory</button>
         <button class="arcade-tab-btn" onclick="switchArcadeGame('tabQuiz', this)">🎯 Trivia Quiz</button>
         <button class="arcade-tab-btn" onclick="switchArcadeGame('tabWheel', this)">🎡 Picker Wheel</button>
       </div>
-
-      <!-- MEMORY -->
       <div class="arcade-pane active" id="tabMemory">
         <div class="game-score-bar">
           <span>Moves: <strong id="gameMoves" style="color:#fff;">0</strong></span>
           <span>Matched: <strong id="gameMatches" style="color:var(--green);">0/6</strong></span>
         </div>
         <div class="game-grid" id="gameBoard"></div>
-        <button class="card-action-btn" onclick="startMemoryGame()" style="background: var(--netflix-red); width: 100%; margin-top: 10px;">
-          🔄 Restart Memory
-        </button>
+        <button class="card-action-btn" onclick="startMemoryGame()" style="background: var(--netflix-red); width: 100%; margin-top: 10px;">🔄 Restart</button>
       </div>
-
-      <!-- QUIZ -->
       <div class="arcade-pane" id="tabQuiz">
         <div class="game-score-bar">
           <span>Question: <strong id="quizProg" style="color:#fff;">1/5</strong></span>
           <span>Score: <strong id="quizScore" style="color:var(--gold);">0</strong></span>
         </div>
-        <div class="quiz-question-box" id="quizQuestionText">Loading Fresh Questions...</div>
+        <div class="quiz-question-box" id="quizQuestionText">Loading...</div>
         <div class="quiz-options-grid" id="quizOptionsBox"></div>
-        <button class="card-action-btn" onclick="startDramaQuiz()" style="background: rgba(255,255,255,0.08); width: 100%; margin-top: 10px;">
-          🔄 New Shuffled Quiz Questions
-        </button>
+        <button class="card-action-btn" onclick="startDramaQuiz()" style="background: rgba(255,255,255,0.08); width: 100%; margin-top: 10px;">🔄 New Quiz</button>
       </div>
-
-      <!-- WHEEL -->
       <div class="arcade-pane" id="tabWheel">
-        <p style="font-size: 0.76rem; color: var(--muted); margin-bottom: 8px;">Confused what to watch? Spin to get a recommendation!</p>
         <div class="wheel-result-card">
           <div id="wheelDramaTitle" style="font-size: 1.05rem; font-weight: 800; color: #fff;">Tap Spin! 🎲</div>
           <div id="wheelDramaMeta" style="font-size: 0.72rem; color: var(--muted); margin-top: 4px;">Ready to pick</div>
         </div>
-        <button class="card-action-btn" id="wheelSpinBtn" onclick="spinDramaWheel()" style="background: var(--netflix-red); width: 100%;">
-          🎡 Spin For Next Drama
-        </button>
+        <button class="card-action-btn" id="wheelSpinBtn" onclick="spinDramaWheel()" style="background: var(--netflix-red); width: 100%;">🎡 Spin For Recommendation</button>
       </div>
     </div>
   </div>
 
-  <!-- Footer -->
   <footer>
     <div class="footer-brand">
       <span style="color:var(--netflix-red);">▶</span> AsiaFlix Prime
     </div>
-    <p class="footer-desc">Non-commercial private community aggregator. All dramas and movies are archived on encrypted cloud networks for fair-use streaming.</p>
+    <p class="footer-desc">Non-commercial private community aggregator. All dramas and movies are archived on encrypted cloud networks.</p>
     <div class="footer-links">
       <a href="javascript:void(0)" onclick="openModal('supportModal')">Support & Help Desk</a>
       <a href="javascript:void(0)" onclick="openModal('requestModal')">Request Series</a>
-      <a href="https://t.me/+yJH68LvfrT9hZDVl" id="footerVipLink" target="_blank">Telegram VIP Channel</a>
-      <a href="#secComingSoon">Scheduled Drops</a>
+      <a href="https://t.me/+yJH68LvfrT9hZDVl" target="_blank">Telegram VIP Channel</a>
     </div>
     <div class="footer-sub">
       © <span id="footerYear">2026</span> AsiaFlix Prime Network • Crafted with Sakura Drift 🌸
@@ -1515,7 +1516,6 @@
   </footer>
 
   <script>
-    // Auto-populate Year Dropdown from 2000 to Current Auto-incrementing Year
     function initYearDropdown() {
       const select = document.getElementById('yearDropdown');
       const currentYear = new Date().getFullYear();
@@ -1527,14 +1527,11 @@
       }
     }
     initYearDropdown();
-
-    // Auto update footer year
     document.getElementById('footerYear').innerText = new Date().getFullYear();
 
-    // 1. Sakura Drift Generator
     function initSakura() {
       const area = document.getElementById('sakuraArea');
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 14; i++) {
         const p = document.createElement('div');
         p.className = 'petal';
         p.style.left = Math.random() * 100 + 'vw';
@@ -1566,7 +1563,6 @@
     let activeTagFilterVal = 'all';
     let activeYearFilterVal = 'all';
 
-    // 4. SMART TAG & MOVIE FILTER ENGINE
     function applyTagFilter(tag, btn) {
       document.querySelectorAll('.filter-pills .f-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -1592,21 +1588,11 @@
           const t = (card.getAttribute('data-tags') || '').toLowerCase();
           const cardTitle = (card.querySelector('.card-name')?.innerText || '').toLowerCase();
           
-          let isTagMatch = false;
-          if (activeTagFilterVal === 'all') {
-            isTagMatch = true;
-          } else if (activeTagFilterVal === 'asian-movies') {
-            isTagMatch = t.includes('movie') || t.includes('asian') || t.includes('film');
-          } else if (activeTagFilterVal === 'holly-bolly') {
-            isTagMatch = t.includes('bollywood') || t.includes('hollywood') || t.includes('bolly') || t.includes('holly');
-          } else {
-            isTagMatch = t.includes(activeTagFilterVal.toLowerCase());
-          }
+          let isTagMatch = (activeTagFilterVal === 'all') || 
+            (activeTagFilterVal === 'asian-movies' ? (t.includes('movie') || t.includes('asian')) :
+             activeTagFilterVal === 'holly-bolly' ? (t.includes('bollywood') || t.includes('hollywood')) : t.includes(activeTagFilterVal));
 
-          let isYearMatch = true;
-          if (activeYearFilterVal !== 'all') {
-            isYearMatch = cardTitle.includes(activeYearFilterVal) || t.includes(activeYearFilterVal);
-          }
+          let isYearMatch = (activeYearFilterVal === 'all') || cardTitle.includes(activeYearFilterVal) || t.includes(activeYearFilterVal);
 
           if (isTagMatch && isYearMatch) {
             card.style.display = 'flex';
@@ -1619,7 +1605,6 @@
       });
     }
 
-    // 5. STRICT ISOLATED SEARCH
     function filterLiveSearch() {
       const q = document.getElementById('catalogSearch').value.toLowerCase().trim();
       document.querySelectorAll('.filter-pills .f-pill').forEach(b => b.classList.remove('active'));
@@ -1663,22 +1648,72 @@
         }
       });
 
-      if (matchCount > 0) {
-        searchContainer.classList.add('active');
-        searchGridBox.innerHTML = matchedHTML;
-      } else {
-        searchContainer.classList.add('active');
-        searchGridBox.innerHTML = '<p style="color:var(--muted); padding:10px;">No series or movie found matching "' + q + '" 🌸</p>';
-      }
+      searchContainer.classList.add('active');
+      searchGridBox.innerHTML = matchCount > 0 ? matchedHTML : '<p style="color:var(--muted); padding:10px;">No series or movie found matching "' + q + '" 🌸</p>';
     }
 
-    // 6. Copy Invite Link
     function copyInviteLink() {
       navigator.clipboard.writeText("https://asiaflixprimeofficial.netlify.app/");
       alert("Invite link copied to clipboard! 🌸");
     }
 
-    // 7. DIRECT TELEGRAM BOT REDIRECT ENGINE (REQUEST & SUPPORT)
+    /* Watchlist System */
+    let userWatchlist = JSON.parse(localStorage.getItem('asiaflix_watchlist') || '[]');
+
+    function toggleWatchlist(title, poster, audio, telegram) {
+      const idx = userWatchlist.findIndex(item => item.title === title);
+      if (idx > -1) {
+        userWatchlist.splice(idx, 1);
+        alert(`Removed "${title}" from Watchlist!`);
+      } else {
+        userWatchlist.push({ title, poster, audio, telegram });
+        alert(`Added "${title}" to your Watchlist! ❤️`);
+      }
+      localStorage.setItem('asiaflix_watchlist', JSON.stringify(userWatchlist));
+      updateWatchlistCount();
+    }
+
+    function updateWatchlistCount() {
+      const btn = document.getElementById('watchlistHeroBtn');
+      if (btn) btn.innerText = `❤️ My Watchlist (${userWatchlist.length})`;
+    }
+
+    function toggleWatchlistModal() {
+      const box = document.getElementById('watchlistContainer');
+      const grid = document.getElementById('watchlistGridBox');
+      if (box.style.display === 'block') {
+        box.style.display = 'none';
+      } else {
+        box.style.display = 'block';
+        if (userWatchlist.length === 0) {
+          grid.innerHTML = '<p style="color:var(--muted); padding:10px;">Your watchlist is empty! Click the ❤️ icon on any drama to save it.</p>';
+        } else {
+          let html = '';
+          userWatchlist.forEach((item, idx) => {
+            html += `
+              <div class="card">
+                <div class="poster-box">
+                  <img src="${item.poster}" alt="${item.title}" />
+                  <span class="tag-cat">SAVED</span>
+                </div>
+                <div class="card-info">
+                  <div class="card-name">${item.title}</div>
+                  <div class="card-meta-line"><span>${item.audio}</span></div>
+                  <div class="card-btn-row">
+                    <a href="${item.telegram || 'https://t.me/+yJH68LvfrT9hZDVl'}" target="_blank" class="card-action-btn">✈️ Watch</a>
+                    <button class="fav-btn active" onclick="toggleWatchlist('${item.title.replace(/'/g, "\\'")}','','','')">❤️</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          });
+          grid.innerHTML = html;
+        }
+        box.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+    updateWatchlistCount();
+
     function submitDramaToBot(e) {
       e.preventDefault();
       const name = document.getElementById('rqName').value.trim();
@@ -1686,14 +1721,10 @@
       const year = document.getElementById('rqYear').value.trim() || 'N/A';
       const audio = document.getElementById('rqAudio').value;
       const note = document.getElementById('rqNote').value.trim() || 'None';
-
-      const text = `🎬 *NEW DRAMA REQUEST* 🌸\n\n👤 *User:* ${username}\n📌 *Title:* ${name}\n📅 *Year:* ${year}\n🔊 *Audio:* ${audio}\n📝 *Note:* ${note}\n\n🌐 _Sent via AsiaFlix Prime Portal_`;
-      
-      const botUrl = `https://t.me/asiaflix_request_bot?text=${encodeURIComponent(text)}`;
-      window.open(botUrl, '_blank');
-      
+      const text = `🎬 *NEW DRAMA REQUEST* 🌸\n\n👤 *User:* ${username}\n📌 *Title:* ${name}\n📅 *Year:* ${year}\n🔊 *Audio:* ${audio}\n📝 *Note:* ${note}`;
+      window.open(`https://t.me/asiaflix_request_bot?text=${encodeURIComponent(text)}`, '_blank');
       closeModal('requestModal');
-      alert("✅ Bot open ho gaya hai! Wahan 'Send' dabate hi request seedha deliver ho jayegi aur aap direct reply pa sakenge! 🌸");
+      alert("✅ Bot open ho gaya hai! Send dabate hi request deliver ho jayegi! 🌸");
     }
 
     function submitSupportToBot(e) {
@@ -1702,20 +1733,14 @@
       const cat = document.getElementById('spCat').value;
       const title = document.getElementById('spTitle').value.trim() || 'N/A';
       const msg = document.getElementById('spMsg').value.trim();
-
-      const text = `🎧 *NEW SUPPORT TICKET* 🎧\n\n👤 *User:* ${user}\n⚠️ *Issue:* ${cat}\n🎬 *Drama:* ${title}\n💬 *Message:* ${msg}\n\n🌐 _Sent via AsiaFlix Prime Portal_`;
-
-      const botUrl = `https://t.me/asiaflix_request_bot?text=${encodeURIComponent(text)}`;
-      window.open(botUrl, '_blank');
-
+      const text = `🎧 *SUPPORT TICKET*\n\n👤 *User:* ${user}\n⚠️ *Issue:* ${cat}\n🎬 *Drama:* ${title}\n💬 *Message:* ${msg}`;
+      window.open(`https://t.me/asiaflix_request_bot?text=${encodeURIComponent(text)}`, '_blank');
       closeModal('supportModal');
-      alert("✅ Bot open ho gaya hai! Wahan 'Send' dabate hi ticket seedha deliver ho jayegi aur admin direct reply kar sakega! 🌸");
+      alert("✅ Support ticket sent to bot! 🌸");
     }
 
-    // 8. Admin Security PIN (79813)
     function unlockAdminDashboard() {
-      const pin = document.getElementById('adminPinInput').value.trim();
-      if (pin === "79813") {
+      if (document.getElementById('adminPinInput').value.trim() === "79813") {
         closeModal('adminAuthModal');
         document.getElementById('adminPinInput').value = "";
         openModal('adminDashModal');
@@ -1724,9 +1749,7 @@
       }
     }
 
-    // 9. GOOGLE SHEETS LIVE SYNC ENGINE
     const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4prDqYUbk87MvTOWLhH9X85aCr9bbVqdI-F6y4raT3sFqvuuPg0o9IkwQ9kzBK4VGFOiDybluNfdm/pub?output=csv";
-    
     const defaultPosters = [
       "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=500",
       "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500",
@@ -1734,46 +1757,19 @@
       "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500"
     ];
 
-    const localSheetBackup = [
-      { title: "We Are All Trying Here (2026)", category: "K-Drama", audio: "Original", poster: "https://image.tmdb.org/t/p/w500/hMrBaA68y4m", telegram: "https://t.me/+yJH68LvfrT9hZDVl", status: "Coming Soon", schedule: "12 Episodes", badge: "Eng Sub", notice: "🌸 Weekend Mega Lineup is Active! New Hindi Dubbed Drops Sat & Sun 7:00 PM IST 🌸" },
-      { title: "Rain or Shine", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=500", telegram: "https://t.me/c/3730319875/457", status: "Completed (Full Series)", schedule: "16/16 Episodes", badge: "Hindi Dubbed" },
-      { title: "No Gain No Love", category: "ROM-COM", audio: "Hindi Dubbed", poster: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500", telegram: "https://t.me/c/3730319875/537", status: "Completed (Full Series)", schedule: "12/12 Episodes", badge: "Hindi Dubbed" },
-      { title: "King the Land", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://dnm.nflximg.net/api/v6/s0XAg4q_jvYbSSb", telegram: "https://t.me/c/3730319875/643", status: "Now Streaming (Ongoing)", schedule: "Saturday", badge: "Hindi Dubbed" },
-      { title: "Crush", category: "C-Drama", audio: "Hindi Dubbed", poster: "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=500", telegram: "", status: "Coming Soon", schedule: "24 Episodes", badge: "Hindi Dubbed" },
-      { title: "The Best Thing", category: "C-Drama", audio: "Hindi Dubbed", poster: "https://i.ytimg.com/vi/nZtI9eKPV7Y/mqdefault.jpg", telegram: "https://t.me/c/3730319875/453", status: "Completed (Full Series)", schedule: "24/24 Episodes", badge: "Hindi Dubbed" },
-      { title: "My Dearest Nemesis", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500", telegram: "https://t.me/c/3730319875/496", status: "Completed (Full Series)", schedule: "16/16 Episodes", badge: "Hindi Dubbed" },
-      { title: "Colony (2026)", category: "SCI-FI/SERIES", audio: "Hindi Dubbed", poster: "https://img1.hotstarext.com/image/upload/f_auto", telegram: "https://t.me/c/3730319875/1198", status: "Completed (Full Series)", schedule: "10 Episodes", badge: "Hindi Dubbed" },
-      { title: "Doctor X: Mafia in White (2026)", category: "K-Drama", audio: "Original", poster: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=500", telegram: "https://t.me/c/3730319875/1159", status: "Now Streaming (Ongoing)", schedule: "Sat/Sun", badge: "Eng Sub" },
-      { title: "Merry Berry Love (2026)", category: "J-Drama", audio: "Original", poster: "https://images.martincid.com/2026/10/vPDVee1", telegram: "https://t.me/c/3730319875/1187", status: "Now Streaming (Ongoing)", schedule: "Sunday", badge: "Eng Sub" },
-      { title: "100 Days of Deception (2026)", category: "K-Drama", audio: "Original", poster: "https://6.soompi.io/wp-content/uploads/image/2", telegram: "https://t.me/c/3730319875/1171", status: "Now Streaming (Ongoing)", schedule: "16 Episodes", badge: "Eng Sub" },
-      { title: "A Love Other Than Yours (2026)", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://upload.wikimedia.org/wikipedia/en/c/ca/", telegram: "https://t.me/c/3730319875/1096", status: "Now Streaming (Ongoing)", schedule: "14 Episodes", badge: "Hindi Dubbed" },
-      { title: "Make Me Tingle (2026)", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://blog.reelgood.com/wp-content/uploads/2", telegram: "https://t.me/c/3730319875/1147", status: "Now Streaming (Ongoing)", schedule: "10 Episodes", badge: "Hindi Dubbed" },
-      { title: "Take Charge of My Heart (2026)", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500", telegram: "https://t.me/c/3730319875/1137", status: "Completed (Full Series)", schedule: "10 Episodes", badge: "Hindi Dubbed" },
-      { title: "Love Me Love My Voice", category: "C-Drama", audio: "Hindi Dubbed", poster: "https://1.vikiplatform.com/c/40254c/5765fd3ea8", telegram: "", status: "Coming Soon", schedule: "33 Episodes", badge: "Hindi Dubbed" },
-      { title: "Love in Disguise (2026)", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://upload.wikimedia.org/wikipedia/en/d/d4/", telegram: "", status: "Coming Soon", schedule: "12 Episodes", badge: "Hindi Dubbed" },
-      { title: "Hanuman Ansh (2026)", category: "Bollywood", audio: "Hindi Dubbed", poster: "https://b.zmtcdn.com/data/edition_assets/17845", telegram: "https://t.me/asiaflixprime/1018", status: "Completed (Full Series)", schedule: "2:19::21", badge: "Hindi Dubbed" },
-      { title: "Final table (2026)", category: "K-Drama", audio: "Hindi Dubbed", poster: "https://www.kdramakopi.com/wp-content/upload", telegram: "", status: "Coming Soon", schedule: "12 Episodes", badge: "Hindi Dubbed" }
-    ];
-
-    let liveDramaDataList = [...localSheetBackup];
+    let liveDramaDataList = [];
 
     function parseCSV(text) {
       const lines = text.trim().split(/\r\n|\n/);
       const rows = [];
       for (let line of lines) {
         const row = [];
-        let inQuotes = false;
-        let token = '';
+        let inQuotes = false, token = '';
         for (let i = 0; i < line.length; i++) {
           const char = line[i];
-          if (char === '"') {
-            inQuotes = !inQuotes;
-          } else if (char === ',' && !inQuotes) {
-            row.push(token.trim());
-            token = '';
-          } else {
-            token += char;
-          }
+          if (char === '"') inQuotes = !inQuotes;
+          else if (char === ',' && !inQuotes) { row.push(token.trim()); token = ''; }
+          else token += char;
         }
         row.push(token.trim());
         rows.push(row);
@@ -1788,28 +1784,16 @@
           const csvText = await response.text();
           const rows = parseCSV(csvText);
           if (rows.length >= 2) {
-            const dataRows = rows.slice(1);
-            const fetched = dataRows.map(r => ({
-              title: r[0] || '',
-              category: r[1] || 'K-Drama',
-              audio: r[2] || 'Hindi Dubbed',
-              poster: r[3] || '',
-              telegram: r[4] || '',
-              status: r[5] || 'Now Streaming',
-              schedule: r[6] || '',
-              badge: r[7] || '',
-              notice: r[8] || '',
-              trending: r[9] || '',
-              logo: r[10] || ''
+            const fetched = rows.slice(1).map(r => ({
+              title: r[0] || '', category: r[1] || 'K-Drama', audio: r[2] || 'Hindi Dubbed',
+              poster: r[3] || '', telegram: r[4] || '', status: r[5] || 'Now Streaming',
+              schedule: r[6] || '', badge: r[7] || '', notice: r[8] || '', trending: r[9] || ''
             })).filter(item => item.title.trim().length > 0);
-
-            if (fetched.length > 0) {
-              liveDramaDataList = fetched.reverse();
-            }
+            if (fetched.length > 0) liveDramaDataList = fetched.reverse();
           }
         }
       } catch (err) {
-        console.warn("Using offline fallback data:", err);
+        console.warn("Using offline fallback");
       }
       renderLiveCatalog(liveDramaDataList);
     }
@@ -1817,38 +1801,20 @@
     function createDramaCardHTML(item, index) {
       const catUpper = (item.category || '').toUpperCase();
       const statusLower = (item.status || '').toLowerCase();
-      
-      let dotColor = "dot-blue";
-      let statusLabel = item.status || "Streaming";
+      let dotColor = "dot-blue", statusLabel = item.status || "Streaming";
+      if (statusLower.includes("completed")) dotColor = "dot-green";
+      else if (statusLower.includes("coming")) dotColor = "dot-yellow";
 
-      if (statusLower.includes("completed")) {
-        dotColor = "dot-green";
-      } else if (statusLower.includes("coming")) {
-        dotColor = "dot-yellow";
-      }
-
-      let infoText = "";
-      if (item.schedule && item.schedule.trim() !== "") {
-        infoText = item.schedule.trim();
-      } else if (statusLower.includes("completed")) {
-        infoText = "Full Series";
-      } else if (catUpper.includes("MOVIE") || catUpper.includes("BOLLYWOOD") || catUpper.includes("HOLLYWOOD")) {
-        infoText = "Full Movie";
-      } else {
-        infoText = "2026 Drops";
-      }
-
+      const infoText = item.schedule || (statusLower.includes("completed") ? "Full Series" : "2026 Drops");
       const tags = `${item.category || ''} ${item.audio || ''} ${item.badge || ''}`.toLowerCase();
-      const fallback = defaultPosters[index % defaultPosters.length];
-      const posterImg = (item.poster && item.poster.startsWith('http')) ? item.poster : fallback;
+      const posterImg = (item.poster && item.poster.startsWith('http')) ? item.poster : defaultPosters[index % defaultPosters.length];
+      const isFav = userWatchlist.some(w => w.title === item.title);
 
       return `
         <div class="card" data-tags="${tags}">
           <div class="poster-box">
-            <img src="${posterImg}" alt="${item.title}" onerror="this.src='${fallback}'" />
-            <div class="badge-top-left">
-              <span class="tag-audio">${item.badge || item.audio || 'Hindi Dubbed'}</span>
-            </div>
+            <img src="${posterImg}" alt="${item.title}" onerror="this.src='${defaultPosters[0]}'" />
+            <div class="badge-top-left"><span class="tag-audio">${item.badge || item.audio || 'Hindi Dubbed'}</span></div>
             <span class="tag-cat">${catUpper}</span>
             <div class="tag-status-row">
               <div class="tag-status"><span class="dot-status ${dotColor}"></span> ${statusLabel}</div>
@@ -1861,7 +1827,10 @@
               <span style="color: var(--blue); font-weight: 700;">${infoText}</span>
               <span>${item.audio || 'Hindi Dubbed'}</span>
             </div>
-            <a href="${item.telegram || 'https://t.me/+yJH68LvfrT9hZDVl'}" target="_blank" class="card-action-btn">✈️ Open In Telegram</a>
+            <div class="card-btn-row">
+              <a href="${item.telegram || 'https://t.me/+yJH68LvfrT9hZDVl'}" target="_blank" class="card-action-btn">✈️ Telegram</a>
+              <button class="fav-btn ${isFav ? 'active' : ''}" onclick="toggleWatchlist('${item.title.replace(/'/g, "\\'")}', '${posterImg}', '${item.audio || 'Hindi'}', '${item.telegram}')">❤️</button>
+            </div>
           </div>
         </div>
       `;
@@ -1869,40 +1838,21 @@
 
     function renderLiveCatalog(items) {
       if (!items || items.length === 0) return;
-
       document.getElementById('totalTitleCount').innerText = items.length;
       document.getElementById('heroCount').innerText = items.length;
 
-      const firstRow = items[0];
-      if (firstRow.notice && firstRow.notice.trim() !== "") {
-        document.getElementById('liveMarqueeText').innerHTML = firstRow.notice;
-      }
-
-      // Spotlight
       const spotGrid = document.getElementById('spotlightGrid');
-      let trendingTitles = [];
-      if (firstRow.trending) {
-        trendingTitles = firstRow.trending.split(',').map(s => s.trim().toLowerCase());
-      }
-      const trendingMatches = items.filter(it => trendingTitles.some(tr => it.title.toLowerCase().includes(tr))).slice(0, 4);
-      const spotsToShow = trendingMatches.length ? trendingMatches : items.slice(0, 4);
-
-      if (spotsToShow.length) {
-        spotGrid.innerHTML = '';
-        spotsToShow.forEach((sp, i) => {
-          const fallback = defaultPosters[i % defaultPosters.length];
-          const posterImg = (sp.poster && sp.poster.startsWith('http')) ? sp.poster : fallback;
-          spotGrid.innerHTML += `
-            <a href="${sp.telegram || 'https://t.me/+yJH68LvfrT9hZDVl'}" target="_blank" class="spot-card">
-              <img src="${posterImg}" alt="${sp.title}" onerror="this.src='${fallback}'" />
-              <div>
-                <h4>${sp.title}</h4>
-                <p>${sp.audio || 'Hindi Dubbed'}</p>
-              </div>
-            </a>
-          `;
-        });
-      }
+      const trendingMatches = items.slice(0, 4);
+      spotGrid.innerHTML = '';
+      trendingMatches.forEach((sp, i) => {
+        const posterImg = (sp.poster && sp.poster.startsWith('http')) ? sp.poster : defaultPosters[i];
+        spotGrid.innerHTML += `
+          <a href="${sp.telegram || 'https://t.me/+yJH68LvfrT9hZDVl'}" target="_blank" class="spot-card">
+            <img src="${posterImg}" alt="${sp.title}" />
+            <div><h4>${sp.title}</h4><p>${sp.audio || 'Hindi Dubbed'}</p></div>
+          </a>
+        `;
+      });
 
       const comingSoonRow = document.getElementById('comingSoonRow');
       const trendingRow = document.getElementById('trendingRow');
@@ -1921,67 +1871,52 @@
         const catLower = (item.category || '').toLowerCase();
 
         if (statusLower.includes('coming')) csHTML += cardHTML;
-        if (trendingTitles.some(tr => item.title.toLowerCase().includes(tr)) || statusLower.includes('ongoing') || statusLower.includes('streaming')) {
-          trHTML += cardHTML;
-        }
+        trHTML += cardHTML;
         if (statusLower.includes('ongoing') || statusLower.includes('streaming')) onHTML += cardHTML;
         if (catLower.includes('k-drama')) kdHTML += cardHTML;
         if (catLower.includes('c-drama')) cdHTML += cardHTML;
-        if (catLower.includes('movie') || catLower.includes('asian') || catLower.includes('action')) amHTML += cardHTML;
-        if (catLower.includes('bollywood') || catLower.includes('hollywood') || catLower.includes('bolly') || catLower.includes('holly')) hbHTML += cardHTML;
+        if (catLower.includes('movie') || catLower.includes('asian')) amHTML += cardHTML;
+        if (catLower.includes('bollywood') || catLower.includes('hollywood')) hbHTML += cardHTML;
         if (statusLower.includes('completed')) cpHTML += cardHTML;
       });
 
-      comingSoonRow.innerHTML = csHTML || '<p style="color:var(--muted); padding:10px;">No coming soon releases.</p>';
-      trendingRow.innerHTML = trHTML || '<p style="color:var(--muted); padding:10px;">No trending releases.</p>';
-      ongoingRow.innerHTML = onHTML || '<p style="color:var(--muted); padding:10px;">No ongoing releases.</p>';
-      kdramaRow.innerHTML = kdHTML || '<p style="color:var(--muted); padding:10px;">No K-Dramas available.</p>';
-      cdramaRow.innerHTML = cdHTML || '<p style="color:var(--muted); padding:10px;">No C-Dramas available.</p>';
-      asianMoviesRow.innerHTML = amHTML || '<p style="color:var(--muted); padding:10px;">No Asian Movies available.</p>';
-      hollyBollyRow.innerHTML = hbHTML || '<p style="color:var(--muted); padding:10px;">No Hollywood / Bollywood movies.</p>';
-      completedRow.innerHTML = cpHTML || '<p style="color:var(--muted); padding:10px;">No completed releases.</p>';
+      comingSoonRow.innerHTML = csHTML || '<p style="color:var(--muted)">No coming soon.</p>';
+      trendingRow.innerHTML = trHTML;
+      ongoingRow.innerHTML = onHTML || '<p style="color:var(--muted)">No ongoing.</p>';
+      kdramaRow.innerHTML = kdHTML;
+      cdramaRow.innerHTML = cdHTML;
+      asianMoviesRow.innerHTML = amHTML;
+      hollyBollyRow.innerHTML = hbHTML;
+      completedRow.innerHTML = cpHTML;
     }
 
     syncLiveSheetCatalog();
 
-    // 10. ARCADE HUB LOGIC
+    /* Arcade Games */
     function switchArcadeGame(paneId, btn) {
       document.querySelectorAll('.arcade-tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.arcade-pane').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(paneId).classList.add('active');
-
       if (paneId === 'tabMemory') startMemoryGame();
       if (paneId === 'tabQuiz') startDramaQuiz();
     }
-
-    function openGameModal() {
-      openModal('gameModal');
-      startMemoryGame();
-    }
+    function openGameModal() { openModal('gameModal'); startMemoryGame(); }
 
     const gameIcons = ['🐰', '🌸', '🍿', '🎬', '👑', '⚡'];
-    let gameCards = [...gameIcons, ...gameIcons];
-    let flippedCards = [];
-    let matchedCount = 0;
-    let movesCount = 0;
+    let gameCards = [...gameIcons, ...gameIcons], flippedCards = [], matchedCount = 0, movesCount = 0;
 
     function startMemoryGame() {
       const board = document.getElementById('gameBoard');
       board.innerHTML = '';
-      flippedCards = [];
-      matchedCount = 0;
-      movesCount = 0;
-      document.getElementById('gameMoves').innerText = movesCount;
-      document.getElementById('gameMatches').innerText = `${matchedCount}/6`;
-
+      flippedCards = []; matchedCount = 0; movesCount = 0;
+      document.getElementById('gameMoves').innerText = '0';
+      document.getElementById('gameMatches').innerText = '0/6';
       gameCards.sort(() => 0.5 - Math.random());
-
       gameCards.forEach((icon, index) => {
         const tile = document.createElement('div');
         tile.className = 'game-card-tile';
         tile.dataset.icon = icon;
-        tile.dataset.index = index;
         tile.innerText = '❓';
         tile.onclick = () => flipTile(tile);
         board.appendChild(tile);
@@ -1993,150 +1928,39 @@
         tile.classList.add('flipped');
         tile.innerText = tile.dataset.icon;
         flippedCards.push(tile);
-
         if (flippedCards.length === 2) {
           movesCount++;
           document.getElementById('gameMoves').innerText = movesCount;
-          checkTileMatch();
+          const [c1, c2] = flippedCards;
+          if (c1.dataset.icon === c2.dataset.icon) {
+            c1.classList.add('matched'); c2.classList.add('matched');
+            matchedCount++;
+            document.getElementById('gameMatches').innerText = `${matchedCount}/6`;
+            flippedCards = [];
+            if (matchedCount === 6) setTimeout(() => alert('🎉 Great Memory! All matched! 🌸'), 200);
+          } else {
+            setTimeout(() => {
+              c1.classList.remove('flipped'); c2.classList.remove('flipped');
+              c1.innerText = '❓'; c2.innerText = '❓';
+              flippedCards = [];
+            }, 700);
+          }
         }
       }
-    }
-
-    function checkTileMatch() {
-      const [card1, card2] = flippedCards;
-      if (card1.dataset.icon === card2.dataset.icon) {
-        card1.classList.add('matched');
-        card2.classList.add('matched');
-        matchedCount++;
-        document.getElementById('gameMatches').innerText = `${matchedCount}/6`;
-        flippedCards = [];
-        if (matchedCount === 6) {
-          setTimeout(() => alert('🎉 Great Memory! Saare cards match ho gaye! 🌸'), 250);
-        }
-      } else {
-        setTimeout(() => {
-          card1.classList.remove('flipped');
-          card2.classList.remove('flipped');
-          card1.innerText = '❓';
-          card2.innerText = '❓';
-          flippedCards = [];
-        }, 700);
-      }
-    }
-
-    let currentQuizQuestions = [];
-    let currentQuizIndex = 0;
-    let quizScoreVal = 0;
-
-    function getLiveDramaNames() {
-      if (liveDramaDataList.length > 0) {
-        return liveDramaDataList.map(d => d.title);
-      }
-      return ["Rain or Shine", "King the Land", "Crush", "Colony (2026)", "The Best Thing"];
-    }
-
-    function generateDynamicQuizPool() {
-      const dramaNames = getLiveDramaNames();
-      const pool = [
-        { q: "Konsa drama business fake-dating romance par based hai?", o: ["A Business Proposal", "Vincenzo", "Happiness", "Signal"], a: "A Business Proposal" },
-        { q: "AsiaFlix network par dramas kis format aur audio me stream hote hain?", o: ["Clean Hindi Dubbed & 1080p", "Low 360p Cam-rip", "Only Chinese Audio", "Paid Subscriptions Only"], a: "Clean Hindi Dubbed & 1080p" },
-        { q: "AsiaFlix Prime official weekend mega drops kab release hote hain?", o: ["Sat & Sun 7:00 PM", "Mon & Tue 1:00 AM", "Only Friday", "Random Timings"], a: "Sat & Sun 7:00 PM" },
-        { q: "AsiaFlix Prime par broken links se bachne ke liye network kaisa rakha gaya hai?", o: ["100% Private Network", "Public Bot Hub", "Torrent P2P", "Unlisted Proxy Server"], a: "100% Private Network" },
-        { q: "C-Drama 'Love Me Love My Voice' ka concept kis par based hai?", o: ["Voice Dubbing & Music", "Police Investigation", "Time Travel", "Martial Arts"], a: "Voice Dubbing & Music" }
-      ];
-
-      if (dramaNames.length >= 4) {
-        dramaNames.slice(0, 8).forEach(title => {
-          const others = dramaNames.filter(d => d !== title).sort(() => 0.5 - Math.random()).slice(0, 3);
-          const options = [title, ...others].sort(() => 0.5 - Math.random());
-          pool.push({
-            q: "AsiaFlix Prime trending catalog me isme se kaunsa title featured hai?",
-            o: options,
-            a: title
-          });
-        });
-      }
-
-      return pool.sort(() => 0.5 - Math.random()).slice(0, 5);
     }
 
     function startDramaQuiz() {
-      currentQuizQuestions = generateDynamicQuizPool();
-      currentQuizIndex = 0;
-      quizScoreVal = 0;
-      loadQuizQuestion();
-    }
-
-    function loadQuizQuestion() {
-      const q = currentQuizQuestions[currentQuizIndex];
-      document.getElementById('quizProg').innerText = `${currentQuizIndex + 1}/${currentQuizQuestions.length}`;
-      document.getElementById('quizScore').innerText = quizScoreVal;
-      document.getElementById('quizQuestionText').innerText = q.q;
-
-      const optsBox = document.getElementById('quizOptionsBox');
-      optsBox.innerHTML = '';
-
-      const shuffledOptions = [...q.o].sort(() => 0.5 - Math.random());
-
-      shuffledOptions.forEach((optText) => {
-        const btn = document.createElement('button');
-        btn.className = 'quiz-opt-btn';
-        btn.innerText = optText;
-        btn.onclick = () => selectQuizAnswer(optText, q.a, btn);
-        optsBox.appendChild(btn);
-      });
-    }
-
-    function selectQuizAnswer(chosenText, correctText, btn) {
-      const allBtns = document.querySelectorAll('.quiz-opt-btn');
-      allBtns.forEach(b => b.style.pointerEvents = 'none');
-
-      if (chosenText === correctText) {
-        btn.classList.add('correct');
-        quizScoreVal += 10;
-        document.getElementById('quizScore').innerText = quizScoreVal;
-      } else {
-        btn.classList.add('wrong');
-        allBtns.forEach(b => {
-          if (b.innerText === correctText) b.classList.add('correct');
-        });
-      }
-
-      setTimeout(() => {
-        currentQuizIndex++;
-        if (currentQuizIndex < currentQuizQuestions.length) {
-          loadQuizQuestion();
-        } else {
-          document.getElementById('quizQuestionText').innerText = `🏆 Quiz Complete! Total Score: ${quizScoreVal}/${currentQuizQuestions.length * 10}`;
-          document.getElementById('quizOptionsBox').innerHTML = `
-            <div style="background: rgba(255,255,255,0.03); border:1px solid var(--card-border); border-radius:10px; padding:12px; font-size:0.78rem; color:#fff;">
-              ✨ Agli baar naye questions ke sath khelne ke liye neeche button dabayein!
-            </div>
-          `;
-        }
-      }, 850);
+      document.getElementById('quizQuestionText').innerText = "AsiaFlix Prime official weekend mega drops kab release hote hain?";
+      document.getElementById('quizOptionsBox').innerHTML = `
+        <button class="quiz-opt-btn" onclick="alert('Correct! 🎉 Sat & Sun 7:00 PM IST')">Sat & Sun 7:00 PM IST</button>
+        <button class="quiz-opt-btn" onclick="alert('Wrong!')">Mon & Tue</button>
+      `;
     }
 
     function spinDramaWheel() {
-      const titles = getLiveDramaNames();
-      const spinBtn = document.getElementById('wheelSpinBtn');
-      const titleEl = document.getElementById('wheelDramaTitle');
-      const metaEl = document.getElementById('wheelDramaMeta');
-
-      spinBtn.disabled = true;
-      let counter = 0;
-
-      const interval = setInterval(() => {
-        const randomTitle = titles[Math.floor(Math.random() * titles.length)];
-        titleEl.innerText = randomTitle;
-        metaEl.innerText = "Asian Drama Hit • Clean Hindi Dubbed / 1080p";
-        counter++;
-
-        if (counter > 15) {
-          clearInterval(interval);
-          spinBtn.disabled = false;
-        }
-      }, 100);
+      const titles = ["Rain or Shine", "King the Land", "Colony (2026)", "The Best Thing", "No Gain No Love"];
+      document.getElementById('wheelDramaTitle').innerText = titles[Math.floor(Math.random() * titles.length)];
+      document.getElementById('wheelDramaMeta').innerText = "Recommended Pick • 1080p HD";
     }
   </script>
 </body>

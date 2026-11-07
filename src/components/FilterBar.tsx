@@ -1,0 +1,193 @@
+import React from 'react';
+import { Search, X, Calendar, Filter, Sparkles } from 'lucide-react';
+import { AudioType, DramaCategory, DramaStatus } from '../types/drama';
+
+interface FilterBarProps {
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  selectedAudio: string; // 'all' | AudioType
+  onSelectAudio: (audio: string) => void;
+  selectedCategory: string; // 'all' | DramaCategory
+  onSelectCategory: (cat: string) => void;
+  selectedYear: string; // 'all' | '2026' | '2025' etc.
+  onSelectYear: (year: string) => void;
+  selectedStatus: string; // 'all' | DramaStatus
+  onSelectStatus: (status: string) => void;
+  totalFilteredCount: number;
+}
+
+export const FilterBar: React.FC<FilterBarProps> = ({
+  searchQuery,
+  onSearchChange,
+  selectedAudio,
+  onSelectAudio,
+  selectedCategory,
+  onSelectCategory,
+  selectedYear,
+  onSelectYear,
+  selectedStatus,
+  onSelectStatus,
+  totalFilteredCount,
+}) => {
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 8 }).map((_, i) => currentYear - i);
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-8">
+      {/* Search Bar */}
+      <div className="relative max-w-2xl mx-auto mb-5">
+        <div className="relative flex items-center">
+          <Search className="absolute left-4 w-5 h-5 text-zinc-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search by drama title, actor, or tag (e.g. Rain or Shine, Lee Jun-ho, Hanuman)..."
+            className="w-full pl-12 pr-10 py-3.5 bg-white/[0.04] hover:bg-white/[0.06] focus:bg-white/[0.08] border border-white/10 focus:border-[#e50914] rounded-2xl text-white placeholder-zinc-500 text-sm outline-none transition-all shadow-inner focus:ring-2 focus:ring-[#e50914]/30"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => onSearchChange('')}
+              className="absolute right-3.5 p-1 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Audio Category Focus (Solves user's issue: separate audio versions) */}
+      <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
+        <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider mr-1 hidden sm:inline">
+          Audio Track:
+        </span>
+        <button
+          onClick={() => onSelectAudio('all')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            selectedAudio === 'all'
+              ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.5)]'
+              : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
+          }`}
+        >
+          All Audios
+        </button>
+        <button
+          onClick={() => onSelectAudio('Hindi Dubbed')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            selectedAudio === 'Hindi Dubbed'
+              ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.5)]'
+              : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
+          }`}
+        >
+          <span>🔊</span> Hindi Dubbed (VIP)
+        </button>
+        <button
+          onClick={() => onSelectAudio('Fan Dubbed')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            selectedAudio === 'Fan Dubbed'
+              ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.5)]'
+              : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
+          }`}
+        >
+          <span>🎙️</span> Fan Dubbed
+        </button>
+        <button
+          onClick={() => onSelectAudio('Original / Eng Sub')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            selectedAudio === 'Original / Eng Sub'
+              ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.5)]'
+              : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
+          }`}
+        >
+          <span>💬</span> Original / Eng Sub
+        </button>
+      </div>
+
+      {/* Origin / Format Chips + Dropdowns */}
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          onClick={() => onSelectCategory('all')}
+          className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'all'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          All Genres ({totalFilteredCount})
+        </button>
+        <button
+          onClick={() => onSelectCategory('K-Drama')}
+          className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'K-Drama'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          🇰🇷 K-Drama
+        </button>
+        <button
+          onClick={() => onSelectCategory('C-Drama')}
+          className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'C-Drama'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          🇨🇳 C-Drama
+        </button>
+        <button
+          onClick={() => onSelectCategory('Asian Movies')}
+          className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'Asian Movies'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          🎬 Asian Movies
+        </button>
+        <button
+          onClick={() => onSelectCategory('Hollywood / Bollywood')}
+          className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'Hollywood / Bollywood'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          🍿 Holly / Bollywood
+        </button>
+
+        {/* Release Year Dropdown */}
+        <div className="flex items-center gap-1.5 ml-1">
+          <Calendar className="w-3.5 h-3.5 text-zinc-400" />
+          <select
+            value={selectedYear}
+            onChange={(e) => onSelectYear(e.target.value)}
+            className="bg-[#14151b] border border-white/10 hover:border-white/20 text-white text-xs font-bold rounded-lg px-2.5 py-1 outline-none cursor-pointer focus:border-[#e50914]"
+          >
+            <option value="all">All Years</option>
+            {years.map((y) => (
+              <option key={y} value={y.toString()}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Status Dropdown */}
+        <div className="flex items-center gap-1.5">
+          <Filter className="w-3.5 h-3.5 text-zinc-400" />
+          <select
+            value={selectedStatus}
+            onChange={(e) => onSelectStatus(e.target.value)}
+            className="bg-[#14151b] border border-white/10 hover:border-white/20 text-white text-xs font-bold rounded-lg px-2.5 py-1 outline-none cursor-pointer focus:border-[#e50914]"
+          >
+            <option value="all">All Status</option>
+            <option value="Now Streaming (Ongoing)">Ongoing Releases</option>
+            <option value="Completed (Full Series)">Completed Full Binge</option>
+            <option value="Coming Soon">Coming Soon</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+};

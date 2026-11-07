@@ -1,0 +1,6 @@
+{
+  "name": "AsiaFlix Prime - K-Drama & Movies VIP Portal",
+  "description": "Stream Asian Dramas & Movies in Clean Hindi Audio & 1080p HD. Private VIP network with Watchlist, notifications, and instant Telegram episode links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

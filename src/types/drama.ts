@@ -35,9 +35,15 @@ export interface DramaItem {
   synopsis: string;
   cast: string[];
   tags: string[];
+  details?: string; // e.g. "16 Episodes", "1:44:00", "2:14:19", "Full Movie"
+  schedule?: string; // e.g. "Sat & Sun 7:00 PM IST" or blank if completed
   scheduleInfo: string; // e.g. "Sat & Sun 7:00 PM" or "16/16 Episodes"
   availableAudios: AudioType[];
   defaultAudio: AudioType;
+  telegramUrl: string; // Direct Telegram post URL (primary)
+  telegramHindi?: string; // Telegram 1 (Hindi Dubbed) link
+  telegramFanDub?: string; // Telegram 2 (Fan Dubbed) link
+  telegramOriginal?: string; // Telegram 3 (Original / Eng Sub) link
   isFeatured?: boolean;
   isTrending?: boolean;
   isSpotlight?: boolean;
@@ -48,7 +54,6 @@ export interface DramaItem {
   spotlightTag?: string; // e.g. "VIP PICK", "TOP #1", "MEGA HIT"
   totalEpisodes?: number;
   episodes: EpisodeItem[];
-  telegramUrl: string; // Direct Telegram post URL
   qualityBadge: string; // "1080p FHD"
 }
 
@@ -107,4 +112,18 @@ export interface HeroBannerSlide {
   badge?: string;
   dramaId?: string;
   isActive?: boolean;
+}
+
+export interface TelegramBotSettings {
+  botUsername: string; // e.g. "asiaflix_request_bot"
+  botToken: string; // e.g. "123456:ABC-DEF..."
+  channelId: string; // e.g. "@asiaflixprime" or "-100123456789"
+  isEnabled: boolean;
+}
+
+export interface GoogleSheetSettings {
+  sheetCsvUrl: string;
+  autoSync: boolean;
+  lastSyncedAt?: number;
+  lastRowCount?: number;
 }

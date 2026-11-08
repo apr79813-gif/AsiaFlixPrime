@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ReleaseNotification, DramaItem } from '../types/drama';
-import { X, Bell, CheckCheck, Sparkles, Film, ArrowRight } from 'lucide-react';
+import { X, Bell, CheckCheck, Sparkles, Film, ArrowRight, Send, CheckCircle2 } from 'lucide-react';
+import { getWebPushPermission, requestWebPushPermission } from '../services/notificationService';
 
 interface NotificationDrawerProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface NotificationDrawerProps {
   notifications: ReleaseNotification[];
   onMarkAllAsRead: () => void;
   onSelectNotification: (notif: ReleaseNotification) => void;
+  botUsername?: string;
 }
 
 export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
@@ -16,10 +18,24 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   notifications,
   onMarkAllAsRead,
   onSelectNotification,
+  botUsername = 'asiaflix_request_bot',
 }) => {
+  const [pushStatus, setPushStatus] = useState<NotificationPermission | 'unsupported'>('default');
+
+  useEffect(() => {
+    if (isOpen) {
+      setPushStatus(getWebPushPermission());
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleEnablePush = async () => {
+    const granted = await requestWebPushPermission();
+    setPushStatus(granted ? 'granted' : 'denied');
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/80 backdrop-blur-sm animate-fade-in">
@@ -64,6 +80,41 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
               <X className="w-5 h-5" />
             </button>
           </div>
+        </div>
+
+        {/* Audience Notification Channels (Telegram Bot & Native Push) */}
+        <div className="p-3.5 bg-gradient-to-r from-red-950/20 via-black/40 to-blue-950/20 border-b border-white/5 space-y-2.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-400 font-semibold">Native Device Alerts:</span>
+            {pushStatus === 'granted' ? (
+              <span className="flex items-center gap-1 text-emerald-400 font-bold text-[11px]">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Active on Phone/PC
+              </span>
+            ) : (
+              <button
+                onClick={handleEnablePush}
+                className="px-2.5 py-1 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-[11px] font-black transition-all flex items-center gap-1"
+              >
+                <Bell className="w-3 h-3" />
+                <span>Enable Alerts</span>
+              </button>
+            )}
+          </div>
+
+          <a
+            href={`https://t.me/${botUsername}?start=notification_hub`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-2 px-3 rounded-xl bg-[#0088cc]/15 hover:bg-[#0088cc]/25 border border-[#0088cc]/30 text-sky-300 text-xs font-bold transition-all flex items-center justify-between group"
+          >
+            <div className="flex items-center gap-2">
+              <Send className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+              <span>Subscribe on Telegram Bot</span>
+            </div>
+            <span className="text-[10px] bg-sky-500/20 text-sky-200 px-1.5 py-0.5 rounded font-black">
+              @{botUsername}
+            </span>
+          </a>
         </div>
 
         {/* Notifications list */}

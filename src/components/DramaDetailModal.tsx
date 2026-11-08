@@ -280,6 +280,149 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
+          {/* Details & Schedule Section (User Separated: Details = Episodes/Runtime, Schedule = Release Drops) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Details Box */}
+            <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] uppercase tracking-wider font-extrabold text-zinc-400 block">Details (Episodes / Runtime)</span>
+                <span className="text-xs sm:text-sm font-black text-white truncate block">
+                  {drama.details || drama.scheduleInfo || 'Full Series'}
+                </span>
+              </div>
+            </div>
+
+            {/* Schedule Box */}
+            <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center gap-3">
+              <div className={`p-2 rounded-lg ${drama.schedule ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                {drama.schedule ? <Sparkles className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] uppercase tracking-wider font-extrabold text-zinc-400 block">Schedule</span>
+                {drama.schedule && drama.schedule.trim() ? (
+                  <span className="text-xs sm:text-sm font-black text-amber-300 truncate block">
+                    📅 {drama.schedule}
+                  </span>
+                ) : (
+                  <span className="text-xs sm:text-sm font-black text-emerald-400 truncate block">
+                    🟢 Completed (No Pending Drops)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Telegram 1, 2, 3 Audio Deep-Links (Hindi, Fan Dubbed, Original / Eng Sub) */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-red-950/20 via-[#141520] to-black border border-red-500/20 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Send className="w-4 h-4 text-red-500" />
+                <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                  Telegram Direct Links (1, 2, 3)
+                </h4>
+              </div>
+              <span className="text-[10px] text-zinc-400 font-semibold hidden sm:inline">1080p FHD Direct Cloud Storage</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {/* Telegram 1: Hindi Dubbed */}
+              {drama.telegramHindi || drama.availableAudios.includes('Hindi Dubbed') ? (
+                <a
+                  href={drama.telegramHindi || drama.telegramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-3 rounded-xl bg-white/[0.04] hover:bg-[#e50914] border border-white/10 hover:border-red-500 text-white transition-all group flex flex-col justify-between gap-2 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-red-600/30 text-red-300 group-hover:bg-black/40 group-hover:text-white">
+                      Telegram 1
+                    </span>
+                    <span className="text-xs">🔊</span>
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-black text-white group-hover:text-white">Hindi Dubbed</h5>
+                    <p className="text-[10px] text-zinc-400 group-hover:text-red-100 mt-0.5">Official Clean Hindi Audio</p>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-red-400 group-hover:text-white mt-1">
+                    <span>Open in Telegram</span>
+                    <Send className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </a>
+              ) : (
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-zinc-500 flex flex-col justify-between gap-1 opacity-60">
+                  <span className="text-[10px] font-black uppercase tracking-wider">Telegram 1</span>
+                  <h5 className="text-xs font-bold text-zinc-400">Hindi Dubbed</h5>
+                  <p className="text-[10px]">Coming Soon in VIP</p>
+                </div>
+              )}
+
+              {/* Telegram 2: Fan Dubbed */}
+              {drama.telegramFanDub || drama.availableAudios.includes('Fan Dubbed') ? (
+                <a
+                  href={drama.telegramFanDub || drama.telegramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-3 rounded-xl bg-white/[0.04] hover:bg-amber-600 border border-white/10 hover:border-amber-400 text-white transition-all group flex flex-col justify-between gap-2 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/30 text-amber-300 group-hover:bg-black/40 group-hover:text-white">
+                      Telegram 2
+                    </span>
+                    <span className="text-xs">🎙️</span>
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-black text-white group-hover:text-white">Fan Dubbed</h5>
+                    <p className="text-[10px] text-zinc-400 group-hover:text-amber-100 mt-0.5">Hindi Community Dub Track</p>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-amber-400 group-hover:text-white mt-1">
+                    <span>Open in Telegram</span>
+                    <Send className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </a>
+              ) : (
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-zinc-500 flex flex-col justify-between gap-1 opacity-60">
+                  <span className="text-[10px] font-black uppercase tracking-wider">Telegram 2</span>
+                  <h5 className="text-xs font-bold text-zinc-400">Fan Dubbed</h5>
+                  <p className="text-[10px]">No Fan Dub for this title</p>
+                </div>
+              )}
+
+              {/* Telegram 3: Original / Eng Sub */}
+              {drama.telegramOriginal || drama.availableAudios.includes('Original / Eng Sub') ? (
+                <a
+                  href={drama.telegramOriginal || drama.telegramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-3 rounded-xl bg-white/[0.04] hover:bg-sky-600 border border-white/10 hover:border-sky-400 text-white transition-all group flex flex-col justify-between gap-2 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-sky-500/30 text-sky-300 group-hover:bg-black/40 group-hover:text-white">
+                      Telegram 3
+                    </span>
+                    <span className="text-xs">💬</span>
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-black text-white group-hover:text-white">Original / Eng Sub</h5>
+                    <p className="text-[10px] text-zinc-400 group-hover:text-sky-100 mt-0.5">Original Audio + Clean Sub</p>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-sky-400 group-hover:text-white mt-1">
+                    <span>Open in Telegram</span>
+                    <Send className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </a>
+              ) : (
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-zinc-500 flex flex-col justify-between gap-1 opacity-60">
+                  <span className="text-[10px] font-black uppercase tracking-wider">Telegram 3</span>
+                  <h5 className="text-xs font-bold text-zinc-400">Original / Eng Sub</h5>
+                  <p className="text-[10px]">Original audio coming soon</p>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Audio Tracks Selection (Single Audio Badge OR Multi-Audio Switcher) */}
           <div>
             {drama.availableAudios.length <= 1 ? (

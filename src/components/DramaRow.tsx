@@ -107,7 +107,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
 
       {/* Cards Container */}
       {isExpanded ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
           {uniqueDramas.map((drama, idx) => (
             <DramaCard
               key={drama.id}
@@ -123,10 +123,10 @@ export const DramaRow: React.FC<DramaRowProps> = ({
       ) : (
         <div
           ref={rowRef}
-          className="flex gap-4 overflow-x-auto scroll-smooth pb-3 scrollbar-thin scrollbar-thumb-zinc-700 -mx-4 px-4 sm:mx-0 sm:px-0"
+          className="flex gap-3.5 sm:gap-4 overflow-x-auto scroll-smooth pb-3 scrollbar-thin scrollbar-thumb-zinc-700 -mx-4 px-4 sm:mx-0 sm:px-0"
         >
           {uniqueDramas.map((drama, idx) => (
-            <div key={drama.id} className="w-[170px] sm:w-[195px] shrink-0">
+            <div key={drama.id} className="w-[165px] sm:w-[195px] shrink-0">
               <DramaCard
                 drama={drama}
                 onSelect={onSelectDrama}

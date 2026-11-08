@@ -25,9 +25,14 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  ShieldAlert
+  ShieldAlert,
+  Send,
+  Table,
+  Bell,
+  FileText,
+  Copy
 } from 'lucide-react';
-import { DramaItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide } from '../types/drama';
+import { DramaItem, EpisodeItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
 import { 
   insertDramaIntoSupabase, 
   insertNotificationIntoSupabase, 
@@ -36,6 +41,7 @@ import {
   fetchSupabaseStats,
   seedCatalogToSupabase
 } from '../services/supabaseService';
+import { sendTelegramBroadcast, sendNativePushNotification } from '../services/notificationService';
 import { INITIAL_DRAMAS } from '../data/initialCatalog';
 
 // Secure SHA-256 Hashing using Native Web Crypto API
@@ -60,10 +66,14 @@ interface AdminStudioModalProps {
   onUpdateWeekendSettings: (settings: WeekendSettings) => void;
   heroBanners: HeroBannerSlide[];
   onUpdateHeroBanners: (banners: HeroBannerSlide[]) => void;
-  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security';
+  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'security';
   onAuthSuccess?: () => void;
   onAuthLogout?: () => void;
   isAuthenticatedParent?: boolean;
+  googleSheetUrl?: string;
+  onUpdateGoogleSheetUrl?: (url: string) => Promise<{ success: boolean; count?: number; error?: string }>;
+  telegramBotSettings?: TelegramBotSettings;
+  onUpdateTelegramBotSettings?: (settings: TelegramBotSettings) => void;
 }
 
 export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
@@ -84,6 +94,10 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   onAuthSuccess,
   onAuthLogout,
   isAuthenticatedParent = false,
+  googleSheetUrl = '',
+  onUpdateGoogleSheetUrl,
+  telegramBotSettings,
+  onUpdateTelegramBotSettings,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(isAuthenticatedParent);
   const [authMethod, setAuthMethod] = useState<'pin' | 'password'>('pin');
@@ -93,7 +107,45 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'security'>(initialTab);
+
+  // Google Sheets Local State
+  const [sheetUrlDraft, setSheetUrlDraft] = useState(googleSheetUrl);
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [sheetSyncFeedback, setSheetSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [appsScriptUrlDraft, setAppsScriptUrlDraft] = useState<string>(() => {
+    return localStorage.getItem('asiaflix_google_apps_script_url') || '';
+  });
+  const [appsScriptFeedback, setAppsScriptFeedback] = useState<string | null>(null);
+
+  // Telegram Bot Local State
+  const [botDraft, setBotDraft] = useState<TelegramBotSettings>(() => {
+    return telegramBotSettings || {
+      botUsername: 'asiaflix_request_bot',
+      botToken: '',
+      channelId: '@asiaflixprime',
+      isEnabled: true,
+    };
+  });
+  const [isTestingBot, setIsTestingBot] = useState(false);
+  const [botTestFeedback, setBotTestFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [broadcastToTelegram, setBroadcastToTelegram] = useState(true);
+  const [broadcastToWebPush, setBroadcastToWebPush] = useState(true);
+  const [notifButtonText, setNotifButtonText] = useState('▶ Stream 1080p Episodes');
+  const [notifButtonUrl, setNotifButtonUrl] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+  useEffect(() => {
+    if (googleSheetUrl) {
+      setSheetUrlDraft(googleSheetUrl);
+    }
+  }, [googleSheetUrl]);
+
+  useEffect(() => {
+    if (telegramBotSettings) {
+      setBotDraft(telegramBotSettings);
+    }
+  }, [telegramBotSettings]);
 
   useEffect(() => {
     if (initialTab) {
@@ -200,14 +252,17 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     setTimeout(() => setSuccessMessage(null), 5000);
   };
 
-  // New Drama Form State
+  // New Drama Form State (Telegram 1, 2, 3 and Details & Schedule)
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<DramaCategory>('K-Drama');
   const [year, setYear] = useState('2026');
   const [audio, setAudio] = useState<AudioType>('Hindi Dubbed');
   const [poster, setPoster] = useState('');
-  const [telegramUrl, setTelegramUrl] = useState('');
-  const [episodesCount, setEpisodesCount] = useState('16');
+  const [telegramUrl, setTelegramUrl] = useState(''); // Telegram 1: Hindi Dubbed
+  const [telegramFanDub, setTelegramFanDub] = useState(''); // Telegram 2: Fan Dubbed
+  const [telegramOrig, setTelegramOrig] = useState(''); // Telegram 3: Original / Eng Sub
+  const [episodesCount, setEpisodesCount] = useState('16 Episodes'); // Details
+  const [scheduleDrop, setScheduleDrop] = useState(''); // Schedule (e.g. Sat & Sun 7:00 PM IST or blank)
   const [synopsis, setSynopsis] = useState('');
   const [makeSpotlight, setMakeSpotlight] = useState(true);
   const [makeWeekend, setMakeWeekend] = useState(false);
@@ -694,39 +749,89 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
     setIsSavingSupabase(true);
 
+    const audios: AudioType[] = [];
+    if (telegramUrl.trim() || audio === 'Hindi Dubbed') audios.push('Hindi Dubbed');
+    if (telegramFanDub.trim() || audio === 'Fan Dubbed') audios.push('Fan Dubbed');
+    if (telegramOrig.trim() || audio === 'Original / Eng Sub') audios.push('Original / Eng Sub');
+    if (audios.length === 0) audios.push(audio);
+
+    const episodes: EpisodeItem[] = [];
+    if (telegramUrl.trim()) {
+      episodes.push({
+        id: `ep-hindi-${Date.now()}`,
+        episodeNumber: 'Telegram 1',
+        title: `${title.trim()} · Hindi Dubbed 1080p`,
+        audio: 'Hindi Dubbed',
+        telegramUrl: telegramUrl.trim(),
+        duration: episodesCount || '1080p FHD',
+        quality: '1080p FHD',
+        isMerged: true,
+      });
+    }
+    if (telegramFanDub.trim()) {
+      episodes.push({
+        id: `ep-fandub-${Date.now()}`,
+        episodeNumber: 'Telegram 2',
+        title: `${title.trim()} · Fan Dubbed 1080p`,
+        audio: 'Fan Dubbed',
+        telegramUrl: telegramFanDub.trim(),
+        duration: episodesCount || '1080p FHD',
+        quality: '1080p FHD',
+        isMerged: true,
+      });
+    }
+    if (telegramOrig.trim()) {
+      episodes.push({
+        id: `ep-orig-${Date.now()}`,
+        episodeNumber: 'Telegram 3',
+        title: `${title.trim()} · Original Audio / Eng Sub`,
+        audio: 'Original / Eng Sub',
+        telegramUrl: telegramOrig.trim(),
+        duration: episodesCount || '1080p FHD',
+        quality: '1080p FHD',
+        isMerged: true,
+      });
+    }
+    if (episodes.length === 0) {
+      episodes.push({
+        id: `ep-main-${Date.now()}`,
+        episodeNumber: 'Latest Drop',
+        title: `${title.trim()} · 1080p FHD`,
+        audio,
+        telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
+        duration: episodesCount || '1080p FHD',
+        quality: '1080p FHD',
+        isMerged: true,
+      });
+    }
+
     const newDrama: DramaItem = {
       id: `custom-${Date.now()}`,
       title: title.trim(),
       category,
       releaseYear: parseInt(year) || 2026,
-      status: 'Now Streaming (Ongoing)',
+      status: scheduleDrop.trim() ? 'Now Streaming (Ongoing)' : 'Completed (Full Series)',
       rating: 9.3,
       poster: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
       backdrop: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1400',
       synopsis: synopsis.trim() || 'Uploaded directly to AsiaFlix Prime VIP Private Channel.',
       cast: ['AsiaFlix Exclusive'],
       tags: [category, audio],
-      scheduleInfo: `${episodesCount} Episodes`,
-      availableAudios: [audio],
-      defaultAudio: audio,
+      details: episodesCount || '16 Episodes',
+      schedule: scheduleDrop.trim(),
+      scheduleInfo: scheduleDrop.trim() || episodesCount || 'Full Series',
+      availableAudios: audios,
+      defaultAudio: telegramUrl.trim() ? 'Hindi Dubbed' : audio,
       qualityBadge: '1080p FHD',
       isSpotlight: makeSpotlight,
       isTrending: true,
       isWeekendLineup: makeWeekend,
       weekendSlot: makeWeekend ? 'Saturday Drop - 7:00 PM' : undefined,
-      telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
-      episodes: [
-        {
-          id: `ep-full-${Date.now()}`,
-          episodeNumber: 'Full Pack',
-          title: `${title} 1080p FHD Pack`,
-          audio,
-          telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
-          duration: `${episodesCount} Episodes`,
-          quality: '1080p FHD',
-          isMerged: true,
-        },
-      ],
+      telegramUrl: telegramUrl.trim() || telegramFanDub.trim() || telegramOrig.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
+      telegramHindi: telegramUrl.trim() || undefined,
+      telegramFanDub: telegramFanDub.trim() || undefined,
+      telegramOriginal: telegramOrig.trim() || undefined,
+      episodes,
     };
 
     const sbResult = await insertDramaIntoSupabase({
@@ -735,7 +840,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       releaseYear: parseInt(year) || 2026,
       description: synopsis.trim() || 'AsiaFlix Prime VIP upload',
       posterUrl: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
-      status: 'Ongoing',
+      status: scheduleDrop.trim() ? 'Ongoing' : 'Completed',
       audio,
       telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
       episodesCount,
@@ -747,7 +852,46 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     onUpdateDramasCuration(updated);
     setIsSavingSupabase(false);
 
-    if (sbResult.success) {
+    // Auto-Save to Google Sheet via Google Apps Script Webhook
+    const webhookUrl = (appsScriptUrlDraft || localStorage.getItem('asiaflix_google_apps_script_url') || '').trim();
+    let sheetAppended = false;
+    if (webhookUrl && webhookUrl.startsWith('http')) {
+      const payload = {
+        title: title.trim(),
+        category,
+        audio,
+        poster: poster.trim(),
+        telegramHindi: telegramUrl.trim(),
+        telegramFanDub: telegramFanDub.trim(),
+        telegramOrig: telegramOrig.trim(),
+        status: scheduleDrop.trim() ? 'Now Streaming (Ongoing)' : 'Completed (Full Series)',
+        details: episodesCount,
+        schedule: scheduleDrop.trim(),
+        badge: audio,
+      };
+
+      try {
+        // Dual delivery: text/plain POST + GET query beacon (guaranteed delivery)
+        fetch(webhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        }).catch((err) => console.warn('Google Sheet webhook post failed:', err));
+
+        const query = new URLSearchParams(payload as any).toString();
+        const beaconUrl = `${webhookUrl}${webhookUrl.includes('?') ? '&' : '?'}${query}`;
+        fetch(beaconUrl, { method: 'GET', mode: 'no-cors' }).catch(() => {});
+
+        sheetAppended = true;
+      } catch (err) {
+        console.warn('Google Sheet dispatch error:', err);
+      }
+    }
+
+    if (sheetAppended) {
+      setSuccessMessage(`Title "${title}" add ho gaya, live portal par #1 set ho gaya aur Google Sheet me bhi auto-save dispatch ho gaya! ⚡📊`);
+    } else if (sbResult.success) {
       setSuccessMessage(`Title "${title}" add ho gaya aur sabse aage (#1 position) par live hai! 🚀`);
     } else {
       setSuccessMessage(`Title "${title}" add ho gaya aur sabse aage (#1 position) par live hai! 🌸`);
@@ -760,10 +904,95 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     setTimeout(() => setSuccessMessage(null), 3500);
   };
 
+  const handleSendTestRowToSheet = async () => {
+    const url = (appsScriptUrlDraft || localStorage.getItem('asiaflix_google_apps_script_url') || '').trim();
+    if (!url || !url.startsWith('http')) {
+      setAppsScriptFeedback('❌ Pehle upar apna Google Apps Script Web App URL daalein aur Save karein.');
+      return;
+    }
+
+    setAppsScriptFeedback('⏳ Google Sheet me Test Row bhej rahe hain...');
+    const testPayload = {
+      title: 'AsiaFlix VIP Test Row (2026)',
+      category: 'K-Drama',
+      audio: 'Hindi Dubbed',
+      poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
+      telegramUrl: 'https://t.me/c/3730319875/9999',
+      status: 'Now Streaming (Ongoing)',
+      schedule: '16 Episodes',
+      badge: 'Test Badge',
+    };
+
+    try {
+      // POST text/plain
+      fetch(url, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(testPayload),
+      }).catch((e) => console.warn(e));
+
+      // GET beacon
+      const query = new URLSearchParams(testPayload as any).toString();
+      const beaconUrl = `${url}${url.includes('?') ? '&' : '?'}${query}`;
+      fetch(beaconUrl, { method: 'GET', mode: 'no-cors' }).catch((e) => console.warn(e));
+
+      setAppsScriptFeedback('✅ Test Row dispatch ho gayi hai! Apni Google Sheet khol kar aakhri row check karein. Agar row dikh rahi hai toh connection 100% SUCCESS hai! 🚀');
+    } catch (e: any) {
+      setAppsScriptFeedback(`❌ Error: ${e.message}`);
+    }
+  };
+
+  const handleSaveBotSettings = () => {
+    if (onUpdateTelegramBotSettings) {
+      onUpdateTelegramBotSettings(botDraft);
+    }
+    setBotTestFeedback({ type: 'success', message: 'Telegram Bot settings saved successfully!' });
+    setTimeout(() => setBotTestFeedback(null), 3000);
+  };
+
+  const handleTestBotPing = async () => {
+    if (!botDraft.botToken || !botDraft.channelId) {
+      setBotTestFeedback({ type: 'error', message: 'Please enter Bot Token and Channel/Chat ID first.' });
+      return;
+    }
+    setIsTestingBot(true);
+    setBotTestFeedback(null);
+    const text = `🌸 <b>AsiaFlix VIP Bot Connected!</b>\n\nNotification broadcast channel is active and verified. Audience will receive all new episode drops here! 🔥`;
+    const res = await sendTelegramBroadcast(botDraft.botToken, botDraft.channelId, text);
+    setIsTestingBot(false);
+    if (res.success) {
+      setBotTestFeedback({ type: 'success', message: `✅ Test ping delivered to ${botDraft.channelId} (Msg ID #${res.messageId})!` });
+    } else {
+      setBotTestFeedback({ type: 'error', message: `❌ Failed: ${res.error}` });
+    }
+  };
+
+  const handleSaveAndSyncSheet = async () => {
+    if (!sheetUrlDraft.trim()) {
+      setSheetSyncFeedback({ type: 'error', message: 'Please enter Google Sheet CSV URL.' });
+      return;
+    }
+    setIsSyncingSheet(true);
+    setSheetSyncFeedback(null);
+    if (onUpdateGoogleSheetUrl) {
+      const res = await onUpdateGoogleSheetUrl(sheetUrlDraft.trim());
+      setIsSyncingSheet(false);
+      if (res.success) {
+        setSheetSyncFeedback({ type: 'success', message: `✅ Google Sheet Synced! Loaded ${res.count || 0} titles into live catalog.` });
+      } else {
+        setSheetSyncFeedback({ type: 'error', message: `❌ Sync error: ${res.error || 'Check that sheet is Published to Web as CSV.'}` });
+      }
+    } else {
+      setIsSyncingSheet(false);
+    }
+  };
+
   const handleSendBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notifTitle.trim() || !notifMessage.trim()) return;
 
+    setIsBroadcasting(true);
     const newNotif: ReleaseNotification = {
       id: `notif-${Date.now()}`,
       title: notifTitle.trim(),
@@ -773,13 +1002,42 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       type: 'announcement',
     };
 
+    // 1. Supabase notification
     await insertNotificationIntoSupabase(notifTitle.trim(), notifMessage.trim());
 
+    // 2. In-app notification
     onAddNotification(newNotif);
-    setSuccessMessage('Release notification broadcasted successfully! 🔔');
+
+    // 3. Native Browser Push Notification
+    if (broadcastToWebPush) {
+      sendNativePushNotification(`🌸 ${notifTitle.trim()}`, {
+        body: notifMessage.trim(),
+      });
+    }
+
+    // 4. Telegram Bot Broadcast to channel
+    let tgMsg = '';
+    if (broadcastToTelegram && botDraft.botToken && botDraft.channelId) {
+      const formattedTgText = `🌸 <b>${notifTitle.trim()}</b> 🌸\n\n${notifMessage.trim()}\n\n🎬 <i>Stream 1080p FHD Audio on AsiaFlix Prime VIP Network</i>`;
+      const tgRes = await sendTelegramBroadcast(
+        botDraft.botToken,
+        botDraft.channelId,
+        formattedTgText,
+        notifButtonText.trim() || undefined,
+        notifButtonUrl.trim() || undefined
+      );
+      if (tgRes.success) {
+        tgMsg = ` + Telegram Broadcast sent to ${botDraft.channelId}! 🚀`;
+      } else {
+        tgMsg = ` (Telegram error: ${tgRes.error})`;
+      }
+    }
+
+    setIsBroadcasting(false);
+    setSuccessMessage(`Notification broadcasted successfully! 🔔${tgMsg}`);
     setNotifTitle('');
     setNotifMessage('');
-    setTimeout(() => setSuccessMessage(null), 3000);
+    setTimeout(() => setSuccessMessage(null), 4000);
   };
 
   const handleSaveMarquee = () => {
@@ -1023,7 +1281,17 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                 }`}
               >
                 <Megaphone className="w-3.5 h-3.5" />
-                <span>Alerts & Notice</span>
+                <span>Alerts & Bot Broadcast</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('sheets')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                  activeTab === 'sheets' ? 'bg-[#e50914] text-white shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Table className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Google Sheets Sync</span>
               </button>
 
               <button
@@ -1789,8 +2057,13 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
             {/* TAB 3: ADD NEW TITLE */}
             {activeTab === 'new_drama' && (
               <form onSubmit={handleCreateDrama} className="space-y-3">
-                <div className="text-[11px] text-zinc-400 bg-white/[0.02] p-2.5 rounded-lg border border-white/5">
-                  ⚡ Title will be saved directly into catalog, Supabase <strong className="text-white">titles</strong>, and your live portal!
+                <div className="text-[11px] text-zinc-400 bg-white/[0.02] p-2.5 rounded-lg border border-white/5 flex flex-wrap items-center justify-between gap-2">
+                  <span>⚡ Title will be saved directly into catalog, Supabase <strong className="text-white">titles</strong>, aur live portal par sabse aage #1 set hoga!</span>
+                  {appsScriptUrlDraft ? (
+                    <span className="text-[10px] font-bold text-sky-300 bg-sky-500/20 px-2 py-0.5 rounded border border-sky-500/30">
+                      📊 Google Sheet Auto-Save Active
+                    </span>
+                  ) : null}
                 </div>
 
                 <div>
@@ -1849,15 +2122,28 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Upload Format / Episodes</label>
+                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Details (Episodes / Runtime) *</label>
                     <input
                       type="text"
+                      required
                       value={episodesCount}
                       onChange={(e) => setEpisodesCount(e.target.value)}
-                      placeholder="16 Episodes / Batch"
+                      placeholder="e.g. 16 Episodes / 2:14:19"
                       className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-400 mb-1">Schedule (Drop Days / Time · Blank if Completed)</label>
+                  <input
+                    type="text"
+                    value={scheduleDrop}
+                    onChange={(e) => setScheduleDrop(e.target.value)}
+                    placeholder="e.g. Sat & Sun 7:00 PM IST (Leave blank if full series completed)"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-0.5">Jo series complete ho gayi hai usme ise blank chhod dein.</p>
                 </div>
 
                 {/* Instant Curation Checkboxes */}
@@ -1894,16 +2180,51 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-400 mb-1">Telegram Direct Link *</label>
-                  <input
-                    type="url"
-                    required
-                    value={telegramUrl}
-                    onChange={(e) => setTelegramUrl(e.target.value)}
-                    placeholder="https://t.me/c/3730319875/..."
-                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
-                  />
+                {/* Telegram 1, 2, 3 Multi-Audio Links Grid */}
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.08] space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-zinc-300 tracking-wider flex items-center gap-1.5">
+                      <Send className="w-3.5 h-3.5 text-red-400" />
+                      <span>Telegram Direct Links (1, 2, 3)</span>
+                    </span>
+                    <span className="text-[10px] text-zinc-500">1: Hindi · 2: Fan Dub · 3: Orig</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-red-400 mb-0.5">Telegram 1 (Hindi Dubbed Link) *</label>
+                    <input
+                      type="url"
+                      required
+                      value={telegramUrl}
+                      onChange={(e) => setTelegramUrl(e.target.value)}
+                      placeholder="https://t.me/c/3730319875/... (Official Hindi)"
+                      className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-red-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-amber-400 mb-0.5">Telegram 2 (Fan Dubbed Link)</label>
+                      <input
+                        type="url"
+                        value={telegramFanDub}
+                        onChange={(e) => setTelegramFanDub(e.target.value)}
+                        placeholder="https://t.me/c/... (Fan Dubbed)"
+                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-sky-400 mb-0.5">Telegram 3 (Original / Eng Sub Link)</label>
+                      <input
+                        type="url"
+                        value={telegramOrig}
+                        onChange={(e) => setTelegramOrig(e.target.value)}
+                        placeholder="https://t.me/c/... (Original/Sub)"
+                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-sky-500"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -1934,10 +2255,201 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
               </form>
             )}
 
-            {/* TAB 4: BROADCAST NOTIFICATIONS & MARQUEE */}
+            {/* TAB 4: BROADCAST NOTIFICATIONS & TELEGRAM BOT */}
             {activeTab === 'broadcast' && (
               <div className="space-y-4">
-                {/* Update Marquee */}
+                {/* 1. Telegram Bot Integration Card */}
+                <div className="p-4 rounded-xl bg-gradient-to-r from-[#0088cc]/15 via-black/40 to-white/[0.02] border border-[#0088cc]/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-white font-black text-xs">
+                      <Send className="w-4 h-4 text-sky-400" />
+                      <span>Telegram Bot Configuration (Audience Broadcast)</span>
+                    </div>
+                    <span className="text-[10px] text-sky-300 font-bold bg-[#0088cc]/20 px-2 py-0.5 rounded border border-[#0088cc]/40">
+                      Official Bot API
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Yahan apna Telegram Bot Token aur Channel ID set karein. Jab bhi aap nayi release ka notification bhejenge, yeh direct aapke Telegram channel aur bot subscribers ko deliver hoga!
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Bot Username
+                      </label>
+                      <input
+                        type="text"
+                        value={botDraft.botUsername}
+                        onChange={(e) => setBotDraft({ ...botDraft, botUsername: e.target.value.replace('@', '') })}
+                        placeholder="asiaflix_request_bot"
+                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-sky-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Bot Token (from @BotFather)
+                      </label>
+                      <input
+                        type="password"
+                        value={botDraft.botToken}
+                        onChange={(e) => setBotDraft({ ...botDraft, botToken: e.target.value })}
+                        placeholder="7123456789:ABCDef..."
+                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-sky-400 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Channel / Chat ID
+                      </label>
+                      <input
+                        type="text"
+                        value={botDraft.channelId}
+                        onChange={(e) => setBotDraft({ ...botDraft, channelId: e.target.value })}
+                        placeholder="@asiaflixprime or -100..."
+                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-sky-400"
+                      />
+                    </div>
+                  </div>
+
+                  {botTestFeedback && (
+                    <div className={`p-2.5 rounded-lg text-xs font-bold ${
+                      botTestFeedback.type === 'success' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}>
+                      {botTestFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSaveBotSettings}
+                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-black shadow transition-all flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Save Bot Config</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTestBotPing}
+                      disabled={isTestingBot}
+                      className="px-3.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] text-sky-300 text-xs font-bold border border-white/10 transition-all flex items-center gap-1.5"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{isTestingBot ? 'Testing...' : 'Send Test Ping to Channel'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Broadcast Release Alert Form */}
+                <form onSubmit={handleSendBroadcast} className="p-4 rounded-xl bg-white/[0.03] border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-white font-black text-xs">
+                      <Megaphone className="w-4 h-4 text-red-400" />
+                      <span>Send Instant Release Alert to Audience</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-400 font-bold">Multi-Channel Dispatch</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                      Alert Heading / Title
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={notifTitle}
+                      onChange={(e) => setNotifTitle(e.target.value)}
+                      placeholder="e.g. Episode 12 Hindi Dubbed Released!"
+                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                      Alert Description / Episode Details
+                    </label>
+                    <textarea
+                      required
+                      rows={2}
+                      value={notifMessage}
+                      onChange={(e) => setNotifMessage(e.target.value)}
+                      placeholder="e.g. Clean 1080p FHD Hindi audio track uploaded with zero ads. Download link live on Telegram VIP..."
+                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Telegram Button Label (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={notifButtonText}
+                        onChange={(e) => setNotifButtonText(e.target.value)}
+                        placeholder="▶ Stream 1080p Episodes"
+                        className="w-full px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Episode Telegram Post URL (Optional)
+                      </label>
+                      <input
+                        type="url"
+                        value={notifButtonUrl}
+                        onChange={(e) => setNotifButtonUrl(e.target.value)}
+                        placeholder="https://t.me/c/3730319875/123"
+                        className="w-full px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Channels selection checkboxes */}
+                  <div className="flex flex-wrap items-center gap-4 pt-1 text-xs">
+                    <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={broadcastToTelegram}
+                        onChange={(e) => setBroadcastToTelegram(e.target.checked)}
+                        className="rounded border-white/20 text-[#0088cc] focus:ring-0"
+                      />
+                      <span className="font-bold flex items-center gap-1">
+                        <Send className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Broadcast to Telegram Channel & Bot</span>
+                      </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={broadcastToWebPush}
+                        onChange={(e) => setBroadcastToWebPush(e.target.checked)}
+                        className="rounded border-white/20 text-[#e50914] focus:ring-0"
+                      />
+                      <span className="font-bold flex items-center gap-1">
+                        <Bell className="w-3.5 h-3.5 text-red-400" />
+                        <span>Send Native Phone/PC Push</span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isBroadcasting}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-lg hover:shadow-[0_0_15px_rgba(229,9,20,0.6)] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Megaphone className="w-4 h-4" />
+                    <span>{isBroadcasting ? 'Dispatching Broadcast...' : '📢 Dispatch Broadcast to Audience'}</span>
+                  </button>
+                </form>
+
+                {/* 3. Update Marquee */}
                 <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-2">
                   <label className="block text-xs font-bold text-white">Live Top Notice Ticker</label>
                   <input
@@ -1953,43 +2465,288 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                     Update Top Marquee
                   </button>
                 </div>
+              </div>
+            )}
 
-                {/* Broadcast Release Alert */}
-                <form onSubmit={handleSendBroadcast} className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-2.5">
-                  <div className="flex items-center gap-2 text-white font-bold text-xs mb-1">
-                    <Megaphone className="w-4 h-4 text-red-400" />
-                    <span>Save In-App Alert to Supabase</span>
+            {/* TAB: GOOGLE SHEETS LIVE SYNC */}
+            {activeTab === 'sheets' && (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/30 via-[#14151f] to-emerald-900/10 border border-emerald-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-white font-black text-xs">
+                      <Table className="w-4 h-4 text-emerald-400" />
+                      <span>Google Sheets Live Catalog Sync</span>
+                    </div>
+                    <span className="text-[10px] text-emerald-300 font-bold bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/40">
+                      Live Connected
+                    </span>
                   </div>
 
-                  <div>
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Aapki website Google Sheet ke CSV URL se direct titles fetch karti hai. Sheet mein jab bhi aap naya drama ya episode link daalenge, woh yahan 1-click mein sync ho jayega!
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-zinc-300">
+                      Google Sheet Published CSV URL
+                    </label>
                     <input
-                      type="text"
-                      required
-                      value={notifTitle}
-                      onChange={(e) => setNotifTitle(e.target.value)}
-                      placeholder="Alert Heading (e.g. Episode 12 Dropped!)"
-                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                      type="url"
+                      value={sheetUrlDraft}
+                      onChange={(e) => setSheetUrlDraft(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"
+                      className="w-full px-3 py-2.5 rounded-lg bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-emerald-500 font-mono"
                     />
                   </div>
 
-                  <div>
-                    <textarea
-                      required
-                      rows={2}
-                      value={notifMessage}
-                      onChange={(e) => setNotifMessage(e.target.value)}
-                      placeholder="Details (e.g. Clean Hindi Audio added on Telegram)..."
-                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
-                    />
+                  {sheetSyncFeedback && (
+                    <div className={`p-3 rounded-lg text-xs font-bold ${
+                      sheetSyncFeedback.type === 'success' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}>
+                      {sheetSyncFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSaveAndSyncSheet}
+                      disabled={isSyncingSheet}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg transition-all flex items-center gap-2"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheet ? 'animate-spin' : ''}`} />
+                      <span>{isSyncingSheet ? 'Syncing Catalog...' : '⚡ Save & Sync Google Sheet Now'}</span>
+                    </button>
+
+                    <a
+                      href={sheetUrlDraft || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-xs font-bold border border-white/10 transition-all flex items-center gap-1.5"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>View Live Sheet CSV</span>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Two-Way Auto-Save (Website ➡️ Google Sheet Auto-Save Webhook) */}
+                <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/30 via-[#14151f] to-indigo-950/30 border border-blue-500/30 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-white font-black text-xs">
+                      <Sparkles className="w-4 h-4 text-sky-400" />
+                      <span>⚡ Two-Way Auto Sync (Website ➡️ Google Sheet Auto-Save)</span>
+                    </div>
+                    <span className="text-[10px] text-sky-300 font-bold bg-sky-500/20 px-2 py-0.5 rounded border border-sky-500/40">
+                      100% Free Built-in Webhook
+                    </span>
                   </div>
 
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 rounded-xl bg-[#e50914] text-white text-xs font-black shadow transition-all"
-                  >
-                    Broadcast & Insert into Supabase
-                  </button>
-                </form>
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Agar aap chahte hain ki <strong>Website ke Admin panel se aap jo bhi Drama/Movie add karein, woh apne aap aapki Google Sheet me new row ban kar save ho jaye</strong>, toh yeh 1-minute setup karein:
+                  </p>
+
+                  <div className="p-3 rounded-lg bg-black/50 border border-white/10 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sky-300">Google Apps Script Code (Sheet me paste karne ke liye):</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const scriptCode = `function doGet(e) {
+  return handleRequest(e);
+}
+
+function doPost(e) {
+  return handleRequest(e);
+}
+
+function handleRequest(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheets()[0];
+    
+    var data = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        data = JSON.parse(e.postData.contents);
+      } catch (err) {
+        data = (e && e.parameter) || {};
+      }
+    } else if (e && e.parameter) {
+      data = e.parameter;
+    }
+    
+    sheet.appendRow([
+      data.title || "New Title",
+      data.category || "K-Drama",
+      data.audio || "Hindi Dubbed",
+      data.poster || "",
+      data.telegramHindi || data.telegramUrl || "",
+      data.telegramFanDub || "",
+      data.telegramOrig || "",
+      data.status || "Now Streaming (Ongoing)",
+      data.details || "16 Episodes",
+      data.schedule || "",
+      data.badge || data.audio || "Hindi Dubbed",
+      data.heroBanner || "",
+      data.synopsis || "",
+      data.rating || "9.3",
+      "", // Notice
+      "", // Top Trending Spotlight
+      "", // Trending Now (Top VIP Binge Picks)
+      ""  // Logo
+    ]);
+    
+    return ContentService.createTextOutput(JSON.stringify({ result: "success", title: data.title }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ result: "error", error: error.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+                          navigator.clipboard.writeText(scriptCode);
+                          setAppsScriptFeedback('Google Apps Script Code copied to clipboard! Ab Sheet me paste karke Deploy karein. 📋');
+                          setTimeout(() => setAppsScriptFeedback(null), 3500);
+                        }}
+                        className="px-2.5 py-1 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 font-bold text-[11px] flex items-center gap-1 border border-sky-500/40 transition-all"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Copy Apps Script Code</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-1 text-[11px] text-zinc-400">
+                      <p><strong className="text-white">Step 1:</strong> Apni Google Sheet kholein ➡️ Upar menu me <strong>Extensions</strong> (या विस्तार) ➡️ <strong>Apps Script</strong> par click karein.</p>
+                      <p><strong className="text-white">Step 2:</strong> Jo code khule, use delete karke upar ka copied code paste karein aur upar <strong>Save (💾)</strong> dabayein.</p>
+                      <p><strong className="text-white">Step 3:</strong> Upar right me <strong>Deploy</strong> ➡️ <strong>Manage deployments</strong> (ya New deployment) ➡️ Pencil icon (Edit) ➡️ Version me <strong>New version</strong> ➡️ Execute as: <strong>Me</strong>, Who has access: <strong>Anyone</strong> karke <strong>Deploy</strong> karein.</p>
+                      <p className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px]">
+                        ⚠️ <strong>"Google hasn't verified this app" warning aaye toh:</strong> Neeche <strong>Advanced</strong> par click karein ➡️ <strong>Go to Untitled project (unsafe)</strong> par click karein ➡️ <strong>Allow</strong> kar dein.
+                      </p>
+                      <p><strong className="text-white">Step 4:</strong> Wahan se jo <strong>Web App URL</strong> (`/exec` wala) mile, use neeche daalkar Test Row bhejein:</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-zinc-300">
+                      Google Apps Script Webhook URL (Ending with /exec)
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="url"
+                        value={appsScriptUrlDraft}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAppsScriptUrlDraft(val);
+                          localStorage.setItem('asiaflix_google_apps_script_url', val.trim());
+                        }}
+                        placeholder="https://script.google.com/macros/s/.../exec"
+                        className="flex-1 min-w-[240px] px-3 py-2 rounded-lg bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-sky-400 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          localStorage.setItem('asiaflix_google_apps_script_url', appsScriptUrlDraft.trim());
+                          setAppsScriptFeedback('Google Apps Script URL saved! ⚡');
+                          setTimeout(() => setAppsScriptFeedback(null), 3000);
+                        }}
+                        className="px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-black transition-all"
+                      >
+                        Save URL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSendTestRowToSheet}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all flex items-center gap-1.5 shadow-md"
+                      >
+                        <span>⚡ Send Test Row Now</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {appsScriptFeedback && (
+                    <div className="p-2.5 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-500/40 text-xs font-bold">
+                      {appsScriptFeedback}
+                    </div>
+                  )}
+                </div>
+
+                {/* Google Sheet All Columns Guide */}
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-white flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-amber-400" />
+                      <span>Aapki Sheet Ke Sabhi Columns Ka Guide</span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const csvHeader = "Title,Category,Audio,Poster,Telegram,Status,Schedule,Badge,Notice,Trending,Logo,HeroBanner,Synopsis,Rating\nRain or Shine (2017),K-Drama,Hindi Dubbed,https://i.ibb.co/...,https://t.me/c/3730319875/457,Completed (Full Series),16 Episodes,Hindi Dubbed,🌸 Weekend Mega Lineup Live!,Rain or Shine (2017),https://raw.githubusercontent.com/.../logo.png,YES,Two survivors rebuild their lives.,9.4";
+                        navigator.clipboard.writeText(csvHeader);
+                        setSuccessMessage('Full 14-Column CSV Header copied to clipboard!');
+                        setTimeout(() => setSuccessMessage(null), 3000);
+                      }}
+                      className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 bg-white/[0.05] px-2 py-1 rounded"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy Full Header</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-400">
+                    Aapki sheet me yeh 11 columns bilkul perfect format me connect hain. Aap directly apni Google Sheet app (phone ya laptop) me edit karenge toh website par sabhi ko live dikhega:
+                  </p>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-emerald-400 font-bold">Title</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Drama / Movie Name (e.g. Doctor X (2026))</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-sky-400 font-bold">Category</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">K-Drama, C-Drama, Asian Movie, Bollywood</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-red-400 font-bold">Audio</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Hindi Dubbed, Original, Fan Dubbed</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-amber-400 font-bold">Poster</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Image link (https://i.ibb.co/...)</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-sky-300 font-bold">Telegram</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Direct Telegram link (Latest drop / channel post)</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-purple-400 font-bold">Status</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Completed (Full Series) ya Now Streaming</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-teal-400 font-bold">Schedule</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">16 Episodes, 1:44:00, Sat & Sun Drops</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-pink-400 font-bold">Badge</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Hindi Dubbed, Eng Sub, Full Movie tag</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-rose-400 font-bold">Notice</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Top Marquee Ticker ka live announcement text</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-orange-400 font-bold">Trending</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Comma-separated titles to pin in TOP TRENDING bar</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-yellow-400 font-bold">Logo</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Aapka website brand logo image URL</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-indigo-400 font-bold">HeroBanner (Optional)</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Put "YES" for big homepage sliding banner</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DramaItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, WeekendSettings, HeroBannerSlide } from './types/drama';
+import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from './types/drama';
 import { INITIAL_DRAMAS, INITIAL_NOTIFICATIONS, INITIAL_TICKETS, INITIAL_HERO_BANNERS } from './data/initialCatalog';
 import { SakuraCanvas } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
+import { AudienceNotificationBanner } from './components/AudienceNotificationBanner';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { SpotlightBar } from './components/SpotlightBar';
@@ -29,6 +30,45 @@ import {
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4prDqYUbk87MvTOWLhH9X85aCr9bbVqdI-F6y4raT3sFqvuuPg0o9IkwQ9kzBK4VGFOiDybluNfdm/pub?output=csv";
 
 export default function App() {
+  // --- GOOGLE SHEETS DYNAMIC URL STATE ---
+  const [googleSheetUrl, setGoogleSheetUrl] = useState<string>(() => {
+    return localStorage.getItem('asiaflix_google_sheet_url_v1') || SHEET_CSV_URL;
+  });
+
+  // --- CUSTOM BRAND LOGO URL (FROM SHEET OR SETTINGS) ---
+  const [customLogoUrl, setCustomLogoUrl] = useState<string>(() => {
+    return localStorage.getItem('asiaflix_custom_logo_url') || '';
+  });
+
+  useEffect(() => {
+    if (customLogoUrl) {
+      localStorage.setItem('asiaflix_custom_logo_url', customLogoUrl);
+    }
+  }, [customLogoUrl]);
+
+  // --- TELEGRAM BOT BROADCAST CONFIG STATE ---
+  const [telegramBotSettings, setTelegramBotSettings] = useState<TelegramBotSettings>(() => {
+    const saved = localStorage.getItem('asiaflix_telegram_bot_settings_v1');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return {
+      botUsername: 'asiaflix_request_bot',
+      botToken: '',
+      channelId: '@asiaflixprime',
+      isEnabled: true,
+    };
+  });
+
+  // --- CATALOG VIEW LAYOUT MODE ('grid' | 'cinema' for laptop-style feed on phone) ---
+  const [catalogLayoutMode, setCatalogLayoutMode] = useState<'grid' | 'cinema'>(() => {
+    return (localStorage.getItem('asiaflix_catalog_layout_mode_v1') as 'grid' | 'cinema') || 'grid';
+  });
+
   // --- DRAMA CATALOG STATE WITH CURATION RECOVERY ---
   const [dramas, setDramas] = useState<DramaItem[]>(() => {
     // 1. Load custom-added dramas
@@ -220,6 +260,18 @@ export default function App() {
     localStorage.setItem('asiaflix_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
+  useEffect(() => {
+    localStorage.setItem('asiaflix_google_sheet_url_v1', googleSheetUrl);
+  }, [googleSheetUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('asiaflix_telegram_bot_settings_v1', JSON.stringify(telegramBotSettings));
+  }, [telegramBotSettings]);
+
+  useEffect(() => {
+    localStorage.setItem('asiaflix_catalog_layout_mode_v1', catalogLayoutMode);
+  }, [catalogLayoutMode]);
+
   // Global Admin Shortcut (Ctrl+Shift+A or Alt+A)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -316,11 +368,12 @@ export default function App() {
     await fetchGoogleSheetData();
   };
 
-  // Parse CSV function
+  // Parse CSV function with robust delimiter and newline support
   const parseCSV = (text: string) => {
-    const lines = text.trim().split(/\r\n|\n/);
+    const lines = text.trim().split(/\r\n|\r|\n/);
     const rows: string[][] = [];
     for (const line of lines) {
+      if (!line.trim()) continue;
       const row: string[] = [];
       let inQuotes = false;
       let token = '';
@@ -341,149 +394,410 @@ export default function App() {
     return rows;
   };
 
-  const fetchGoogleSheetData = async () => {
+  const fetchGoogleSheetData = async (targetUrl?: string): Promise<{ success: boolean; count?: number; error?: string }> => {
+    const url = targetUrl || googleSheetUrl || SHEET_CSV_URL;
     try {
-      const res = await fetch(SHEET_CSV_URL);
-      if (res.ok) {
-        const text = await res.text();
-        const rows = parseCSV(text);
-        if (rows.length >= 2) {
-          const header = rows[0].map((h) => h.toLowerCase());
-          const titleIdx = header.findIndex((h) => h.includes('title') || h.includes('name'));
-          const catIdx = header.findIndex((h) => h.includes('category') || h.includes('type'));
-          const audioIdx = header.findIndex((h) => h.includes('audio') || h.includes('dub'));
-          const posterIdx = header.findIndex((h) => h.includes('poster') || h.includes('image'));
-          const telegramIdx = header.findIndex((h) => h.includes('telegram') || h.includes('link'));
-          const statusIdx = header.findIndex((h) => h.includes('status'));
-          const scheduleIdx = header.findIndex((h) => h.includes('schedule') || h.includes('episode'));
-          const noticeIdx = header.findIndex((h) => h.includes('notice'));
+      let text = '';
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          text = await res.text();
+        }
+      } catch (netErr) {
+        console.warn('Network fetch from Google Sheet URL failed, trying local fallback:', netErr);
+      }
 
-          if (rows[1][noticeIdx] && rows[1][noticeIdx].trim()) {
-            setMarqueeText(rows[1][noticeIdx].trim());
+      // If online sheet failed or returned empty, load the direct catalog asset
+      if (!text || text.length < 50) {
+        try {
+          const localRes = await fetch('/assets/aistudio/AsiaFlix_Catalog_5a28a2f8');
+          if (localRes.ok) {
+            text = await localRes.text();
+          }
+        } catch (localErr) {
+          console.warn('Local catalog fallback failed:', localErr);
+        }
+      }
+
+      if (!text) {
+        return { success: false, error: 'Google Sheet fetch failed and local catalog unavailable.' };
+      }
+
+      const rows = parseCSV(text);
+      if (rows.length < 2) {
+        return { success: false, error: 'Google Sheet khali hai ya koi rows nahi mili.' };
+      }
+
+      const header = rows[0].map((h) => h.toLowerCase().trim());
+      const titleIdx = header.findIndex((h) => h === 'title' || h.includes('name'));
+      const catIdx = header.findIndex((h) => h.includes('category') || h.includes('type'));
+      const audioIdx = header.findIndex((h) => h.includes('audio') || h.includes('dub'));
+      const posterIdx = header.findIndex((h) => h.includes('poster') || h.includes('image'));
+
+      // 1. Telegram 1: Hindi Dubbed link
+      const telegramHindiIdx = header.findIndex((h) => 
+        h.includes('telegram (hindi)') || 
+        h.includes('telegram 1') || 
+        h.includes('telegram1') || 
+        h.includes('hindi link') ||
+        (h.startsWith('telegram') && !h.includes('2') && !h.includes('3') && !h.includes('fan') && !h.includes('orig'))
+      );
+
+      // 2. Telegram 2: Fan Dubbed link
+      const telegramFanDubIdx = header.findIndex((h) => 
+        h.includes('telegram2') || 
+        h.includes('telegram 2') || 
+        h.includes('fan dub') || 
+        h.includes('fan-dub') || 
+        h.includes('fandub')
+      );
+
+      // 3. Telegram 3: Original / Eng Sub link
+      const telegramOrigIdx = header.findIndex((h) => 
+        h.includes('telegram3') || 
+        h.includes('telegram 3') || 
+        h.includes('orig') || 
+        h.includes('eng sub') || 
+        h.includes('sub')
+      );
+
+      const statusIdx = header.findIndex((h) => h === 'status');
+      
+      // 4. Details column: Holds episode count / runtime e.g. "16 Episodes", "1:44:00", "2:14:19", "Full Movie"
+      const detailsIdx = header.findIndex((h) => h === 'details' || h.includes('detail') || h.includes('runtime') || h.includes('episode count'));
+      
+      // 5. Schedule column: Holds release day/time schedule e.g. "Sat & Sun 7:00 PM IST" or blank if completed
+      const scheduleIdx = header.findIndex((h) => h === 'schedule' || h.includes('shedule') || h.includes('timing'));
+
+      const badgeIdx = header.findIndex((h) => h === 'badge');
+      const noticeIdx = header.findIndex((h) => h === 'notice');
+      const trendingIdx = header.findIndex((h) => h.includes('spotlight') || (h.includes('trending') && !h.includes('binge') && !h.includes('now')));
+      const trendingNowIdx = header.findIndex((h) => h.includes('trending now') || h.includes('binge'));
+      const logoIdx = header.findIndex((h) => h === 'logo');
+      const bannerIdx = header.findIndex((h) => h.includes('banner') || h.includes('hero'));
+      const synopsisIdx = header.findIndex((h) => h.includes('synopsis') || h.includes('desc') || h.includes('plot'));
+      const ratingIdx = header.findIndex((h) => h.includes('rating') || h.includes('score'));
+      const weekendIdx = header.findIndex((h) => h.includes('weekend') || h.includes('lineup') || h.includes('mega'));
+
+      // Scan all rows for global sheet settings (Notice, Trending list, Logo URL)
+      let foundNotice = '';
+      let foundTrendingTitles: string[] = [];
+      let foundLogoUrl = '';
+
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!foundNotice && noticeIdx >= 0 && row[noticeIdx]?.trim()) {
+          foundNotice = row[noticeIdx].trim();
+        }
+        if (trendingIdx >= 0 && row[trendingIdx]?.trim()) {
+          const splitTitles = row[trendingIdx]
+            .split(',')
+            .map((t) => t.trim().toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim())
+            .filter(Boolean);
+          foundTrendingTitles.push(...splitTitles);
+        }
+        if (trendingNowIdx >= 0 && row[trendingNowIdx]?.trim()) {
+          const splitNow = row[trendingNowIdx]
+            .split(',')
+            .map((t) => t.trim().toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim())
+            .filter(Boolean);
+          foundTrendingTitles.push(...splitNow);
+        }
+        if (!foundLogoUrl && logoIdx >= 0 && row[logoIdx]?.trim()) {
+          let rawLogo = row[logoIdx].trim();
+          if (rawLogo.includes('github.com') && rawLogo.includes('/blob/')) {
+            rawLogo = rawLogo.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+          }
+          foundLogoUrl = rawLogo;
+        }
+      }
+
+      foundTrendingTitles = Array.from(new Set(foundTrendingTitles));
+
+      if (foundNotice) {
+        setMarqueeText(foundNotice);
+      }
+      if (foundLogoUrl) {
+        setCustomLogoUrl(foundLogoUrl);
+      }
+
+      const parsedDramasMap = new Map<string, DramaItem>();
+      const parsedHeroBanners: HeroBannerSlide[] = [];
+
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        const title = row[titleIdx >= 0 ? titleIdx : 0];
+        if (!title || !title.trim()) continue;
+
+        const category = row[catIdx >= 0 ? catIdx : 1] || 'K-Drama';
+        const audio = (row[audioIdx >= 0 ? audioIdx : 2] || 'Hindi Dubbed') as AudioType;
+        const poster = row[posterIdx >= 0 ? posterIdx : 3];
+
+        // 3 Dedicated Telegram Links
+        const linkHindi = (telegramHindiIdx >= 0 ? row[telegramHindiIdx]?.trim() : '') || '';
+        const linkFanDub = (telegramFanDubIdx >= 0 ? row[telegramFanDubIdx]?.trim() : '') || '';
+        const linkOrig = (telegramOrigIdx >= 0 ? row[telegramOrigIdx]?.trim() : '') || '';
+
+        // Fallback primary Telegram link
+        const primaryTelegram = (
+          (linkHindi && linkHindi.startsWith('http')) ? linkHindi :
+          (linkFanDub && linkFanDub.startsWith('http')) ? linkFanDub :
+          (linkOrig && linkOrig.startsWith('http')) ? linkOrig :
+          (telegramHindiIdx >= 0 && row[telegramHindiIdx]?.trim().startsWith('http')) ? row[telegramHindiIdx].trim() :
+          'https://t.me/+yJH68LvfrT9hZDVl'
+        );
+
+        const statusRaw = row[statusIdx >= 0 ? statusIdx : 7] || 'Now Streaming (Ongoing)';
+        const detailsVal = (detailsIdx >= 0 ? row[detailsIdx]?.trim() : '') || '';
+        const scheduleVal = (scheduleIdx >= 0 ? row[scheduleIdx]?.trim() : '') || '';
+        const badgeVal = (badgeIdx >= 0 ? row[badgeIdx]?.trim() : '') || '';
+        const synopsisVal = (synopsisIdx >= 0 ? row[synopsisIdx]?.trim() : '') || '';
+        const ratingVal = ratingIdx >= 0 && row[ratingIdx]?.trim() ? parseFloat(row[ratingIdx]) : 9.3;
+        const isBannerRow = bannerIdx >= 0 && (row[bannerIdx]?.trim().toLowerCase() === 'yes' || row[bannerIdx]?.trim().toLowerCase() === 'true');
+        const isWeekendRow = weekendIdx >= 0 && (row[weekendIdx]?.trim().toLowerCase() === 'yes' || row[weekendIdx]?.trim().toLowerCase() === 'true');
+
+        const cleanTitle = title.trim();
+        const normalizedTitle = cleanTitle.toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim();
+
+        // Check if explicitly featured in Trending column of the sheet
+        const isTrendingInSheet = foundTrendingTitles.some((t) => {
+          return normalizedTitle === t || normalizedTitle.includes(t) || t.includes(normalizedTitle);
+        });
+
+        // Find matching initial drama by title
+        const existing = INITIAL_DRAMAS.find((d) => {
+          const existingNorm = d.title.toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim();
+          return existingNorm === normalizedTitle || existingNorm.includes(normalizedTitle) || normalizedTitle.includes(existingNorm);
+        });
+
+        const dramaId = existing ? existing.id : `sheet-${cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+
+        // Determine release year from title or row
+        const yearMatch = cleanTitle.match(/\b(20\d\d)\b/);
+        const releaseYear = existing?.releaseYear || (yearMatch ? parseInt(yearMatch[1]) : 2026);
+
+        // Map category safely
+        let dramaCategory = existing?.category;
+        if (!dramaCategory) {
+          const catLower = category.toLowerCase();
+          if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
+          else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
+          else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
+          else if (catLower.includes('j-drama') || catLower.includes('japanese')) dramaCategory = 'J-Drama';
+          else if (catLower.includes('sci-fi')) dramaCategory = 'Sci-Fi Series';
+          else dramaCategory = 'K-Drama';
+        }
+
+        const effectivePoster = (poster && poster.startsWith('http')) ? poster : existing?.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
+
+        // Build list of audios for this drama
+        const initialAudios: AudioType[] = [];
+        if ((linkHindi && linkHindi.startsWith('http')) || audio === 'Hindi Dubbed' || badgeVal.toLowerCase().includes('hindi')) {
+          initialAudios.push('Hindi Dubbed');
+        }
+        if ((linkFanDub && linkFanDub.startsWith('http')) || audio === 'Fan Dubbed' || audio.toLowerCase().includes('fan') || badgeVal.toLowerCase().includes('fan')) {
+          initialAudios.push('Fan Dubbed');
+        }
+        if ((linkOrig && linkOrig.startsWith('http')) || audio.toLowerCase().includes('original') || audio.toLowerCase().includes('eng sub') || badgeVal.toLowerCase().includes('eng sub') || badgeVal.toLowerCase().includes('sub')) {
+          initialAudios.push('Original / Eng Sub');
+        }
+        if (initialAudios.length === 0) {
+          initialAudios.push(audio || 'Hindi Dubbed');
+        }
+
+        // Determine effective scheduleInfo display string
+        let effectiveScheduleInfo = '';
+        if (scheduleVal) {
+          effectiveScheduleInfo = scheduleVal;
+        } else if (detailsVal) {
+          effectiveScheduleInfo = detailsVal;
+        } else if (statusRaw.includes('Completed')) {
+          effectiveScheduleInfo = 'Full Series';
+        } else {
+          effectiveScheduleInfo = '2026 Drops';
+        }
+
+        // Build individual audio episode items for direct access
+        const initialEpisodes: EpisodeItem[] = [];
+
+        if (linkHindi && linkHindi.startsWith('http')) {
+          initialEpisodes.push({
+            id: `ep-${dramaId}-hindi`,
+            episodeNumber: 'Telegram 1',
+            title: `${cleanTitle} · Hindi Dubbed 1080p`,
+            audio: 'Hindi Dubbed',
+            telegramUrl: linkHindi,
+            duration: detailsVal || '1080p FHD',
+            quality: '1080p FHD',
+            isMerged: true,
+          });
+        }
+        if (linkFanDub && linkFanDub.startsWith('http')) {
+          initialEpisodes.push({
+            id: `ep-${dramaId}-fandub`,
+            episodeNumber: 'Telegram 2',
+            title: `${cleanTitle} · Fan Dubbed 1080p`,
+            audio: 'Fan Dubbed',
+            telegramUrl: linkFanDub,
+            duration: detailsVal || '1080p FHD',
+            quality: '1080p FHD',
+            isMerged: true,
+          });
+        }
+        if (linkOrig && linkOrig.startsWith('http')) {
+          initialEpisodes.push({
+            id: `ep-${dramaId}-orig`,
+            episodeNumber: 'Telegram 3',
+            title: `${cleanTitle} · Original Audio / Eng Sub`,
+            audio: 'Original / Eng Sub',
+            telegramUrl: linkOrig,
+            duration: detailsVal || '1080p FHD',
+            quality: '1080p FHD',
+            isMerged: true,
+          });
+        }
+
+        if (initialEpisodes.length === 0) {
+          initialEpisodes.push({
+            id: `ep-${dramaId}-main`,
+            episodeNumber: 'Latest Drop',
+            title: `${cleanTitle} · ${audio || 'Hindi Dubbed'}`,
+            audio: audio || 'Hindi Dubbed',
+            telegramUrl: primaryTelegram,
+            duration: detailsVal || scheduleVal || '1080p FHD',
+            quality: '1080p FHD',
+            isMerged: true,
+          });
+        }
+
+        if (parsedDramasMap.has(dramaId)) {
+          // MERGE multiple audio rows into single drama card to eliminate duplicates
+          const existingEntry = parsedDramasMap.get(dramaId)!;
+
+          if (linkHindi && linkHindi.startsWith('http')) {
+            existingEntry.telegramHindi = linkHindi;
+            if (!existingEntry.availableAudios.includes('Hindi Dubbed')) {
+              existingEntry.availableAudios.push('Hindi Dubbed');
+            }
+          }
+          if (linkFanDub && linkFanDub.startsWith('http')) {
+            existingEntry.telegramFanDub = linkFanDub;
+            if (!existingEntry.availableAudios.includes('Fan Dubbed')) {
+              existingEntry.availableAudios.push('Fan Dubbed');
+            }
+          }
+          if (linkOrig && linkOrig.startsWith('http')) {
+            existingEntry.telegramOriginal = linkOrig;
+            if (!existingEntry.availableAudios.includes('Original / Eng Sub')) {
+              existingEntry.availableAudios.push('Original / Eng Sub');
+            }
           }
 
-          const parsedDramasMap = new Map<string, DramaItem>();
-
-          for (let r = 1; r < rows.length; r++) {
-            const row = rows[r];
-            const title = row[titleIdx >= 0 ? titleIdx : 0];
-            if (!title || !title.trim()) continue;
-
-            const category = row[catIdx >= 0 ? catIdx : 1] || 'K-Drama';
-            const audio = (row[audioIdx >= 0 ? audioIdx : 2] || 'Hindi Dubbed') as AudioType;
-            const poster = row[posterIdx >= 0 ? posterIdx : 3];
-            const telegram = row[telegramIdx >= 0 ? telegramIdx : 4] || 'https://t.me/+yJH68LvfrT9hZDVl';
-            const status = row[statusIdx >= 0 ? statusIdx : 5] || 'Now Streaming (Ongoing)';
-            const schedule = row[scheduleIdx >= 0 ? scheduleIdx : 6] || '16 Episodes';
-
-            const cleanTitle = title.trim();
-            const normalizedTitle = cleanTitle.toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim();
-
-            // Find matching initial drama by title
-            const existing = INITIAL_DRAMAS.find((d) => {
-              const existingNorm = d.title.toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim();
-              return existingNorm === normalizedTitle || existingNorm.includes(normalizedTitle) || normalizedTitle.includes(existingNorm);
-            });
-
-            const dramaId = existing ? existing.id : `sheet-${cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-
-            if (parsedDramasMap.has(dramaId)) {
-              // MERGE multiple audio rows into single drama card to eliminate duplicates
-              const existingEntry = parsedDramasMap.get(dramaId)!;
-              if (audio && !existingEntry.availableAudios.includes(audio)) {
-                existingEntry.availableAudios.push(audio);
-              }
-              if (telegram && telegram !== 'https://t.me/+yJH68LvfrT9hZDVl' && (!existingEntry.telegramUrl || existingEntry.telegramUrl === 'https://t.me/+yJH68LvfrT9hZDVl')) {
-                existingEntry.telegramUrl = telegram;
-              }
-              if (poster && poster.startsWith('http') && (!existingEntry.poster || existingEntry.poster.includes('unsplash'))) {
-                existingEntry.poster = poster;
-                existingEntry.backdrop = poster;
-              }
-              if (telegram) {
-                const epExists = existingEntry.episodes.some((e) => e.telegramUrl === telegram && e.audio === audio);
-                if (!epExists) {
-                  existingEntry.episodes.push({
-                    id: `ep-${dramaId}-${existingEntry.episodes.length + 1}`,
-                    episodeNumber: existingEntry.episodes.length + 1,
-                    title: `${cleanTitle} (${audio})`,
-                    audio,
-                    telegramUrl: telegram,
-                    duration: schedule || 'Full',
-                    quality: '1080p FHD',
-                  });
-                }
-              }
-              continue;
-            }
-
-            // Determine release year from title or row
-            const yearMatch = cleanTitle.match(/\b(20\d\d)\b/);
-            const releaseYear = existing?.releaseYear || (yearMatch ? parseInt(yearMatch[1]) : 2026);
-
-            // Map category safely
-            let dramaCategory = existing?.category;
-            if (!dramaCategory) {
-              const catLower = category.toLowerCase();
-              if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
-              else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
-              else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
-              else if (catLower.includes('j-drama') || catLower.includes('japanese')) dramaCategory = 'J-Drama';
-              else dramaCategory = 'K-Drama';
-            }
-
-            parsedDramasMap.set(dramaId, {
-              id: dramaId,
-              title: cleanTitle,
-              originalTitle: existing?.originalTitle,
-              category: dramaCategory,
-              releaseYear,
-              status: (status.includes('Completed') ? 'Completed (Full Series)' : status.includes('Coming') || status.includes('Upcoming') ? 'Coming Soon' : 'Now Streaming (Ongoing)'),
-              rating: existing?.rating || 9.2,
-              poster: (poster && poster.startsWith('http')) ? poster : existing?.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
-              backdrop: existing?.backdrop || (poster && poster.startsWith('http') ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1400'),
-              synopsis: existing?.synopsis || `Stream ${cleanTitle} in clean audio on AsiaFlix Prime Private Channel.`,
-              cast: existing?.cast || ['AsiaFlix Exclusive'],
-              tags: existing?.tags || ['Asian Drama', audio],
-              scheduleInfo: schedule || existing?.scheduleInfo || '2026 Release',
-              availableAudios: existing?.availableAudios ? Array.from(new Set([...existing.availableAudios, audio])) : [audio],
-              defaultAudio: audio || existing?.defaultAudio || 'Hindi Dubbed',
-              isFeatured: existing?.isFeatured || false,
-              isTrending: existing?.isTrending || true,
-              totalEpisodes: existing?.totalEpisodes || 16,
-              qualityBadge: '1080p FHD',
-              telegramUrl: telegram,
-              episodes: existing?.episodes || [
-                {
-                  id: `ep-${dramaId}-1`,
-                  episodeNumber: 'Full Pack',
-                  title: `${cleanTitle} 1080p FHD`,
-                  audio,
-                  telegramUrl: telegram,
-                  duration: schedule,
-                  quality: '1080p FHD',
-                  isMerged: true,
-                },
-              ],
-            });
+          if (detailsVal && !existingEntry.details) {
+            existingEntry.details = detailsVal;
+          }
+          if (scheduleVal && !existingEntry.schedule) {
+            existingEntry.schedule = scheduleVal;
+            existingEntry.scheduleInfo = scheduleVal;
           }
 
-          // Ensure all rich initial dramas are also included if not in sheet
-          INITIAL_DRAMAS.forEach((initial) => {
-            if (!parsedDramasMap.has(initial.id)) {
-              parsedDramasMap.set(initial.id, initial);
+          if (poster && poster.startsWith('http') && (!existingEntry.poster || existingEntry.poster.includes('unsplash'))) {
+            existingEntry.poster = poster;
+            existingEntry.backdrop = poster;
+          }
+
+          initialEpisodes.forEach((newEp) => {
+            const epExists = existingEntry.episodes.some((e) => e.telegramUrl === newEp.telegramUrl && e.audio === newEp.audio);
+            if (!epExists) {
+              existingEntry.episodes.push(newEp);
             }
           });
 
-          const uniqueParsed = Array.from(parsedDramasMap.values());
-          if (uniqueParsed.length > 0) {
-            mergePreservingCuratedAndCustom(uniqueParsed);
-          }
+          continue;
+        }
+
+        parsedDramasMap.set(dramaId, {
+          id: dramaId,
+          title: cleanTitle,
+          originalTitle: existing?.originalTitle,
+          category: dramaCategory,
+          releaseYear,
+          status: (statusRaw.includes('Completed') ? 'Completed (Full Series)' : statusRaw.includes('Coming') || statusRaw.includes('Upcoming') ? 'Coming Soon' : 'Now Streaming (Ongoing)'),
+          rating: ratingVal || existing?.rating || 9.2,
+          poster: effectivePoster,
+          backdrop: existing?.backdrop || effectivePoster,
+          synopsis: synopsisVal || existing?.synopsis || `Stream ${cleanTitle} in clean audio on AsiaFlix Prime Private Channel.`,
+          cast: existing?.cast || ['AsiaFlix Exclusive'],
+          tags: existing?.tags || ['Asian Drama', audio, badgeVal].filter(Boolean),
+          details: detailsVal || existing?.details || '16 Episodes',
+          schedule: scheduleVal || existing?.schedule || '',
+          scheduleInfo: effectiveScheduleInfo,
+          availableAudios: existing?.availableAudios ? Array.from(new Set([...existing.availableAudios, ...initialAudios])) : initialAudios,
+          defaultAudio: (linkHindi ? 'Hindi Dubbed' : linkFanDub ? 'Fan Dubbed' : linkOrig ? 'Original / Eng Sub' : audio) || 'Hindi Dubbed',
+          isFeatured: isTrendingInSheet || existing?.isFeatured || false,
+          isTrending: isTrendingInSheet || existing?.isTrending || true,
+          isSpotlight: isTrendingInSheet || existing?.isSpotlight || false,
+          spotlightTag: isTrendingInSheet ? '🔥 TOP TRENDING' : existing?.spotlightTag,
+          isWeekendLineup: isWeekendRow || existing?.isWeekendLineup || false,
+          weekendSlot: isWeekendRow ? 'Saturday Drop - 7:00 PM' : existing?.weekendSlot,
+          totalEpisodes: existing?.totalEpisodes || 16,
+          qualityBadge: badgeVal || '1080p FHD',
+          telegramUrl: primaryTelegram,
+          telegramHindi: linkHindi || (audio === 'Hindi Dubbed' ? primaryTelegram : undefined),
+          telegramFanDub: linkFanDub || (audio === 'Fan Dubbed' ? primaryTelegram : undefined),
+          telegramOriginal: linkOrig || (audio.includes('Original') ? primaryTelegram : undefined),
+          episodes: existing?.episodes && existing.episodes.length > 2 ? existing.episodes : initialEpisodes,
+        });
+
+        if (isBannerRow) {
+          parsedHeroBanners.push({
+            id: `banner-${dramaId}`,
+            title: cleanTitle,
+            backdropUrl: effectivePoster,
+            posterUrl: effectivePoster,
+            audio,
+            category: dramaCategory,
+            releaseYear,
+            rating: ratingVal || 9.8,
+            scheduleInfo: effectiveScheduleInfo || '1080p FHD',
+            synopsis: synopsisVal || `Watch ${cleanTitle} exclusively on AsiaFlix Prime.`,
+            badge: '🔥 VIP PICK',
+            telegramUrl: primaryTelegram,
+            isActive: true,
+          });
         }
       }
-    } catch (err) {
+
+      if (parsedHeroBanners.length > 0) {
+        setHeroBanners((prev) => {
+          const bannerIds = new Set(parsedHeroBanners.map((b) => b.id));
+          const existingFiltered = prev.filter((b) => !bannerIds.has(b.id));
+          return [...parsedHeroBanners, ...existingFiltered];
+        });
+      }
+
+      // Ensure all rich initial dramas are also included if not in sheet
+      INITIAL_DRAMAS.forEach((initial) => {
+        if (!parsedDramasMap.has(initial.id)) {
+          parsedDramasMap.set(initial.id, initial);
+        }
+      });
+
+      const uniqueParsed = Array.from(parsedDramasMap.values());
+      if (uniqueParsed.length > 0) {
+        mergePreservingCuratedAndCustom(uniqueParsed);
+      }
+
+      return { success: true, count: parsedDramasMap.size };
+    } catch (err: any) {
       console.warn('Google Sheets live sync notice: using verified catalog cache', err);
+      return { success: false, error: err.message || 'Google Sheet fetch failed.' };
     }
+  };
+
+  const handleUpdateGoogleSheetUrl = async (newUrl: string) => {
+    setGoogleSheetUrl(newUrl);
+    return await fetchGoogleSheetData(newUrl);
   };
 
   // --- WATCHLIST ACTIONS ---
@@ -785,6 +1099,12 @@ export default function App() {
       {/* Top Notice Running Marquee */}
       <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
 
+      {/* Audience Instant Push & Telegram Bot Alerts Banner */}
+      <AudienceNotificationBanner
+        botUsername={telegramBotSettings.botUsername}
+        onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
+      />
+
       {/* Header / Navbar */}
       <Navbar
         unreadNotifsCount={unreadCount}
@@ -798,6 +1118,7 @@ export default function App() {
         onOpenRequest={() => setIsRequestOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
         isAdminAuthenticated={isAdminAuthenticated}
+        logoUrl={customLogoUrl}
       />
 
       {/* Cinematic Hero Banner Carousel */}
@@ -897,14 +1218,16 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                {filteredDramas.map((drama) => (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
+                {filteredDramas.map((drama, idx) => (
                   <DramaCard
                     key={drama.id}
                     drama={drama}
                     onSelect={(d) => setSelectedDrama(d)}
                     onToggleWatchlist={handleToggleWatchlist}
                     isWatchlisted={isDramaWatchlisted(drama.id)}
+                    rank={idx + 1}
+                    isTopOne={idx === 0}
                   />
                 ))}
               </div>
@@ -1124,6 +1447,7 @@ export default function App() {
         notifications={notifications}
         onMarkAllAsRead={handleMarkAllNotifsAsRead}
         onSelectNotification={handleSelectNotification}
+        botUsername={telegramBotSettings.botUsername}
       />
 
       {/* 4. Request Drama Modal */}
@@ -1167,6 +1491,10 @@ export default function App() {
           isAuthenticatedParent={isAdminAuthenticated}
           onAuthSuccess={handleAdminAuthSuccess}
           onAuthLogout={handleAdminAuthLogout}
+          googleSheetUrl={googleSheetUrl}
+          onUpdateGoogleSheetUrl={handleUpdateGoogleSheetUrl}
+          telegramBotSettings={telegramBotSettings}
+          onUpdateTelegramBotSettings={setTelegramBotSettings}
         />
       )}
     </div>

@@ -155,6 +155,26 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
           🍿 Holly/Bolly
         </button>
+        <button
+          onClick={() => onSelectCategory('J-Drama')}
+          className={`px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedCategory === 'J-Drama'
+              ? 'bg-white/20 text-white border border-white/30'
+              : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
+          }`}
+        >
+          🇯🇵 J-Drama
+        </button>
+        <button
+          onClick={() => onSelectStatus(selectedStatus === 'Coming Soon' ? 'all' : 'Coming Soon')}
+          className={`px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+            selectedStatus === 'Coming Soon'
+              ? 'bg-amber-500 text-black font-black border border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+              : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20'
+          }`}
+        >
+          ⏳ Coming Soon
+        </button>
 
         {/* Release Year Dropdown */}
         <div className="flex items-center gap-1">

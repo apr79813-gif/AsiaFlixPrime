@@ -1,6 +1,6 @@
 import React from 'react';
 import { DramaItem } from '../types/drama';
-import { Play, Bookmark, BookmarkCheck, Star, Send } from 'lucide-react';
+import { Play, Bookmark, BookmarkCheck, Star, Send, Film, Clock, Calendar } from 'lucide-react';
 
 interface DramaCardProps {
   drama: DramaItem;
@@ -23,9 +23,18 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 
   const getStatusDotColor = () => {
     if (drama.status.includes('Completed')) return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]';
-    if (drama.status.includes('Coming')) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
+    if (drama.status.includes('Coming') || drama.status.includes('Upcoming')) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
     return 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]';
   };
+
+  const isMovie = drama.isMovie || 
+    drama.category.toLowerCase().includes('movie') || 
+    drama.category.toLowerCase().includes('bolly') || 
+    drama.category.toLowerCase().includes('holly') ||
+    Boolean(drama.details && (drama.details.includes(':') || drama.details.toLowerCase().includes('movie')));
+
+  // Determine active telegram URL
+  const primaryTelegram = drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl || 'https://t.me/+yJH68LvfrT9hZDVl';
 
   return (
     <div className="group relative bg-[#111218] rounded-xl border border-white/[0.08] hover:border-[#e50914]/60 transition-all duration-300 flex flex-col overflow-hidden hover:shadow-[0_12px_30px_rgba(0,0,0,0.8)] hover:-translate-y-1">
@@ -39,6 +48,9 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           alt={drama.title}
           className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
           loading="lazy"
+          onError={(e) => {
+            (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700";
+          }}
         />
 
         {/* Gradient Scrim */}
@@ -52,17 +64,38 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 👑 TOP 1
               </span>
             )}
-            <span className="bg-[#e50914] text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-md pointer-events-auto">
-              {drama.defaultAudio}
-            </span>
-            {drama.availableAudios.length > 1 && (
-              <span className="bg-amber-500 text-black text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded shadow pointer-events-auto">
-                {drama.availableAudios.length} Audios
-              </span>
-            )}
+            
+            {/* Audio Badges (Telegram 1, 2, 3 indicators) */}
+            <div className="flex flex-wrap gap-1 pointer-events-auto">
+              {drama.telegramHindi ? (
+                <span className="bg-[#e50914] text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                  🇮🇳 Hindi
+                </span>
+              ) : drama.comingSoonAudios?.includes('Hindi Dubbed') ? (
+                <span className="bg-amber-600/80 text-white text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                  ⏳ Hindi Soon
+                </span>
+              ) : null}
+
+              {drama.telegramFanDub ? (
+                <span className="bg-purple-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                  🎙️ Fan Dub
+                </span>
+              ) : drama.comingSoonAudios?.includes('Fan Dubbed') ? (
+                <span className="bg-purple-900/90 text-purple-200 border border-purple-500/30 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                  🎙️ Fan Dub Soon
+                </span>
+              ) : null}
+
+              {drama.telegramOrig && (
+                <span className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                  🌐 Eng Sub
+                </span>
+              )}
+            </div>
           </div>
 
-          <span className="bg-black/75 backdrop-blur-md text-zinc-300 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow pointer-events-auto">
+          <span className="bg-black/80 backdrop-blur-md text-zinc-300 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow pointer-events-auto shrink-0">
             {drama.category}
           </span>
         </div>
@@ -92,12 +125,14 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 
         {/* Status Bottom Floating Row */}
         <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] sm:text-[11px] pointer-events-none">
-          <div className="flex items-center gap-1.5 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 text-white font-bold">
+          <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 text-white font-bold">
             <span className={`w-1.5 h-1.5 rounded-full ${getStatusDotColor()}`} />
-            <span className="text-[9px] sm:text-[10px] truncate max-w-[85px] sm:max-w-[100px]">{drama.status.replace(/ \(.*\)/, '')}</span>
+            <span className="text-[9px] sm:text-[10px] truncate max-w-[95px] sm:max-w-[115px]">
+              {drama.status.replace(/ \(.*\)/, '')}
+            </span>
           </div>
 
-          <span className="bg-black/80 backdrop-blur-md text-amber-300 font-extrabold text-[9px] px-1.5 py-0.5 rounded border border-white/10 flex items-center gap-0.5">
+          <span className="bg-black/85 backdrop-blur-md text-amber-300 font-extrabold text-[9px] px-1.5 py-0.5 rounded border border-white/10 flex items-center gap-0.5">
             <Star className="w-2.5 h-2.5 fill-amber-400" />
             <span>{drama.rating}</span>
           </span>
@@ -115,61 +150,58 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             {drama.title}
           </h3>
 
-          {/* Details & Year Meta */}
-          <div className="flex items-center justify-between mt-1 text-[10px] sm:text-[11px] text-zinc-400">
-            <span className="text-sky-400 font-bold truncate max-w-[105px] sm:max-w-[125px]">
-              {drama.details || drama.scheduleInfo || 'Full Series'}
-            </span>
+          {/* Details & Schedule Section */}
+          <div className="flex items-center justify-between mt-1 text-[10px] sm:text-[11px] text-zinc-400 gap-1 flex-wrap">
+            {drama.details ? (
+              <span className="text-sky-400 font-bold flex items-center gap-1 truncate max-w-[120px]">
+                {isMovie ? <Film className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
+                <span>{drama.details}</span>
+              </span>
+            ) : (
+              <span className="text-zinc-500 font-medium">{isMovie ? 'Movie' : 'Series'}</span>
+            )}
             <span className="text-zinc-500 font-semibold">{drama.releaseYear}</span>
           </div>
 
-          {/* Airing Schedule (If Active/Ongoing) */}
-          {drama.schedule && drama.schedule.trim() && (
-            <div className="mt-1 flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded truncate">
-              <span>📅</span>
+          {/* Weekly Drop Schedule if Ongoing */}
+          {drama.schedule && drama.schedule.trim() ? (
+            <div className="mt-1 flex items-center gap-1 text-[9px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded truncate">
+              <Calendar className="w-2.5 h-2.5 shrink-0" />
               <span className="truncate">{drama.schedule}</span>
             </div>
-          )}
-
-          {/* Audio Tracks Available Pills (1: Hindi, 2: Fan Dub, 3: Orig) */}
-          {drama.availableAudios.length > 1 && (
-            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-              {drama.availableAudios.map((aud) => (
-                <span
-                  key={aud}
-                  className={`text-[8px] font-black px-1.5 py-0.2 rounded border ${
-                    aud === 'Hindi Dubbed'
-                      ? 'bg-red-500/15 text-red-300 border-red-500/30'
-                      : aud === 'Fan Dubbed'
-                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                      : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
-                  }`}
-                >
-                  {aud === 'Hindi Dubbed' ? '1: Hindi' : aud === 'Fan Dubbed' ? '2: Fan' : '3: Sub'}
-                </span>
-              ))}
+          ) : drama.status.includes('Completed') ? (
+            <div className="mt-1 text-[9px] font-bold text-emerald-400/90 truncate">
+              {isMovie ? '🎬 Full Movie HD' : '✅ Full Series Complete'}
             </div>
+          ) : null}
+
+          {/* Lead Cast Preview */}
+          {drama.leadCast && drama.leadCast.length > 0 && (
+            <p className="mt-1 text-[9px] text-zinc-400 truncate font-medium">
+              🎭 {drama.leadCast.slice(0, 2).join(', ')}
+            </p>
           )}
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-1.5 sm:gap-2 pt-1">
+        <div className="grid grid-cols-2 gap-1.5 sm:gap-2 pt-1 mt-auto">
           <button
             onClick={() => onSelect(drama)}
             className="w-full py-1.5 px-1 sm:px-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-xs font-bold border border-white/10 text-center transition-all flex items-center justify-center gap-1"
           >
-            <span>Episodes</span>
+            <span>{isMovie ? 'Details' : 'Episodes'}</span>
           </button>
 
           <a
-            href={drama.telegramUrl}
+            href={primaryTelegram}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="w-full py-1.5 px-1 sm:px-2 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black text-center shadow-md hover:shadow-[0_0_12px_rgba(229,9,20,0.6)] transition-all flex items-center justify-center gap-1"
+            className="w-full py-1.5 px-1 sm:px-2 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black text-center shadow-md hover:shadow-[0_0_12px_rgba(229,9,20,0.6)] transition-all flex items-center justify-center gap-1 truncate"
+            title="Stream / Open Telegram Link"
           >
-            <Send className="w-3 h-3" />
-            <span>Telegram</span>
+            <Send className="w-3 h-3 shrink-0" />
+            <span className="truncate">{isMovie ? 'Movie' : 'Stream'}</span>
           </a>
         </div>
       </div>

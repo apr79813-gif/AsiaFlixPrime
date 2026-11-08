@@ -23,6 +23,9 @@ interface NavbarProps {
   onOpenAdmin: () => void;
   isAdminAuthenticated?: boolean;
   logoUrl?: string;
+  sheetSyncCount?: number;
+  isSheetSyncing?: boolean;
+  onRefreshSheet?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -38,6 +41,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAdmin,
   isAdminAuthenticated = false,
   logoUrl,
+  sheetSyncCount = 202,
+  isSheetSyncing = false,
+  onRefreshSheet,
 }) => {
   const logoClicksRef = useRef(0);
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -118,6 +124,21 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Google Sheet Live Sync Pill */}
+          {onRefreshSheet && (
+            <button
+              onClick={onRefreshSheet}
+              disabled={isSheetSyncing}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition-all shadow-sm cursor-pointer"
+              title="Click to live-sync dramas, links, and posters from Google Sheets"
+            >
+              <span className={`w-2 h-2 rounded-full ${isSheetSyncing ? 'bg-amber-400 animate-spin' : 'bg-emerald-400 animate-pulse'}`} />
+              <span className="hidden sm:inline">{isSheetSyncing ? 'Syncing...' : `Sheet: ${sheetSyncCount} Live`}</span>
+              <span className="sm:hidden">{sheetSyncCount}</span>
+              <span className={`text-[10px] ${isSheetSyncing ? 'animate-spin' : ''}`}>🔄</span>
+            </button>
+          )}
+
           {/* Sakura Ambient Toggle */}
           <button
             onClick={onToggleSakura}

@@ -35,26 +35,32 @@ export interface DramaItem {
   synopsis: string;
   cast: string[];
   tags: string[];
-  details?: string; // e.g. "16 Episodes", "1:44:00", "2:14:19", "Full Movie"
-  schedule?: string; // e.g. "Sat & Sun 7:00 PM IST" or blank if completed
-  scheduleInfo: string; // e.g. "Sat & Sun 7:00 PM" or "16/16 Episodes"
+  scheduleInfo: string; // fallback string
   availableAudios: AudioType[];
   defaultAudio: AudioType;
-  telegramUrl: string; // Direct Telegram post URL (primary)
-  telegramHindi?: string; // Telegram 1 (Hindi Dubbed) link
-  telegramFanDub?: string; // Telegram 2 (Fan Dubbed) link
-  telegramOriginal?: string; // Telegram 3 (Original / Eng Sub) link
   isFeatured?: boolean;
   isTrending?: boolean;
   isSpotlight?: boolean;
   isWeekendLineup?: boolean;
-  weekendSlot?: string; // e.g. "Sat 7:00 PM Drop", "Sun 7:00 PM Mega Drop", "Weekend Full Binge"
+  weekendSlot?: string;
   spotlightRank?: number;
   trendingRank?: number;
-  spotlightTag?: string; // e.g. "VIP PICK", "TOP #1", "MEGA HIT"
+  spotlightTag?: string;
   totalEpisodes?: number;
   episodes: EpisodeItem[];
+  telegramUrl: string; // Direct Telegram post URL (primary)
   qualityBadge: string; // "1080p FHD"
+  
+  // --- GOOGLE SHEET COLUMNS (TELEGRAM 1, 2, 3 & NEW SECTIONS) ---
+  telegramHindi?: string;      // Telegram 1 (Hindi Dubbed)
+  telegramFanDub?: string;     // Telegram 2 (Fan Dub)
+  telegramOrig?: string;       // Telegram 3 (Orig / Eng Sub)
+  details?: string;            // Episode count or Movie runtime (e.g. "16 Episodes", "1:44:00")
+  schedule?: string;           // Weekly drop schedule (e.g. "Sat & Sun 7:00 PM IST", "Sat-Sat", blank when completed)
+  leadCast?: string[];         // Lead actors parsed from sheet
+  hashtags?: string[];         // Hashtags parsed from sheet (e.g. ["#Kdrama", "#Romance"])
+  isMovie?: boolean;           // true if film/movie without multiple episodic drops
+  comingSoonAudios?: AudioType[]; // Audios promised or in dubbing phase but link not yet dropped
 }
 
 export interface WeekendSettings {

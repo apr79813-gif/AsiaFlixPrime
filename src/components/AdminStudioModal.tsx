@@ -32,7 +32,7 @@ import {
   FileText,
   Copy
 } from 'lucide-react';
-import { DramaItem, EpisodeItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
+import { DramaItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
 import { 
   insertDramaIntoSupabase, 
   insertNotificationIntoSupabase, 
@@ -252,17 +252,14 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     setTimeout(() => setSuccessMessage(null), 5000);
   };
 
-  // New Drama Form State (Telegram 1, 2, 3 and Details & Schedule)
+  // New Drama Form State
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<DramaCategory>('K-Drama');
   const [year, setYear] = useState('2026');
   const [audio, setAudio] = useState<AudioType>('Hindi Dubbed');
   const [poster, setPoster] = useState('');
-  const [telegramUrl, setTelegramUrl] = useState(''); // Telegram 1: Hindi Dubbed
-  const [telegramFanDub, setTelegramFanDub] = useState(''); // Telegram 2: Fan Dubbed
-  const [telegramOrig, setTelegramOrig] = useState(''); // Telegram 3: Original / Eng Sub
-  const [episodesCount, setEpisodesCount] = useState('16 Episodes'); // Details
-  const [scheduleDrop, setScheduleDrop] = useState(''); // Schedule (e.g. Sat & Sun 7:00 PM IST or blank)
+  const [telegramUrl, setTelegramUrl] = useState('');
+  const [episodesCount, setEpisodesCount] = useState('16');
   const [synopsis, setSynopsis] = useState('');
   const [makeSpotlight, setMakeSpotlight] = useState(true);
   const [makeWeekend, setMakeWeekend] = useState(false);
@@ -749,89 +746,39 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
     setIsSavingSupabase(true);
 
-    const audios: AudioType[] = [];
-    if (telegramUrl.trim() || audio === 'Hindi Dubbed') audios.push('Hindi Dubbed');
-    if (telegramFanDub.trim() || audio === 'Fan Dubbed') audios.push('Fan Dubbed');
-    if (telegramOrig.trim() || audio === 'Original / Eng Sub') audios.push('Original / Eng Sub');
-    if (audios.length === 0) audios.push(audio);
-
-    const episodes: EpisodeItem[] = [];
-    if (telegramUrl.trim()) {
-      episodes.push({
-        id: `ep-hindi-${Date.now()}`,
-        episodeNumber: 'Telegram 1',
-        title: `${title.trim()} · Hindi Dubbed 1080p`,
-        audio: 'Hindi Dubbed',
-        telegramUrl: telegramUrl.trim(),
-        duration: episodesCount || '1080p FHD',
-        quality: '1080p FHD',
-        isMerged: true,
-      });
-    }
-    if (telegramFanDub.trim()) {
-      episodes.push({
-        id: `ep-fandub-${Date.now()}`,
-        episodeNumber: 'Telegram 2',
-        title: `${title.trim()} · Fan Dubbed 1080p`,
-        audio: 'Fan Dubbed',
-        telegramUrl: telegramFanDub.trim(),
-        duration: episodesCount || '1080p FHD',
-        quality: '1080p FHD',
-        isMerged: true,
-      });
-    }
-    if (telegramOrig.trim()) {
-      episodes.push({
-        id: `ep-orig-${Date.now()}`,
-        episodeNumber: 'Telegram 3',
-        title: `${title.trim()} · Original Audio / Eng Sub`,
-        audio: 'Original / Eng Sub',
-        telegramUrl: telegramOrig.trim(),
-        duration: episodesCount || '1080p FHD',
-        quality: '1080p FHD',
-        isMerged: true,
-      });
-    }
-    if (episodes.length === 0) {
-      episodes.push({
-        id: `ep-main-${Date.now()}`,
-        episodeNumber: 'Latest Drop',
-        title: `${title.trim()} · 1080p FHD`,
-        audio,
-        telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
-        duration: episodesCount || '1080p FHD',
-        quality: '1080p FHD',
-        isMerged: true,
-      });
-    }
-
     const newDrama: DramaItem = {
       id: `custom-${Date.now()}`,
       title: title.trim(),
       category,
       releaseYear: parseInt(year) || 2026,
-      status: scheduleDrop.trim() ? 'Now Streaming (Ongoing)' : 'Completed (Full Series)',
+      status: 'Now Streaming (Ongoing)',
       rating: 9.3,
       poster: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
       backdrop: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1400',
       synopsis: synopsis.trim() || 'Uploaded directly to AsiaFlix Prime VIP Private Channel.',
       cast: ['AsiaFlix Exclusive'],
       tags: [category, audio],
-      details: episodesCount || '16 Episodes',
-      schedule: scheduleDrop.trim(),
-      scheduleInfo: scheduleDrop.trim() || episodesCount || 'Full Series',
-      availableAudios: audios,
-      defaultAudio: telegramUrl.trim() ? 'Hindi Dubbed' : audio,
+      scheduleInfo: `${episodesCount} Episodes`,
+      availableAudios: [audio],
+      defaultAudio: audio,
       qualityBadge: '1080p FHD',
       isSpotlight: makeSpotlight,
       isTrending: true,
       isWeekendLineup: makeWeekend,
       weekendSlot: makeWeekend ? 'Saturday Drop - 7:00 PM' : undefined,
-      telegramUrl: telegramUrl.trim() || telegramFanDub.trim() || telegramOrig.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
-      telegramHindi: telegramUrl.trim() || undefined,
-      telegramFanDub: telegramFanDub.trim() || undefined,
-      telegramOriginal: telegramOrig.trim() || undefined,
-      episodes,
+      telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
+      episodes: [
+        {
+          id: `ep-full-${Date.now()}`,
+          episodeNumber: 'Full Pack',
+          title: `${title} 1080p FHD Pack`,
+          audio,
+          telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
+          duration: `${episodesCount} Episodes`,
+          quality: '1080p FHD',
+          isMerged: true,
+        },
+      ],
     };
 
     const sbResult = await insertDramaIntoSupabase({
@@ -840,7 +787,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       releaseYear: parseInt(year) || 2026,
       description: synopsis.trim() || 'AsiaFlix Prime VIP upload',
       posterUrl: poster.trim() || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
-      status: scheduleDrop.trim() ? 'Ongoing' : 'Completed',
+      status: 'Ongoing',
       audio,
       telegramUrl: telegramUrl.trim() || 'https://t.me/+yJH68LvfrT9hZDVl',
       episodesCount,
@@ -861,12 +808,9 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
         category,
         audio,
         poster: poster.trim(),
-        telegramHindi: telegramUrl.trim(),
-        telegramFanDub: telegramFanDub.trim(),
-        telegramOrig: telegramOrig.trim(),
-        status: scheduleDrop.trim() ? 'Now Streaming (Ongoing)' : 'Completed (Full Series)',
-        details: episodesCount,
-        schedule: scheduleDrop.trim(),
+        telegramUrl: telegramUrl.trim(),
+        status: 'Now Streaming (Ongoing)',
+        schedule: `${episodesCount} Episodes`,
         badge: audio,
       };
 
@@ -2122,28 +2066,15 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Details (Episodes / Runtime) *</label>
+                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Upload Format / Episodes</label>
                     <input
                       type="text"
-                      required
                       value={episodesCount}
                       onChange={(e) => setEpisodesCount(e.target.value)}
-                      placeholder="e.g. 16 Episodes / 2:14:19"
+                      placeholder="16 Episodes / Batch"
                       className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-400 mb-1">Schedule (Drop Days / Time · Blank if Completed)</label>
-                  <input
-                    type="text"
-                    value={scheduleDrop}
-                    onChange={(e) => setScheduleDrop(e.target.value)}
-                    placeholder="e.g. Sat & Sun 7:00 PM IST (Leave blank if full series completed)"
-                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
-                  />
-                  <p className="text-[10px] text-zinc-500 mt-0.5">Jo series complete ho gayi hai usme ise blank chhod dein.</p>
                 </div>
 
                 {/* Instant Curation Checkboxes */}
@@ -2180,51 +2111,16 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   />
                 </div>
 
-                {/* Telegram 1, 2, 3 Multi-Audio Links Grid */}
-                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.08] space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase text-zinc-300 tracking-wider flex items-center gap-1.5">
-                      <Send className="w-3.5 h-3.5 text-red-400" />
-                      <span>Telegram Direct Links (1, 2, 3)</span>
-                    </span>
-                    <span className="text-[10px] text-zinc-500">1: Hindi · 2: Fan Dub · 3: Orig</span>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-red-400 mb-0.5">Telegram 1 (Hindi Dubbed Link) *</label>
-                    <input
-                      type="url"
-                      required
-                      value={telegramUrl}
-                      onChange={(e) => setTelegramUrl(e.target.value)}
-                      placeholder="https://t.me/c/3730319875/... (Official Hindi)"
-                      className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-red-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-bold text-amber-400 mb-0.5">Telegram 2 (Fan Dubbed Link)</label>
-                      <input
-                        type="url"
-                        value={telegramFanDub}
-                        onChange={(e) => setTelegramFanDub(e.target.value)}
-                        placeholder="https://t.me/c/... (Fan Dubbed)"
-                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-amber-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-sky-400 mb-0.5">Telegram 3 (Original / Eng Sub Link)</label>
-                      <input
-                        type="url"
-                        value={telegramOrig}
-                        onChange={(e) => setTelegramOrig(e.target.value)}
-                        placeholder="https://t.me/c/... (Original/Sub)"
-                        className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-xs outline-none focus:border-sky-500"
-                      />
-                    </div>
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-zinc-400 mb-1">Telegram Direct Link *</label>
+                  <input
+                    type="url"
+                    required
+                    value={telegramUrl}
+                    onChange={(e) => setTelegramUrl(e.target.value)}
+                    placeholder="https://t.me/c/3730319875/..."
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-[#e50914]"
+                  />
                 </div>
 
                 <div>
@@ -2581,19 +2477,12 @@ function handleRequest(e) {
       data.category || "K-Drama",
       data.audio || "Hindi Dubbed",
       data.poster || "",
-      data.telegramHindi || data.telegramUrl || "",
-      data.telegramFanDub || "",
-      data.telegramOrig || "",
+      data.telegramUrl || "",
       data.status || "Now Streaming (Ongoing)",
-      data.details || "16 Episodes",
-      data.schedule || "",
+      data.schedule || "16 Episodes",
       data.badge || data.audio || "Hindi Dubbed",
-      data.heroBanner || "",
-      data.synopsis || "",
-      data.rating || "9.3",
       "", // Notice
-      "", // Top Trending Spotlight
-      "", // Trending Now (Top VIP Binge Picks)
+      "", // Trending
       ""  // Logo
     ]);
     
@@ -2675,75 +2564,107 @@ function handleRequest(e) {
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-black text-white flex items-center gap-2">
                       <FileText className="w-4 h-4 text-amber-400" />
-                      <span>Aapki Sheet Ke Sabhi Columns Ka Guide</span>
+                      <span>Aapki Sheet Ke 20 Columns Ka Complete Live Guide</span>
                     </h4>
                     <button
                       type="button"
                       onClick={() => {
-                        const csvHeader = "Title,Category,Audio,Poster,Telegram,Status,Schedule,Badge,Notice,Trending,Logo,HeroBanner,Synopsis,Rating\nRain or Shine (2017),K-Drama,Hindi Dubbed,https://i.ibb.co/...,https://t.me/c/3730319875/457,Completed (Full Series),16 Episodes,Hindi Dubbed,🌸 Weekend Mega Lineup Live!,Rain or Shine (2017),https://raw.githubusercontent.com/.../logo.png,YES,Two survivors rebuild their lives.,9.4";
+                        const csvHeader = "Title,Category,Audio,Poster,Telegram (Hindi),Telegram2  (Fan Dub),Telegram3 (Orig),Status,Details,Schedule,Badge,Hero Banner,Synopsis,Rating,Lead Cast,Hastags,Notice,Top Trending Spotlight,Trending Now (Top VIP Binge Picks),Logo";
                         navigator.clipboard.writeText(csvHeader);
-                        setSuccessMessage('Full 14-Column CSV Header copied to clipboard!');
+                        setSuccessMessage('Full 20-Column CSV Header copied to clipboard!');
                         setTimeout(() => setSuccessMessage(null), 3000);
                       }}
-                      className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 bg-white/[0.05] px-2 py-1 rounded"
+                      className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 bg-white/[0.05] px-2 py-1 rounded cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
-                      <span>Copy Full Header</span>
+                      <span>Copy Full 20 Headers</span>
                     </button>
                   </div>
 
                   <p className="text-[11px] text-zinc-400">
-                    Aapki sheet me yeh 11 columns bilkul perfect format me connect hain. Aap directly apni Google Sheet app (phone ya laptop) me edit karenge toh website par sabhi ko live dikhega:
+                    Aapki Google Sheet ke sabhi 20 columns website se directly connected hain. Telegram 1, 2, 3 ke alag alag audio links, Details, Schedule, Lead Cast aur Hashtags sab live portal par render hote hain:
                   </p>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-emerald-400 font-bold">Title</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Drama / Movie Name (e.g. Doctor X (2026))</p>
+                      <span className="font-mono text-emerald-400 font-bold">1. Title</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Series/Movie name with year e.g. Doctor X (2026)</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-sky-400 font-bold">Category</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">K-Drama, C-Drama, Asian Movie, Bollywood</p>
+                      <span className="font-mono text-sky-400 font-bold">2. Category</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">K-Drama, C-Drama, Asian Movie, Bollywood, J-Drama</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-red-400 font-bold">Audio</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Hindi Dubbed, Original, Fan Dubbed</p>
+                      <span className="font-mono text-red-400 font-bold">3. Audio</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Primary Audio: Hindi Dubbed, Fan Dubbed, Original</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-amber-400 font-bold">Poster</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Image link (https://i.ibb.co/...)</p>
+                      <span className="font-mono text-amber-400 font-bold">4. Poster</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Direct image URL (ibb.co, wikimedia, justwatch, etc.)</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-emerald-500/30">
+                      <span className="font-mono text-emerald-400 font-bold">5. Telegram (Hindi)</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Telegram 1: Hindi Dubbed Episode/Stream post link</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-purple-500/30">
+                      <span className="font-mono text-purple-400 font-bold">6. Telegram2 (Fan Dub)</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Telegram 2: Hindi Fan Dubbed stream post link</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-blue-500/30">
+                      <span className="font-mono text-blue-400 font-bold">7. Telegram3 (Orig)</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Telegram 3: Original Audio + Eng Sub stream post link</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-sky-300 font-bold">Telegram</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Direct Telegram link (Latest drop / channel post)</p>
+                      <span className="font-mono text-purple-300 font-bold">8. Status</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Now Streaming Ep X, Completed (Full Series), Coming Soon</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-sky-500/30">
+                      <span className="font-mono text-sky-300 font-bold">9. Details</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">16 Episodes, 1:44:00, 2:14:19, Full Movie runtime</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-amber-500/30">
+                      <span className="font-mono text-amber-300 font-bold">10. Schedule</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Sat-Sat, Sat & Sun 7:00 PM (Completed ho toh blank)</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-purple-400 font-bold">Status</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Completed (Full Series) ya Now Streaming</p>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-teal-400 font-bold">Schedule</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">16 Episodes, 1:44:00, Sat & Sun Drops</p>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-pink-400 font-bold">Badge</span>
+                      <span className="font-mono text-pink-400 font-bold">11. Badge</span>
                       <p className="text-[10px] text-zinc-400 mt-0.5">Hindi Dubbed, Eng Sub, Full Movie tag</p>
                     </div>
                     <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-rose-400 font-bold">Notice</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Top Marquee Ticker ka live announcement text</p>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-orange-400 font-bold">Trending</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Comma-separated titles to pin in TOP TRENDING bar</p>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-yellow-400 font-bold">Logo</span>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">Aapka website brand logo image URL</p>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                      <span className="font-mono text-indigo-400 font-bold">HeroBanner (Optional)</span>
+                      <span className="font-mono text-indigo-400 font-bold">12. Hero Banner</span>
                       <p className="text-[10px] text-zinc-400 mt-0.5">Put "YES" for big homepage sliding banner</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-teal-400 font-bold">13. Synopsis</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Plot and story synopsis</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-yellow-400 font-bold">14. Rating</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">IMDB/VIP Rating (e.g. 9.4)</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-pink-500/30">
+                      <span className="font-mono text-pink-300 font-bold">15. Lead Cast</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Comma-separated actors: Song Joong-ki, Song Hye-kyo</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-red-500/30">
+                      <span className="font-mono text-red-300 font-bold">16. Hastags</span>
+                      <p className="text-[10px] text-zinc-300 mt-0.5">Space-separated tags: #Romance #Action #Kdrama</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-rose-400 font-bold">17. Notice</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Top marquee announcement ticker text</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-orange-400 font-bold">18. Top Trending Spotlight</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Spotlight featured titles list</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-orange-300 font-bold">19. Trending Now</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Top VIP binge pick titles</p>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
+                      <span className="font-mono text-yellow-300 font-bold">20. Logo</span>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Custom website brand logo URL</p>
                     </div>
                   </div>
                 </div>

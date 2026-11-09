@@ -143,7 +143,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                     <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px]">
                       <span className="bg-black/80 backdrop-blur-md text-emerald-400 font-bold px-2 py-0.5 rounded-full border border-white/10 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>FHD 1080p</span>
+                        <span className="truncate max-w-[100px]">{drama.statusText || 'FHD 1080p'}</span>
                       </span>
                       <span className="bg-black/80 backdrop-blur-md text-amber-300 font-black px-1.5 py-0.5 rounded border border-white/10">
                         ★ {drama.rating}
@@ -161,9 +161,13 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       >
                         {drama.title}
                       </h3>
-                      <p className="text-[11px] text-zinc-400 mt-0.5 truncate">
-                        {drama.scheduleInfo || 'Weekend Mega Drop'}
-                      </p>
+                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-0.5 truncate">
+                        {drama.details && (
+                          <span className="text-sky-400 font-bold">{drama.details}</span>
+                        )}
+                        {drama.details && (drama.schedule || drama.scheduleInfo) && <span>·</span>}
+                        <span className="truncate">{drama.schedule || drama.scheduleInfo || 'Weekend Mega Drop'}</span>
+                      </div>
                     </div>
 
                     {/* Action Buttons */}

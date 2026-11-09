@@ -53,20 +53,36 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (drama.telegramHindi) return 'Hindi Dubbed';
     if (drama.telegramFanDub) return 'Fan Dubbed';
     if (drama.telegramOrig) return 'Original / Eng Sub';
-    return drama.defaultAudio || 'Hindi Dubbed';
+    return drama.availableAudios[0] || drama.defaultAudio || 'Hindi Dubbed';
   });
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
-  const [subscribedAudios, setSubscribedAudios] = useState<Record<string, boolean>>({});
+
+  // Link for each audio track strictly from drama
+  const audioLinkMap: Record<AudioType, string | undefined> = {
+    'Hindi Dubbed': drama?.telegramHindi,
+    'Fan Dubbed': drama?.telegramFanDub,
+    'Original / Eng Sub': drama?.telegramOrig,
+  };
+
+  // List only audio tracks that actually have an http link
+  const availableTrackList = (['Hindi Dubbed', 'Fan Dubbed', 'Original / Eng Sub'] as AudioType[]).filter(
+    (audio) => Boolean(audioLinkMap[audio] && audioLinkMap[audio]?.startsWith('http'))
+  );
 
   // Synchronize activeAudio when drama changes
   React.useEffect(() => {
     if (drama) {
-      if (drama.telegramHindi) setActiveAudio('Hindi Dubbed');
-      else if (drama.telegramFanDub) setActiveAudio('Fan Dubbed');
-      else if (drama.telegramOrig) setActiveAudio('Original / Eng Sub');
-      else setActiveAudio(drama.defaultAudio || 'Hindi Dubbed');
+      if (drama.telegramHindi && drama.telegramHindi.startsWith('http')) {
+        setActiveAudio('Hindi Dubbed');
+      } else if (drama.telegramFanDub && drama.telegramFanDub.startsWith('http')) {
+        setActiveAudio('Fan Dubbed');
+      } else if (drama.telegramOrig && drama.telegramOrig.startsWith('http')) {
+        setActiveAudio('Original / Eng Sub');
+      } else if (drama.availableAudios.length > 0) {
+        setActiveAudio(drama.availableAudios[0]);
+      }
     }
   }, [drama]);
 
@@ -78,33 +94,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama.category.toLowerCase().includes('holly') ||
     Boolean(drama.details && (drama.details.includes(':') || drama.details.toLowerCase().includes('movie')));
 
-  // Link for each audio track
-  const audioLinkMap: Record<AudioType, string | undefined> = {
-    'Hindi Dubbed': drama.telegramHindi || (drama.defaultAudio === 'Hindi Dubbed' ? drama.telegramUrl : undefined),
-    'Fan Dubbed': drama.telegramFanDub,
-    'Original / Eng Sub': drama.telegramOrig || (drama.defaultAudio === 'Original / Eng Sub' ? drama.telegramUrl : undefined),
-  };
-
-  const currentAudioLink = audioLinkMap[activeAudio];
-  const isCurrentAudioAvailable = Boolean(currentAudioLink && currentAudioLink.startsWith('http'));
-
-  // Find another active audio if current is coming soon
-  const alternateActiveAudio = (['Hindi Dubbed', 'Fan Dubbed', 'Original / Eng Sub'] as AudioType[]).find(
-    (a) => a !== activeAudio && audioLinkMap[a] && audioLinkMap[a]?.startsWith('http')
-  );
+  const currentAudioLink = audioLinkMap[activeAudio] || audioLinkMap[availableTrackList[0]];
 
   const handleShare = () => {
     const text = `🌸 Watch "${drama.title}" in Clean Audio on AsiaFlix Prime VIP: ${window.location.origin}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
-  };
-
-  const handleDubSubscribe = (audio: string) => {
-    setSubscribedAudios((prev) => ({ ...prev, [audio]: true }));
-    if (onSubscribeDubAlert) {
-      onSubscribeDubAlert(drama.title, audio);
-    }
   };
 
   return (
@@ -127,6 +123,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           <img
             src={drama.backdrop || drama.poster}
             alt={drama.title}
+            referrerPolicy="no-referrer"
             className="w-full h-full object-cover object-center filter brightness-[0.4]"
             onError={(e) => {
               (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200";
@@ -142,15 +139,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 <span className="bg-[#e50914] text-white text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow">
                   {drama.category}
                 </span>
+
+                {/* Age Rating Badge */}
+                {drama.ageRating && (
+                  <span className="bg-black/80 backdrop-blur-md text-amber-300 text-xs font-black px-2 py-0.5 rounded border border-amber-500/30 shadow">
+                    {drama.ageRating}
+                  </span>
+                )}
+
+                {/* Sub-Category / Content Type Badge */}
+                {drama.subCategory && (
+                  <span className="bg-white/10 text-zinc-200 text-xs font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
+                    {drama.subCategory}
+                  </span>
+                )}
+
                 <span className="bg-white/10 text-zinc-200 text-xs font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
                   {drama.releaseYear}
                 </span>
+                
                 <div className="flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-black">
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                   <span>{drama.rating}</span>
                 </div>
 
-                {/* Details Pill (Runtime or Episode Count) */}
+                {/* Exact Details Pill (Episode Count or Runtime) */}
                 {drama.details && (
                   <span className="bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
                     {isMovie ? <Film className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
@@ -158,15 +171,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   </span>
                 )}
 
+                {/* Status Pill (Exact Status Text) */}
+                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>{drama.statusText || drama.status}</span>
+                </span>
+
                 {/* Schedule Pill if ongoing */}
                 {drama.schedule && drama.schedule.trim() ? (
                   <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     <span>{drama.schedule}</span>
-                  </span>
-                ) : drama.status.includes('Completed') ? (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-xs font-bold">
-                    ✅ All Drops Complete
                   </span>
                 ) : null}
 
@@ -188,7 +203,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
             {/* Quick Actions */}
             <div className="flex items-center gap-2 shrink-0">
-              {isCurrentAudioAvailable ? (
+              {currentAudioLink && (
                 <a
                   href={currentAudioLink}
                   target="_blank"
@@ -198,14 +213,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   <Send className="w-4 h-4" />
                   <span>Open {activeAudio}</span>
                 </a>
-              ) : (
-                <button
-                  onClick={() => handleDubSubscribe(activeAudio)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-lg transition-all"
-                >
-                  <Bell className="w-4 h-4" />
-                  <span>{subscribedAudios[activeAudio] ? 'Subscribed!' : `Notify Me (${activeAudio})`}</span>
-                </button>
               )}
 
               {/* Sabse Aage (#1) Button: STRICTLY visible only when admin is authenticated */}
@@ -246,189 +253,94 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
-          {/* TELEGRAM 1, 2, 3 AUDIO SELECTOR SECTION */}
+          {/* TELEGRAM DIRECT LINKS (Only render audio tracks that actually have an active link) */}
           <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <Volume2 className="w-4 h-4 text-[#e50914]" />
                 <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                  Audio Tracks (Telegram 1, 2, 3)
+                  Telegram Direct Links ({availableTrackList.length} Audio {availableTrackList.length > 1 ? 'Tracks' : 'Track'} Ready)
                 </h4>
               </div>
               <span className="text-[11px] text-zinc-400">
-                Select audio to switch episode links & status
+                Direct private channel streaming links
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {/* Telegram 1: Hindi Dubbed */}
-              <button
-                onClick={() => setActiveAudio('Hindi Dubbed')}
-                className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between gap-1.5 ${
-                  activeAudio === 'Hindi Dubbed'
-                    ? 'bg-[#e50914]/20 border-[#e50914] shadow-[0_0_15px_rgba(229,9,20,0.3)]'
-                    : 'bg-white/[0.02] border-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-white flex items-center gap-1.5">
-                    <span>🇮🇳</span>
-                    <span>1. Hindi Dubbed</span>
-                  </span>
-                  {drama.telegramHindi ? (
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black">
-                      ⚡ Ready
-                    </span>
-                  ) : (
-                    <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-black">
-                      ⏳ Coming Soon
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] text-zinc-400">
-                  {drama.telegramHindi ? 'Stream link available' : 'In production pipeline'}
-                </span>
-              </button>
-
-              {/* Telegram 2: Fan Dubbed */}
-              <button
-                onClick={() => setActiveAudio('Fan Dubbed')}
-                className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between gap-1.5 ${
-                  activeAudio === 'Fan Dubbed'
-                    ? 'bg-purple-600/20 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.3)]'
-                    : 'bg-white/[0.02] border-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-white flex items-center gap-1.5">
-                    <span>🎙️</span>
-                    <span>2. Fan Dubbed</span>
-                  </span>
-                  {drama.telegramFanDub ? (
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black">
-                      ⚡ Ready
-                    </span>
-                  ) : (
-                    <span className="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-black">
-                      ⏳ Coming Soon
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] text-zinc-400">
-                  {drama.telegramFanDub ? 'VIP Fan Dub active' : 'Voice dub in preparation'}
-                </span>
-              </button>
-
-              {/* Telegram 3: Original / Eng Sub */}
-              <button
-                onClick={() => setActiveAudio('Original / Eng Sub')}
-                className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between gap-1.5 ${
-                  activeAudio === 'Original / Eng Sub'
-                    ? 'bg-blue-600/20 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]'
-                    : 'bg-white/[0.02] border-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-white flex items-center gap-1.5">
-                    <span>🌐</span>
-                    <span>3. Original / Sub</span>
-                  </span>
-                  {drama.telegramOrig ? (
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black">
-                      ⚡ Ready
-                    </span>
-                  ) : (
-                    <span className="text-[9px] bg-zinc-500/20 text-zinc-400 px-1.5 py-0.5 rounded font-black">
-                      Optional
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] text-zinc-400">
-                  {drama.telegramOrig ? 'Original Audio + Eng Sub' : 'Eng Sub on request'}
-                </span>
-              </button>
+            <div className={`grid gap-2.5 ${availableTrackList.length === 1 ? 'grid-cols-1' : availableTrackList.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
+              {availableTrackList.map((audio) => {
+                const link = audioLinkMap[audio];
+                const isSelected = activeAudio === audio;
+                const icon = audio === 'Hindi Dubbed' ? '🇮🇳' : audio === 'Fan Dubbed' ? '🎙️' : '🌐';
+                return (
+                  <div
+                    key={audio}
+                    onClick={() => setActiveAudio(audio)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                      isSelected
+                        ? 'bg-[#e50914]/15 border-[#e50914] shadow-[0_0_15px_rgba(229,9,20,0.25)]'
+                        : 'bg-white/[0.02] border-white/10 hover:border-white/25 hover:bg-white/[0.04]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <span>{icon}</span>
+                        <span>{audio}</span>
+                      </span>
+                      <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-black">
+                        ⚡ Ready
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <span className="text-[10px] text-zinc-400 truncate">
+                        1080p FHD Stream
+                      </span>
+                      <a
+                        href={link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-3 py-1 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-[11px] font-black flex items-center gap-1 shadow shrink-0"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>Open Link</span>
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
           {/* ACTIVE AUDIO STATUS & STREAM ACCESS */}
-          <div>
-            {isCurrentAudioAvailable ? (
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/30 to-[#111218] border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    <span className="text-xs font-black text-emerald-400 uppercase tracking-wider">
-                      {activeAudio} Stream Available · 1080p FHD
-                    </span>
-                  </div>
-                  <p className="text-xs text-zinc-300 mt-1">
-                    {isMovie 
-                      ? `Complete Full Movie in clean ${activeAudio} audio with zero ads.`
-                      : `Episodes and merged batch drops are ready on AsiaFlix Telegram channel.`}
-                  </p>
+          {currentAudioLink && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/30 to-[#111218] border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="text-xs font-black text-emerald-400 uppercase tracking-wider">
+                    {activeAudio} Stream Available · 1080p FHD
+                  </span>
                 </div>
-
-                <a
-                  href={currentAudioLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>{isMovie ? 'Watch Full Movie Now' : `Open ${activeAudio} Post`}</span>
-                </a>
+                <p className="text-xs text-zinc-300 mt-1">
+                  {isMovie 
+                    ? `Complete Full Movie in clean ${activeAudio} audio with zero ads.`
+                    : `Episodes and merged batch drops are ready on AsiaFlix Telegram channel.`}
+                </p>
               </div>
-            ) : (
-              /* COMING SOON / IN PREPARATION STATE FOR THIS TRACK */
-              <div className="p-5 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <h5 className="text-xs font-black text-amber-300 uppercase tracking-wider">
-                      ⏳ {activeAudio} Is Coming Soon / In Dubbing Room
-                    </h5>
-                    <p className="text-xs text-zinc-300 leading-relaxed">
-                      Episodes in <strong>{activeAudio}</strong> for "{drama.title}" are currently being dubbed or prepared for release.
-                    </p>
-                    {alternateActiveAudio && (
-                      <div className="pt-1 flex items-center gap-2 text-xs">
-                        <span className="text-zinc-400">Want to watch right now?</span>
-                        <button
-                          onClick={() => setActiveAudio(alternateActiveAudio)}
-                          className="text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
-                        >
-                          Switch to {alternateActiveAudio} (Already Streaming!)
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3 pt-1">
-                  <button
-                    onClick={() => handleDubSubscribe(activeAudio)}
-                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${
-                      subscribedAudios[activeAudio]
-                        ? 'bg-emerald-500 text-white'
-                        : 'bg-amber-500 hover:bg-amber-400 text-black shadow-md'
-                    }`}
-                  >
-                    {subscribedAudios[activeAudio] ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        <span>Subscribed for {activeAudio} Alert!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Bell className="w-4 h-4" />
-                        <span>🔔 Notify Me When {activeAudio} Drops</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+              <a
+                href={currentAudioLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0"
+              >
+                <Send className="w-4 h-4" />
+                <span>{isMovie ? 'Watch Full Movie Now' : `Open ${activeAudio} Post`}</span>
+              </a>
+            </div>
+          )}
 
           {/* Watchlist Status Selector & Meta Strip */}
           <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -516,8 +428,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             <div>
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">Lead Cast</h4>
               <div className="flex flex-wrap gap-2 text-xs text-zinc-200">
-                {(drama.leadCast && drama.leadCast.length > 0 ? drama.leadCast : drama.cast).map((actor) => (
-                  <span key={actor} className="px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] font-bold flex items-center gap-1.5">
+                {Array.from(new Set(drama.leadCast && drama.leadCast.length > 0 ? drama.leadCast : drama.cast)).map((actor, idx) => (
+                  <span key={`cast-${actor}-${idx}`} className="px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] font-bold flex items-center gap-1.5">
                     <span>🎭</span>
                     <span>{actor}</span>
                   </span>
@@ -531,9 +443,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             <div>
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">Series Hashtags & Topics</h4>
               <div className="flex flex-wrap gap-1.5">
-                {(drama.hashtags && drama.hashtags.length > 0 ? drama.hashtags : drama.tags).map((tag) => (
+                {Array.from(new Set(drama.hashtags && drama.hashtags.length > 0 ? drama.hashtags : drama.tags)).map((tag, idx) => (
                   <span 
-                    key={tag} 
+                    key={`tag-${tag}-${idx}`} 
                     className="text-[11px] font-bold text-red-400 bg-red-500/10 px-2.5 py-1 rounded-lg border border-red-500/20 hover:bg-red-500/20 transition-colors"
                   >
                     {tag.startsWith('#') ? tag : `#${tag}`}
@@ -562,65 +474,107 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </div>
 
               <div className="space-y-2.5">
-                {/* Main Full / Latest Pack */}
-                <div className="flex items-center justify-between p-3.5 rounded-xl border bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06] transition-all">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <button
-                      onClick={() => onToggleEpisodeWatched(drama.id, 'all')}
-                      className="text-zinc-400 hover:text-emerald-400 transition-colors shrink-0"
-                      title={watchedEpisodes.includes('all') ? 'Mark as Unwatched' : 'Mark as Watched'}
-                    >
-                      {watchedEpisodes.includes('all') ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400 fill-emerald-500/20" />
-                      ) : (
-                        <Circle className="w-5 h-5 text-zinc-500 hover:text-zinc-300" />
-                      )}
-                    </button>
+                {/* If multiple individual episodes are parsed for this audio track, show them */}
+                {drama.episodes.filter((ep) => ep.audio === activeAudio).length > 1 ? (
+                  drama.episodes
+                    .filter((ep) => ep.audio === activeAudio)
+                    .map((ep) => {
+                      const isWatched = watchedEpisodes.includes(ep.episodeNumber) || watchedEpisodes.includes('all');
+                      return (
+                        <div 
+                          key={ep.id}
+                          className="flex items-center justify-between p-3 rounded-xl border bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06] transition-all"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <button
+                              onClick={() => onToggleEpisodeWatched(drama.id, ep.episodeNumber)}
+                              className="text-zinc-400 hover:text-emerald-400 transition-colors shrink-0"
+                              title={isWatched ? 'Mark as Unwatched' : 'Mark as Watched'}
+                            >
+                              {isWatched ? (
+                                <CheckCircle2 className="w-5 h-5 text-emerald-400 fill-emerald-500/20" />
+                              ) : (
+                                <Circle className="w-5 h-5 text-zinc-500 hover:text-zinc-300" />
+                              )}
+                            </button>
 
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black text-white truncate">
-                          {drama.title} · {activeAudio} Master Pack
-                        </span>
-                        <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded border border-amber-500/30">
-                          {drama.details || 'Batch / Merged'}
-                        </span>
-                      </div>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white truncate block">
+                                {ep.title}
+                              </span>
+                              <div className="flex items-center gap-2 text-[10px] text-zinc-400 mt-0.5">
+                                <span className="text-red-400 font-bold">{ep.audio}</span>
+                                <span>·</span>
+                                <span>{ep.quality || '1080p FHD'}</span>
+                              </div>
+                            </div>
+                          </div>
 
-                      <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
-                        <span className="text-red-400 font-bold">{activeAudio}</span>
-                        <span>·</span>
-                        <span className="text-zinc-400">1080p FHD Quality</span>
-                        {drama.schedule && (
-                          <>
-                            <span>·</span>
-                            <span className="text-amber-400">{drama.schedule}</span>
-                          </>
+                          <a
+                            href={ep.telegramUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-3 px-3 py-1.5 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black shadow transition-all flex items-center gap-1 shrink-0"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>Watch</span>
+                          </a>
+                        </div>
+                      );
+                    })
+                ) : (
+                  /* Master / Full Pack Drop */
+                  <div className="flex items-center justify-between p-3.5 rounded-xl border bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06] transition-all">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <button
+                        onClick={() => onToggleEpisodeWatched(drama.id, 'all')}
+                        className="text-zinc-400 hover:text-emerald-400 transition-colors shrink-0"
+                        title={watchedEpisodes.includes('all') ? 'Mark as Unwatched' : 'Mark as Watched'}
+                      >
+                        {watchedEpisodes.includes('all') ? (
+                          <CheckCircle2 className="w-5 h-5 text-emerald-400 fill-emerald-500/20" />
+                        ) : (
+                          <Circle className="w-5 h-5 text-zinc-500 hover:text-zinc-300" />
                         )}
+                      </button>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-white truncate">
+                            {drama.title} · {activeAudio} Master Pack
+                          </span>
+                          <span className="bg-amber-500/20 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded border border-amber-500/30">
+                            {drama.details || 'Batch / Merged'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
+                          <span className="text-red-400 font-bold">{activeAudio}</span>
+                          <span>·</span>
+                          <span className="text-zinc-400">1080p FHD Quality</span>
+                          {drama.schedule && (
+                            <>
+                              <span>·</span>
+                              <span className="text-amber-400">{drama.schedule}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {isCurrentAudioAvailable ? (
-                    <a
-                      href={currentAudioLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-3 px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black shadow-md hover:shadow-[0_0_15px_rgba(229,9,20,0.6)] transition-all flex items-center gap-1.5 shrink-0"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Open Telegram</span>
-                    </a>
-                  ) : (
-                    <button
-                      onClick={() => handleDubSubscribe(activeAudio)}
-                      className="ml-3 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1 shrink-0"
-                    >
-                      <Bell className="w-3 h-3" />
-                      <span>Alert Me</span>
-                    </button>
-                  )}
-                </div>
+                    {currentAudioLink && (
+                      <a
+                        href={currentAudioLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-3 px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black shadow-md hover:shadow-[0_0_15px_rgba(229,9,20,0.6)] transition-all flex items-center gap-1.5 shrink-0"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Open Telegram</span>
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

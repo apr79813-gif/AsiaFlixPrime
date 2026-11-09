@@ -69,6 +69,7 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
                 <img
                   src={drama.poster}
                   alt={drama.title}
+                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                   loading="lazy"
                 />
@@ -92,7 +93,7 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-1 text-[9px] text-zinc-500">
-                  <span className="text-sky-400 font-semibold truncate max-w-[70px]">{drama.scheduleInfo}</span>
+                  <span className="text-sky-400 font-bold truncate max-w-[85px]">{drama.details || drama.scheduleInfo}</span>
                   <span className="text-zinc-400 hidden xs:flex items-center gap-0.5 group-hover:text-white transition-colors">
                     <ArrowRight className="w-2.5 h-2.5" />
                   </span>

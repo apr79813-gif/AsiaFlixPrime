@@ -79,10 +79,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
   if (!currentSlide) return null;
 
-  // Find associated drama if available
+  // Find associated drama if available (by id or normalized title match)
   const associatedDrama = currentSlide.dramaId 
-    ? featuredDramas.find((d) => d.id === currentSlide.dramaId) 
-    : featuredDramas[0];
+    ? featuredDramas.find((d) => d.id === currentSlide.dramaId || d.title.toLowerCase() === currentSlide.title.toLowerCase()) 
+    : (featuredDramas.find((d) => d.title.toLowerCase() === currentSlide.title.toLowerCase()) || featuredDramas[0]);
 
   const inWatchlist = associatedDrama ? isWatchlisted(associatedDrama.id) : false;
   const isTopOne = currentIndex === 0 || currentSlide.badge?.includes('TOP 1');
@@ -95,6 +95,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           key={currentSlide.id + currentSlide.backdropUrl}
           src={currentSlide.backdropUrl}
           alt={currentSlide.title}
+          referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center filter brightness-[0.38] transition-all duration-1000 scale-105"
         />
         {/* Gradients */}
@@ -153,6 +154,16 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 {currentSlide.category}
               </span>
             )}
+            {associatedDrama?.ageRating && (
+              <span className="bg-black/70 text-amber-300 border border-amber-500/30 text-[11px] font-black px-2 py-0.5 rounded">
+                {associatedDrama.ageRating}
+              </span>
+            )}
+            {associatedDrama?.subCategory && (
+              <span className="bg-white/10 text-zinc-200 text-[11px] font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
+                {associatedDrama.subCategory}
+              </span>
+            )}
             {currentSlide.releaseYear && (
               <span className="text-zinc-400 text-xs font-semibold">
                 {currentSlide.releaseYear}
@@ -167,13 +178,18 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 </div>
               </>
             )}
-            {currentSlide.scheduleInfo && (
+            {(associatedDrama?.details || currentSlide.scheduleInfo) && (
               <>
                 <span className="text-zinc-500">·</span>
                 <span className="text-sky-400 text-xs font-bold">
-                  {currentSlide.scheduleInfo}
+                  {associatedDrama?.details || currentSlide.scheduleInfo}
                 </span>
               </>
+            )}
+            {associatedDrama?.statusText && (
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold px-2 py-0.5 rounded">
+                {associatedDrama.statusText}
+              </span>
             )}
           </div>
 

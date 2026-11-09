@@ -19,7 +19,6 @@ import { SupportDeskModal } from './components/SupportDeskModal';
 import { ArcadeHubModal } from './components/ArcadeHubModal';
 import { AdminStudioModal } from './components/AdminStudioModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
-import { MobileBottomNav } from './components/MobileBottomNav';
 import { Footer } from './components/Footer';
 import { 
   fetchDramasFromSupabase, 
@@ -27,12 +26,12 @@ import {
   getActiveSupabaseUser 
 } from './services/supabaseService';
 
-const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4prDqYUbk87MvTOWLhH9X85aCr9bbVqdI-F6y4raT3sFqvuuPg0o9IkwQ9kzBK4VGFOiDybluNfdm/pub?output=csv";
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/export?format=csv&gid=0";
 
 export default function App() {
   // --- GOOGLE SHEETS DYNAMIC URL STATE ---
   const [googleSheetUrl, setGoogleSheetUrl] = useState<string>(() => {
-    return localStorage.getItem('asiaflix_google_sheet_url_v1') || SHEET_CSV_URL;
+    return localStorage.getItem('asiaflix_google_sheet_url_v4') || SHEET_CSV_URL;
   });
 
   // --- CUSTOM BRAND LOGO URL (FROM SHEET OR SETTINGS) ---
@@ -85,8 +84,8 @@ export default function App() {
       }
     }
 
-    // 2. Load curated dramas
-    const savedCurated = localStorage.getItem('asiaflix_curated_dramas_v3');
+    // 2. Load curated dramas from v4 cache
+    const savedCurated = localStorage.getItem('asiaflix_curated_dramas_v4');
     if (savedCurated) {
       try {
         const parsed = JSON.parse(savedCurated);
@@ -99,11 +98,8 @@ export default function App() {
       }
     }
 
-    if (customList.length > 0) {
-      const nonCustomInitial = INITIAL_DRAMAS.filter((p) => !customList.some((c) => c.id === p.id));
-      return [...customList, ...nonCustomInitial];
-    }
-    return INITIAL_DRAMAS;
+    // Website catalog comes 100% from Google Sheet rows (do not fallback to INITIAL_DRAMAS)
+    return customList;
   });
 
   // --- WEEKEND MEGA LINEUP SETTINGS ---
@@ -197,7 +193,7 @@ export default function App() {
 
   // --- HOMEPAGE HERO BANNERS / BACKGROUND POSTERS STATE ---
   const [heroBanners, setHeroBanners] = useState<HeroBannerSlide[]>(() => {
-    const saved = localStorage.getItem('asiaflix_hero_banners_v1');
+    const saved = localStorage.getItem('asiaflix_hero_banners_v5');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -208,7 +204,7 @@ export default function App() {
         console.error('Error parsing hero banners:', e);
       }
     }
-    return INITIAL_HERO_BANNERS;
+    return [];
   });
 
   // --- ADMIN AUTH STATE (Persistent per session) ---
@@ -233,12 +229,12 @@ export default function App() {
 
   const handleUpdateDramasCuration = (updatedDramas: DramaItem[]) => {
     setDramas(updatedDramas);
-    localStorage.setItem('asiaflix_curated_dramas_v3', JSON.stringify(updatedDramas));
+    localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(updatedDramas));
   };
 
   // Persistent storage effects
   useEffect(() => {
-    localStorage.setItem('asiaflix_hero_banners_v1', JSON.stringify(heroBanners));
+    localStorage.setItem('asiaflix_hero_banners_v5', JSON.stringify(heroBanners));
   }, [heroBanners]);
 
   useEffect(() => {
@@ -261,7 +257,7 @@ export default function App() {
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem('asiaflix_google_sheet_url_v1', googleSheetUrl);
+    localStorage.setItem('asiaflix_google_sheet_url_v4', googleSheetUrl);
   }, [googleSheetUrl]);
 
   useEffect(() => {
@@ -301,11 +297,11 @@ export default function App() {
     error?: string;
   }>(() => ({
     isSyncing: false,
-    lastSyncedCount: 202,
+    lastSyncedCount: 0,
     lastSyncedTime: 'Ready',
   }));
 
-  // Merge external items (Google Sheets / Supabase):
+  // Merge external items (Google Sheets):
   // Fresh Google Sheet data always takes 1st priority and completely overwrites old cached items.
   const mergePreservingCuratedAndCustom = (incoming: DramaItem[]) => {
     setDramas((prev) => {
@@ -327,18 +323,13 @@ export default function App() {
       const filteredCustom = customDramas.filter((c) => !incomingIds.has(c.id));
       const result = [...filteredCustom, ...incoming];
 
-      localStorage.setItem('asiaflix_curated_dramas_v3', JSON.stringify(result));
+      localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(result));
       return result;
     });
   };
 
   const syncCatalogAndNotifs = async () => {
     try {
-      const sbDramas = await fetchDramasFromSupabase();
-      if (sbDramas && sbDramas.length > 0) {
-        mergePreservingCuratedAndCustom(sbDramas);
-      }
-
       const sbNotifs = await fetchNotificationsFromSupabase();
       if (sbNotifs && sbNotifs.length > 0) {
         setNotifications((prev) => {
@@ -351,10 +342,10 @@ export default function App() {
         });
       }
     } catch (e) {
-      console.warn('Supabase initial fetch caught:', e);
+      console.warn('Supabase notifications sync caught:', e);
     }
 
-    // Direct Sheet sync with cache busting
+    // Direct Sheet sync with cache busting - website catalog comes 100% from Google Sheet
     await fetchGoogleSheetData();
   };
 
@@ -510,49 +501,41 @@ export default function App() {
         return { success: false, error: 'Google Sheet khali hai ya koi rows nahi mili.' };
       }
 
-      const header = rows[0].map((h) => h.toLowerCase().trim());
+      // Find header row dynamically (by looking for the row where a cell equals 'title')
+      let headerRowIdx = rows.findIndex((row) => row.some((cell) => cell.trim().toLowerCase() === 'title'));
+      if (headerRowIdx === -1) headerRowIdx = 0;
+      const header = rows[headerRowIdx].map((h) => h.toLowerCase().trim());
       
-      const findColIdx = (keywords: string[]) => {
-        for (let i = 0; i < header.length; i++) {
-          const col = header[i];
-          for (const kw of keywords) {
-            if (col.includes(kw)) return i;
-          }
-        }
-        return -1;
-      };
-
-      const titleIdx = findColIdx(['title', 'name']);
-      const catIdx = findColIdx(['category', 'type']);
-      const audioIdx = findColIdx(['audio', 'dub']);
-      const posterIdx = findColIdx(['poster', 'image']);
+      const titleIdx = header.findIndex((h) => h === 'title' || h === 'name');
+      const catIdx = header.findIndex((h) => h === 'category');
+      const ageRatingIdx = header.findIndex((h) => h.includes('age'));
+      const posterIdx = header.findIndex((h) => h.includes('poster') || h.includes('image'));
+      const subCategoryIdx = header.findIndex((h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'));
+      const synopsisIdx = header.findIndex((h) => h.includes('synopsis') || h.includes('desc') || h.includes('plot'));
+      const castIdx = header.findIndex((h) => h.includes('lead cast') || h.includes('cast') || h.includes('actor'));
+      const ratingIdx = header.findIndex((h) => h === 'rating' || h === 'score');
+      const tagsIdx = header.findIndex((h) => h.includes('hashtag') || h.includes('hastag') || h.includes('tags'));
+      const detailsIdx = header.findIndex((h) => h === 'details' || h.includes('detail'));
       
       // Telegram 1, 2, 3 indices
-      const telegramHindiIdx = findColIdx(['telegram (hindi)', 'telegram 1', 'hindi)']);
-      const telegramFanDubIdx = findColIdx(['telegram2', 'fan dub', 'fandub']);
-      const telegramOrigIdx = findColIdx(['telegram3', 'orig', 'sub']);
-      const fallbackTelegramIdx = findColIdx(['telegram', 'link']);
-
-      const statusIdx = findColIdx(['status']);
-      const detailsIdx = findColIdx(['details', 'runtime', 'episode']);
-      const scheduleIdx = findColIdx(['schedule', 'shedule']);
-      const badgeIdx = findColIdx(['badge']);
-      const bannerIdx = findColIdx(['hero banner', 'banner']);
-      const synopsisIdx = findColIdx(['synopsis', 'desc', 'plot']);
-      const ratingIdx = findColIdx(['rating', 'score']);
-      const castIdx = findColIdx(['lead cast', 'cast', 'actor']);
-      const tagsIdx = findColIdx(['hastags', 'hashtag', 'tags']);
-      const noticeIdx = findColIdx(['notice']);
-      const trendingIdx = findColIdx(['top trending', 'trending']);
-      const logoIdx = findColIdx(['logo']);
-      const weekendIdx = findColIdx(['weekend', 'lineup', 'mega']);
+      const telegramHindiIdx = header.findIndex((h) => h.includes('telegram 1') || h.includes('telegram1') || h === 't1' || h.includes('hindi'));
+      const telegramFanDubIdx = header.findIndex((h) => h.includes('telegram 2') || h.includes('telegram2') || h === 't2' || h.includes('fan'));
+      const telegramOrigIdx = header.findIndex((h) => h.includes('telegram 3') || h.includes('telegram3') || h === 't3' || h.includes('orig'));
+      
+      const scheduleIdx = header.findIndex((h) => h.includes('schedule') || h.includes('shedule'));
+      const statusIdx = header.findIndex((h) => h === 'status' || h.includes('status'));
+      const bannerIdx = header.findIndex((h) => h.includes('hero banner') || h.includes('banner'));
+      const noticeIdx = header.findIndex((h) => h.includes('notice'));
+      const trendingIdx = header.findIndex((h) => h.includes('top trending') || h.includes('trending now') || h.includes('trending'));
+      const logoIdx = header.findIndex((h) => h.includes('logo'));
+      const weekendIdx = header.findIndex((h) => h.includes('weekend') || h.includes('lineup') || h.includes('mega'));
 
       // Global sheet settings (Notice, Trending list, Logo URL)
       let foundNotice = '';
       let foundTrendingTitles: string[] = [];
       let foundLogoUrl = '';
 
-      for (let r = 1; r < rows.length; r++) {
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
         if (!foundNotice && noticeIdx >= 0 && row[noticeIdx]?.trim()) {
           foundNotice = row[noticeIdx].trim();
@@ -566,7 +549,7 @@ export default function App() {
         if (!foundLogoUrl && logoIdx >= 0 && row[logoIdx]?.trim()) {
           let rawLogo = row[logoIdx].trim();
           if (rawLogo.includes('github.com') && rawLogo.includes('/blob/')) {
-            rawLogo = rawLogo.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+            rawLogo = "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png";
           }
           foundLogoUrl = rawLogo;
         }
@@ -578,7 +561,7 @@ export default function App() {
       const parsedDramasMap = new Map<string, DramaItem>();
       const parsedHeroBanners: HeroBannerSlide[] = [];
 
-      for (let r = 1; r < rows.length; r++) {
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
         const title = row[titleIdx >= 0 ? titleIdx : 0];
         if (!title || !title.trim()) continue;
@@ -587,54 +570,54 @@ export default function App() {
         const normalizedKey = cleanTitle.toLowerCase().replace(/\s*\(\d{4}\)/g, '').replace(/[^a-z0-9]/g, ' ').trim();
         const dramaId = `sheet-${normalizedKey.replace(/\s+/g, '-')}`;
 
-        const categoryRaw = row[catIdx >= 0 ? catIdx : 1] || 'K-Drama';
-        const audioRaw = row[audioIdx >= 0 ? audioIdx : 2] || 'Hindi Dubbed';
-        const poster = row[posterIdx >= 0 ? posterIdx : 3]?.trim() || '';
-
         // Extract Telegram 1, 2, 3
-        let tHindi = telegramHindiIdx >= 0 ? row[telegramHindiIdx]?.trim() : '';
-        let tFanDub = telegramFanDubIdx >= 0 ? row[telegramFanDubIdx]?.trim() : '';
-        let tOrig = telegramOrigIdx >= 0 ? row[telegramOrigIdx]?.trim() : '';
-        const generalTg = fallbackTelegramIdx >= 0 ? row[fallbackTelegramIdx]?.trim() : '';
+        const tHindi = telegramHindiIdx >= 0 ? row[telegramHindiIdx]?.trim() || '' : '';
+        const tFanDub = telegramFanDubIdx >= 0 ? row[telegramFanDubIdx]?.trim() || '' : '';
+        const tOrig = telegramOrigIdx >= 0 ? row[telegramOrigIdx]?.trim() || '' : '';
 
-        const statusRaw = row[statusIdx >= 0 ? statusIdx : 5] || 'Now Streaming (Ongoing)';
-        const detailsRaw = detailsIdx >= 0 ? row[detailsIdx]?.trim() : '';
-        const scheduleRaw = scheduleIdx >= 0 ? row[scheduleIdx]?.trim() : '';
-        const badgeRaw = badgeIdx >= 0 ? row[badgeIdx]?.trim() : '';
-        const synopsisVal = synopsisIdx >= 0 ? row[synopsisIdx]?.trim() : '';
+        const hasHindiHttp = Boolean(tHindi && (tHindi.startsWith('http') || tHindi.includes('http')));
+        const hasFanDubHttp = Boolean(tFanDub && (tFanDub.startsWith('http') || tFanDub.includes('http')));
+        const hasOrigHttp = Boolean(tOrig && (tOrig.startsWith('http') || tOrig.includes('http')));
+
+        // STRICT RULE: If a row does NOT have any http link in T1, T2, or T3 (all three are empty), SKIP that row completely
+        if (!hasHindiHttp && !hasFanDubHttp && !hasOrigHttp) {
+          continue;
+        }
+
+        const categoryRaw = catIdx >= 0 ? row[catIdx]?.trim() || 'K-Drama' : 'K-Drama';
+        const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
+        const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
+        const subCategory = subCategoryIdx >= 0 ? row[subCategoryIdx]?.trim() || '' : '';
+        const synopsisVal = synopsisIdx >= 0 ? row[synopsisIdx]?.trim() || '' : '';
+        const castRaw = castIdx >= 0 ? row[castIdx]?.trim() || '' : '';
         const ratingVal = ratingIdx >= 0 && row[ratingIdx]?.trim() ? parseFloat(row[ratingIdx]) : 9.3;
-        const castRaw = castIdx >= 0 ? row[castIdx]?.trim() : '';
-        const tagsRaw = tagsIdx >= 0 ? row[tagsIdx]?.trim() : '';
-        const isBannerRow = bannerIdx >= 0 && (row[bannerIdx]?.trim().toLowerCase() === 'yes' || row[bannerIdx]?.trim().toLowerCase() === 'true');
-        const isWeekendRow = weekendIdx >= 0 && (row[weekendIdx]?.trim().toLowerCase() === 'yes' || row[weekendIdx]?.trim().toLowerCase() === 'true');
+        const tagsRaw = tagsIdx >= 0 ? row[tagsIdx]?.trim() || '' : '';
+        const detailsRaw = detailsIdx >= 0 ? row[detailsIdx]?.trim() || '' : '';
+        const scheduleRaw = scheduleIdx >= 0 ? row[scheduleIdx]?.trim() || '' : '';
+        const statusRaw = statusIdx >= 0 ? row[statusIdx]?.trim() || '' : '';
+        
+        // STRICT HERO BANNER RULE: Only include if explicitly set to yes, true, 1, or valid image/http URL
+        const rawBannerVal = bannerIdx >= 0 ? row[bannerIdx]?.trim().toLowerCase() || '' : '';
+        const isBannerRow = rawBannerVal === 'yes' || 
+          rawBannerVal === 'true' || 
+          rawBannerVal === '1' || 
+          rawBannerVal.startsWith('http');
 
-        // Audio & Badge context for intelligent audio detection
-        const audioContext = `${audioRaw} ${badgeRaw}`.toLowerCase();
-        const isOrigSub = audioContext.includes('orig') || audioContext.includes('eng sub') || audioContext.includes('sub');
-        const isFanDub = audioContext.includes('fan');
+        const isWeekendRow = weekendIdx >= 0 && (row[weekendIdx]?.trim().toLowerCase() === 'yes' || row[weekendIdx]?.trim().toLowerCase() === 'true' || row[weekendIdx]?.trim() === '1');
 
-        // Fix audio detection: If a row has Original or Eng Sub in Audio/Badge and the link is in Column E (Telegram (Hindi)),
-        // treat that link as Original / Eng Sub instead of forcing Hindi Dubbed!
-        if (tHindi && (tHindi.startsWith('http') || tHindi.includes('https://'))) {
-          if (isOrigSub && !tOrig) {
-            tOrig = tHindi;
-            tHindi = '';
-          } else if (isFanDub && !tFanDub) {
-            tFanDub = tHindi;
-            tHindi = '';
-          }
-        }
+        // Check if Movie
+        const catLower = categoryRaw.toLowerCase();
+        const subLower = subCategory.toLowerCase();
+        const isFilm = catLower.includes('movie') || catLower.includes('film') || catLower.includes('bolly') || catLower.includes('holly') ||
+          subLower.includes('movie') || subLower.includes('film') ||
+          Boolean(detailsRaw && detailsRaw.includes(':') && !detailsRaw.toLowerCase().includes('ep'));
 
-        // If general/primary telegram col has link and row specifies audio type
-        if (generalTg && (generalTg.startsWith('http') || generalTg.includes('https://'))) {
-          if (isOrigSub && !tOrig) {
-            tOrig = generalTg;
-          } else if (isFanDub && !tFanDub) {
-            tFanDub = generalTg;
-          } else if (!tHindi && !isOrigSub && !isFanDub) {
-            tHindi = generalTg;
-          }
-        }
+        let dramaCategory: DramaCategory = 'K-Drama';
+        if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
+        else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
+        else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
+        else if (catLower.includes('j-drama') || catLower.includes('japanese')) dramaCategory = 'J-Drama';
+        else if (catLower.includes('sci-fi')) dramaCategory = 'Sci-Fi Series';
 
         // Parse lead cast
         const parsedCast = castRaw 
@@ -646,18 +629,6 @@ export default function App() {
           ? tagsRaw.split(/[\s,]+/).map((t) => t.trim().replace(/^#/, '')).filter(Boolean)
           : [];
 
-        // Check if Movie
-        const catLower = categoryRaw.toLowerCase();
-        const isFilm = catLower.includes('movie') || catLower.includes('film') || catLower.includes('bolly') || catLower.includes('holly') ||
-          Boolean(detailsRaw && (detailsRaw.includes(':') || detailsRaw.toLowerCase().includes('movie')));
-
-        let dramaCategory: DramaCategory = 'K-Drama';
-        if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
-        else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
-        else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
-        else if (catLower.includes('j-drama') || catLower.includes('japanese')) dramaCategory = 'J-Drama';
-        else if (catLower.includes('sci-fi')) dramaCategory = 'Sci-Fi Series';
-
         // Check if Trending
         const isTrendingInSheet = foundTrendingTitles.some((t) => {
           return normalizedKey === t || normalizedKey.includes(t) || t.includes(normalizedKey);
@@ -665,74 +636,74 @@ export default function App() {
 
         // Determine mapped status
         let dramaStatus: DramaStatus = 'Now Streaming (Ongoing)';
-        if (statusRaw.includes('Completed') || statusRaw.includes('Full')) {
+        if (statusRaw.toLowerCase().includes('completed') || statusRaw.toLowerCase().includes('full')) {
           dramaStatus = 'Completed (Full Series)';
-        } else if (statusRaw.includes('Coming') || statusRaw.includes('Upcoming')) {
+        } else if (statusRaw.toLowerCase().includes('coming') || statusRaw.toLowerCase().includes('upcoming')) {
           dramaStatus = 'Coming Soon';
         }
 
-        // Available audios & coming soon audios
+        // Available audios strictly from which of T1, T2, T3 have http links
         const availableAudios: AudioType[] = [];
-        const comingSoonAudios: AudioType[] = [];
+        if (hasHindiHttp) availableAudios.push('Hindi Dubbed');
+        if (hasFanDubHttp) availableAudios.push('Fan Dubbed');
+        if (hasOrigHttp) availableAudios.push('Original / Eng Sub');
 
-        if (tHindi && (tHindi.startsWith('http') || tHindi.includes('https://'))) {
-          availableAudios.push('Hindi Dubbed');
-        } else if (audioContext.includes('hindi') && !isFanDub && (statusRaw.includes('Coming') || statusRaw.includes('Upcoming') || !tHindi)) {
-          comingSoonAudios.push('Hindi Dubbed');
-        }
+        const defaultAudio: AudioType = availableAudios[0] || 'Hindi Dubbed';
 
-        if (tFanDub && (tFanDub.startsWith('http') || tFanDub.includes('https://'))) {
-          availableAudios.push('Fan Dubbed');
-        } else if (isFanDub && (statusRaw.includes('Coming') || statusRaw.includes('Upcoming') || !tFanDub)) {
-          comingSoonAudios.push('Fan Dubbed');
-        }
+        const extractFirstUrl = (text: string) => {
+          const m = text.match(/https?:\/\/[^\s"',]+/);
+          return m ? m[0] : text;
+        };
 
-        if (tOrig && (tOrig.startsWith('http') || tOrig.includes('https://'))) {
-          availableAudios.push('Original / Eng Sub');
-        } else if (isOrigSub && (statusRaw.includes('Coming') || statusRaw.includes('Upcoming') || !tOrig)) {
-          comingSoonAudios.push('Original / Eng Sub');
-        }
-
-        // Default primary telegram link & audio
-        const defaultAudio: AudioType = availableAudios[0] 
-          || (isFanDub ? 'Fan Dubbed' : isOrigSub ? 'Original / Eng Sub' : 'Hindi Dubbed');
-
-        const primaryLink = (defaultAudio === 'Original / Eng Sub' ? tOrig : defaultAudio === 'Fan Dubbed' ? tFanDub : tHindi)
-          || tHindi || tFanDub || tOrig || generalTg || 'https://t.me/+yJH68LvfrT9hZDVl';
+        const primaryLink = hasHindiHttp
+          ? extractFirstUrl(tHindi)
+          : hasFanDubHttp
+          ? extractFirstUrl(tFanDub)
+          : extractFirstUrl(tOrig);
 
         const yearMatch = cleanTitle.match(/\b(20\d\d)\b/);
-        const releaseYear = yearMatch ? parseInt(yearMatch[1]) : 2026;
+        const releaseYear = yearMatch ? parseInt(yearMatch[1], 10) : 2026;
 
         // Parse multi-line or single episode links from all 3 Telegram columns
-        const hindiEpisodes = parseTelegramEpisodeLinks(tHindi, 'Hindi Dubbed', dramaId, cleanTitle, isFilm, detailsRaw);
-        const fanEpisodes = parseTelegramEpisodeLinks(tFanDub, 'Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw);
-        const origEpisodes = parseTelegramEpisodeLinks(tOrig, 'Original / Eng Sub', dramaId, cleanTitle, isFilm, detailsRaw);
+        const hindiEpisodes = hasHindiHttp ? parseTelegramEpisodeLinks(tHindi, 'Hindi Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
+        const fanEpisodes = hasFanDubHttp ? parseTelegramEpisodeLinks(tFanDub, 'Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
+        const origEpisodes = hasOrigHttp ? parseTelegramEpisodeLinks(tOrig, 'Original / Eng Sub', dramaId, cleanTitle, isFilm, detailsRaw) : [];
 
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
 
-        // If title already seen in another row (e.g. Merry Berry Love or Four Hands, Two Sonatas):
+        // Parse totalEpisodes from Details (e.g. "24 Episodes" -> 24; "1:44:00" -> 1)
+        let totalEpCount = 1;
+        if (isFilm || (detailsRaw && detailsRaw.includes(':') && !detailsRaw.toLowerCase().includes('ep'))) {
+          totalEpCount = 1;
+        } else if (parsedEpisodes.length > 1) {
+          totalEpCount = parsedEpisodes.length;
+        } else if (detailsRaw) {
+          const matchNum = detailsRaw.match(/(\d+)/);
+          totalEpCount = matchNum ? parseInt(matchNum[1], 10) : 16;
+        } else {
+          totalEpCount = 16;
+        }
+
+        // If title already seen in another row
         if (parsedDramasMap.has(dramaId)) {
           const prev = parsedDramasMap.get(dramaId)!;
-          if (tHindi && !prev.telegramHindi) prev.telegramHindi = tHindi;
-          if (tFanDub && !prev.telegramFanDub) prev.telegramFanDub = tFanDub;
-          if (tOrig && !prev.telegramOrig) prev.telegramOrig = tOrig;
+          if (hasHindiHttp && !prev.telegramHindi) prev.telegramHindi = tHindi;
+          if (hasFanDubHttp && !prev.telegramFanDub) prev.telegramFanDub = tFanDub;
+          if (hasOrigHttp && !prev.telegramOrig) prev.telegramOrig = tOrig;
           if (poster && poster.startsWith('http') && !prev.poster.startsWith('http')) {
             prev.poster = poster;
             prev.backdrop = poster;
           }
           if (detailsRaw && !prev.details) prev.details = detailsRaw;
           if (scheduleRaw && !prev.schedule) prev.schedule = scheduleRaw;
+          if (statusRaw && !prev.statusText) prev.statusText = statusRaw;
+          if (ageRating && !prev.ageRating) prev.ageRating = ageRating;
+          if (subCategory && !prev.subCategory) prev.subCategory = subCategory;
           if (statusRaw.includes('Now Streaming') || statusRaw.includes('Ep')) {
             prev.status = 'Now Streaming (Ongoing)';
           }
           availableAudios.forEach((a) => {
             if (!prev.availableAudios.includes(a)) prev.availableAudios.push(a);
-            prev.comingSoonAudios = prev.comingSoonAudios?.filter((cs) => cs !== a);
-          });
-          comingSoonAudios.forEach((cs) => {
-            if (!prev.availableAudios.includes(cs) && !prev.comingSoonAudios?.includes(cs)) {
-              prev.comingSoonAudios = [...(prev.comingSoonAudios || []), cs];
-            }
           });
           if (parsedCast.length > 0) {
             prev.leadCast = Array.from(new Set([...(prev.leadCast || []), ...parsedCast]));
@@ -754,7 +725,7 @@ export default function App() {
           continue;
         }
 
-        // Build episodes array (either parsed multi-episodes or clean single/merged episode item)
+        // Build episodes array
         const dramaEpisodes: EpisodeItem[] = parsedEpisodes.length > 0
           ? parsedEpisodes
           : [
@@ -771,28 +742,25 @@ export default function App() {
               },
             ];
 
-        const totalEpCount = isFilm 
-          ? 1 
-          : parsedEpisodes.length > 1 
-          ? parsedEpisodes.length 
-          : detailsRaw && detailsRaw.match(/(\d+)\s*ep/i) 
-          ? parseInt(detailsRaw.match(/(\d+)\s*ep/i)![1]) 
-          : 16;
-
         const item: DramaItem = {
           id: dramaId,
           title: cleanTitle,
           category: dramaCategory,
           releaseYear,
           status: dramaStatus,
+          statusText: statusRaw || undefined,
+          ageRating: ageRating || undefined,
+          subCategory: subCategory || undefined,
           rating: ratingVal || 9.2,
           poster: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
           backdrop: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200',
           synopsis: synopsisVal || `Watch ${cleanTitle} in high definition on AsiaFlix Prime Private Channel.`,
-          cast: parsedCast.length > 0 ? parsedCast : ['AsiaFlix Exclusive'],
-          tags: parsedTags.length > 0 ? parsedTags : [dramaCategory, defaultAudio, badgeRaw].filter(Boolean),
+          cast: parsedCast.length > 0 ? Array.from(new Set(parsedCast)) : ['AsiaFlix Exclusive'],
+          tags: parsedTags.length > 0 
+            ? Array.from(new Set(parsedTags)) 
+            : Array.from(new Set([dramaCategory, defaultAudio, subCategory].filter(Boolean))),
           scheduleInfo: scheduleRaw || detailsRaw || '2026 VIP Release',
-          availableAudios: availableAudios.length > 0 ? availableAudios : [defaultAudio],
+          availableAudios,
           defaultAudio,
           isFeatured: isTrendingInSheet,
           isTrending: isTrendingInSheet || true,
@@ -801,49 +769,47 @@ export default function App() {
           isWeekendLineup: isWeekendRow,
           weekendSlot: isWeekendRow ? 'Sat & Sun Drop' : undefined,
           totalEpisodes: totalEpCount,
-          qualityBadge: badgeRaw || '1080p FHD',
+          qualityBadge: subCategory || '1080p FHD',
           telegramUrl: primaryLink,
           episodes: dramaEpisodes,
           
-          // New Google Sheet Fields
-          telegramHindi: tHindi,
-          telegramFanDub: tFanDub,
-          telegramOrig: tOrig,
+          // Google Sheet Fields
+          telegramHindi: hasHindiHttp ? tHindi : undefined,
+          telegramFanDub: hasFanDubHttp ? tFanDub : undefined,
+          telegramOrig: hasOrigHttp ? tOrig : undefined,
           details: detailsRaw,
           schedule: scheduleRaw,
           leadCast: parsedCast,
           hashtags: parsedTags,
           isMovie: isFilm,
-          comingSoonAudios: comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
         };
 
         parsedDramasMap.set(dramaId, item);
 
         if (isBannerRow) {
+          const customBannerBackdrop = rawBannerVal.startsWith('http') ? row[bannerIdx].trim() : item.backdrop;
           parsedHeroBanners.push({
             id: `banner-${dramaId}`,
             title: cleanTitle,
-            backdropUrl: item.backdrop,
+            backdropUrl: customBannerBackdrop,
             posterUrl: item.poster,
             audio: defaultAudio,
             category: dramaCategory,
             releaseYear,
             rating: item.rating,
-            scheduleInfo: scheduleRaw || detailsRaw || '1080p FHD',
+            scheduleInfo: detailsRaw || scheduleRaw || '1080p FHD',
             synopsis: item.synopsis,
-            badge: '🔥 VIP PICK',
+            badge: subCategory || '🔥 VIP PICK',
             telegramUrl: primaryLink,
             isActive: true,
+            dramaId: item.id,
           });
         }
       }
 
+      // 100% strict control from Google Sheet: parsedHeroBanners completely defines active carousel
       if (parsedHeroBanners.length > 0) {
-        setHeroBanners((prev) => {
-          const bannerIds = new Set(parsedHeroBanners.map((b) => b.id));
-          const existingFiltered = prev.filter((b) => !bannerIds.has(b.id));
-          return [...parsedHeroBanners, ...existingFiltered];
-        });
+        setHeroBanners(parsedHeroBanners);
       }
 
       const uniqueParsed = Array.from(parsedDramasMap.values());
@@ -1014,7 +980,7 @@ export default function App() {
       }
       const updatedCustom = [newDrama, ...customList.filter((d) => d.id !== newDrama.id)];
       localStorage.setItem('asiaflix_custom_dramas', JSON.stringify(updatedCustom));
-      localStorage.setItem('asiaflix_curated_dramas_v3', JSON.stringify(updated));
+      localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(updated));
       return updated;
     });
   };
@@ -1031,7 +997,7 @@ export default function App() {
       };
       // Sabse Aage at index 0
       const updated = [updatedTarget, ...rest];
-      localStorage.setItem('asiaflix_curated_dramas_v3', JSON.stringify(updated));
+      localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(updated));
       return updated;
     });
   };
@@ -1238,7 +1204,7 @@ export default function App() {
       {/* Top Notice Running Marquee */}
       <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
 
-      {/* Audience Instant Push & Telegram Bot Alerts Banner */}
+      {/* Audience Instant Push & Telegram Bot Alerts Banner (Clean & Non-overlapping) */}
       <AudienceNotificationBanner
         botUsername={telegramBotSettings.botUsername}
         onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
@@ -1262,6 +1228,37 @@ export default function App() {
         isSheetSyncing={sheetSyncState.isSyncing}
         onRefreshSheet={() => fetchGoogleSheetData()}
       />
+
+      {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
+      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 px-4 sm:px-6 relative z-30">
+        <div className="max-w-7xl mx-auto flex items-center justify-center sm:justify-between gap-3 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2.5 sm:gap-3 mx-auto flex-nowrap shrink-0">
+            {/* Perk 1: 100% Free Access */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.3)] transition-all shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
+              <span className="text-xs font-black text-white tracking-wide whitespace-nowrap">100% Free Access</span>
+            </div>
+
+            {/* Perk 2: Fast Cloud Stream */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.3)] transition-all shrink-0">
+              <span className="text-xs">⚡</span>
+              <span className="text-xs font-black text-white tracking-wide whitespace-nowrap">Fast Cloud Stream</span>
+            </div>
+
+            {/* Perk 3: Zero Ads / No Token */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-red-500/10 to-pink-500/10 hover:from-red-500/20 hover:to-pink-500/20 border border-red-500/25 backdrop-blur-md shadow-[0_2px_10px_rgba(229,9,20,0.2)] transition-all shrink-0">
+              <span className="text-xs">🛡️</span>
+              <span className="text-xs font-black text-red-200 tracking-wide whitespace-nowrap">Zero Ads / No Token</span>
+            </div>
+
+            {/* Perk 4: Weekend Drops */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 backdrop-blur-md shadow-[0_2px_10px_rgba(245,158,11,0.2)] transition-all shrink-0">
+              <span className="text-xs">🌸</span>
+              <span className="text-xs font-black text-amber-300 tracking-wide whitespace-nowrap">Weekend Drops 7 PM</span>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Cinematic Hero Banner Carousel */}
       <HeroBanner
@@ -1539,16 +1536,6 @@ export default function App() {
         onOpenSupport={() => setIsSupportOpen(true)}
         onOpenRequest={() => setIsRequestOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
-      />
-
-      {/* Mobile Bottom Navigation */}
-      <MobileBottomNav
-        onGoHome={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-        onFocusSearch={handleFocusSearch}
-        onOpenWatchlist={() => setIsWatchlistOpen(true)}
-        onOpenArcade={() => setIsArcadeOpen(true)}
-        onOpenSupport={() => setIsSupportOpen(true)}
-        watchlistCount={watchlist.length}
       />
 
       {/* --- MODALS & DRAWERS --- */}

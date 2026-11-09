@@ -22,8 +22,9 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   const isRankOne = isTopOne || rank === 1 || drama.spotlightTag === 'TOP #1';
 
   const getStatusDotColor = () => {
-    if (drama.status.includes('Completed')) return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]';
-    if (drama.status.includes('Coming') || drama.status.includes('Upcoming')) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
+    const s = (drama.statusText || drama.status).toLowerCase();
+    if (s.includes('completed') || s.includes('full')) return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]';
+    if (s.includes('coming') || s.includes('upcoming')) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
     return 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]';
   };
 
@@ -46,6 +47,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         <img
           src={drama.poster}
           alt={drama.title}
+          referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
           loading="lazy"
           onError={(e) => {
@@ -65,27 +67,19 @@ export const DramaCard: React.FC<DramaCardProps> = ({
               </span>
             )}
             
-            {/* Audio Badges (Telegram 1, 2, 3 indicators) */}
+            {/* Audio Badges (Telegram 1, 2, 3 indicators - strictly when links are live) */}
             <div className="flex flex-wrap gap-1 pointer-events-auto">
-              {drama.telegramHindi ? (
+              {drama.telegramHindi && (
                 <span className="bg-[#e50914] text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
                   🇮🇳 Hindi
                 </span>
-              ) : drama.comingSoonAudios?.includes('Hindi Dubbed') ? (
-                <span className="bg-amber-600/80 text-white text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
-                  ⏳ Hindi Soon
-                </span>
-              ) : null}
+              )}
 
-              {drama.telegramFanDub ? (
+              {drama.telegramFanDub && (
                 <span className="bg-purple-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
                   🎙️ Fan Dub
                 </span>
-              ) : drama.comingSoonAudios?.includes('Fan Dubbed') ? (
-                <span className="bg-purple-900/90 text-purple-200 border border-purple-500/30 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
-                  🎙️ Fan Dub Soon
-                </span>
-              ) : null}
+              )}
 
               {drama.telegramOrig && (
                 <span className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
@@ -95,9 +89,21 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             </div>
           </div>
 
-          <span className="bg-black/80 backdrop-blur-md text-zinc-300 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow pointer-events-auto shrink-0">
-            {drama.category}
-          </span>
+          <div className="flex flex-col items-end gap-1 pointer-events-auto shrink-0">
+            <span className="bg-black/80 backdrop-blur-md text-zinc-300 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow">
+              {drama.category}
+            </span>
+            {drama.ageRating && (
+              <span className="bg-black/85 backdrop-blur-md text-amber-300 text-[8px] sm:text-[9px] font-black px-1.5 py-0.2 rounded border border-amber-500/30 shadow">
+                {drama.ageRating}
+              </span>
+            )}
+            {drama.subCategory && (
+              <span className="bg-zinc-900/90 backdrop-blur-md text-zinc-300 text-[8px] sm:text-[9px] font-medium px-1.5 py-0.2 rounded border border-white/10 shadow truncate max-w-[85px]">
+                {drama.subCategory}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Watchlist Quick Button */}
@@ -123,12 +129,12 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
         </div>
 
-        {/* Status Bottom Floating Row */}
+        {/* Status Bottom Floating Row (Displays exact status text e.g. "Now Streaming Ep 6") */}
         <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] sm:text-[11px] pointer-events-none">
           <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 text-white font-bold">
             <span className={`w-1.5 h-1.5 rounded-full ${getStatusDotColor()}`} />
-            <span className="text-[9px] sm:text-[10px] truncate max-w-[95px] sm:max-w-[115px]">
-              {drama.status.replace(/ \(.*\)/, '')}
+            <span className="text-[9px] sm:text-[10px] truncate max-w-[105px] sm:max-w-[130px]">
+              {drama.statusText || drama.status.replace(/ \(.*\)/, '')}
             </span>
           </div>
 

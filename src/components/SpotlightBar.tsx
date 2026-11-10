@@ -18,7 +18,7 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
   if (!spotlightDramas || spotlightDramas.length === 0) return null;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 my-6 sm:my-8">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-6 sm:my-8">
       <div className="p-3.5 sm:p-5 rounded-2xl bg-gradient-to-r from-[#171216] via-[#111218] to-[#12161f] border border-white/[0.08] shadow-lg relative overflow-hidden">
         {/* Subtle decorative glow */}
         <div className="absolute top-0 right-0 w-80 h-32 bg-[#e50914]/10 blur-3xl pointer-events-none" />
@@ -57,8 +57,8 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
           </div>
         </div>
 
-        {/* Responsive Grid: 2 columns on phone instead of vertical stack 1-col! */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+        {/* Desktop 6-column Spotlight Grid */}
+        <div className="grid grid-cols-6 gap-3">
           {Array.from(new Map(spotlightDramas.map((d) => [d.id, d])).values()).slice(0, 6).map((drama, idx) => (
             <div
               key={drama.id}

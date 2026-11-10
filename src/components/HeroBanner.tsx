@@ -89,14 +89,14 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
   return (
     <section className="relative overflow-hidden border-b border-white/[0.08] min-h-[520px] lg:min-h-[600px] flex items-center">
-      {/* Cinematic Backdrop Image with Dark Vignette */}
+      {/* Cinematic Backdrop Image with Dark Vignette and Proper Facial Framing */}
       <div className="absolute inset-0 z-0">
         <img
           key={currentSlide.id + currentSlide.backdropUrl}
           src={currentSlide.backdropUrl}
           alt={currentSlide.title}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover object-center filter brightness-[0.38] transition-all duration-1000 scale-105"
+          className="w-full h-full object-cover object-[center_20%] filter brightness-[0.38] transition-all duration-1000 scale-105"
         />
         {/* Gradients */}
         <div className="absolute inset-0 bg-gradient-to-t from-[#08080c] via-[#08080c]/60 to-transparent" />
@@ -104,22 +104,22 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         <div className="absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-[#08080c] to-transparent" />
       </div>
 
-      <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 py-12 lg:py-16 w-full">
+      <div className="relative z-20 max-w-[1600px] mx-auto px-8 py-14 lg:py-16 w-full">
         {/* Header Badges Row */}
         <div className="flex flex-wrap items-center gap-2.5 mb-5">
-          {/* Top 1 Badge */}
+          {/* Top 1 / VIP Pick Badge */}
           {isTopOne ? (
             <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 text-black text-xs font-black shadow-[0_0_20px_rgba(245,158,11,0.6)] uppercase tracking-wider animate-pulse">
               <span>👑 TOP 1 IN ASIAFLIX</span>
             </div>
-          ) : currentSlide.badge ? (
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#e50914] text-white text-xs font-black tracking-wider uppercase shadow-md">
-              <span>{currentSlide.badge}</span>
+          ) : (
+            <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#e50914] text-white text-xs font-black tracking-wider uppercase shadow-md">
+              <span>{currentSlide.badge && !currentSlide.badge.includes(',') && currentSlide.badge.length < 25 ? currentSlide.badge : '🔥 VIP PICK'}</span>
             </div>
-          ) : null}
+          )}
 
           {/* Network Notice */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.06] border border-white/10 backdrop-blur-md text-xs text-zinc-300 font-semibold shadow-sm">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/10 backdrop-blur-md text-xs text-zinc-300 font-semibold shadow-sm">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Weekend Mega Lineup is Active!</span>
             <span className="text-zinc-500">·</span>

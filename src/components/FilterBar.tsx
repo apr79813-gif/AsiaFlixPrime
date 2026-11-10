@@ -30,10 +30,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   totalFilteredCount,
 }) => {
   const currentYear = new Date().getFullYear();
-  const years = Array.from({ length: 8 }).map((_, i) => currentYear - i);
+  const years = Array.from({ length: currentYear - 2000 + 1 }).map((_, i) => currentYear - i);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-8">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-8">
       {/* Search Bar */}
       <div className="relative max-w-2xl mx-auto mb-4 sm:mb-5">
         <div className="relative flex items-center">
@@ -82,14 +82,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           <span>🔊</span> Hindi Dubbed
         </button>
         <button
-          onClick={() => onSelectAudio('Fan Dubbed')}
+          onClick={() => onSelectAudio(selectedAudio === 'Hindi Fan Dubbed' || selectedAudio === 'Fan Dubbed' ? 'all' : 'Hindi Fan Dubbed')}
           className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-            selectedAudio === 'Fan Dubbed'
+            selectedAudio === 'Hindi Fan Dubbed' || selectedAudio === 'Fan Dubbed'
               ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.5)]'
               : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
           }`}
         >
-          <span>🎙️</span> Fan Dubbed
+          <span>🎙️</span> Hindi Fan Dubbed
         </button>
         <button
           onClick={() => onSelectAudio('Original / Eng Sub')}

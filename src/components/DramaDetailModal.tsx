@@ -47,41 +47,57 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   isTopOne = false,
   onSubscribeDubAlert,
 }) => {
+  // Link for each audio track strictly from drama
+  const audioLinkMap: Record<string, string | undefined> = {
+    'Hindi Dubbed': drama?.telegramHindi || drama?.episodes.find((e) => e.audio === 'Hindi Dubbed')?.telegramUrl || (drama?.availableAudios.includes('Hindi Dubbed') ? drama.telegramUrl : undefined),
+    'Hindi Fan Dubbed': drama?.telegramFanDub || drama?.episodes.find((e) => e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed')?.telegramUrl || (drama?.availableAudios.some((a) => a.includes('Fan')) ? drama.telegramUrl : undefined),
+    'Fan Dubbed': drama?.telegramFanDub || drama?.episodes.find((e) => e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed')?.telegramUrl || (drama?.availableAudios.some((a) => a.includes('Fan')) ? drama.telegramUrl : undefined),
+    'Original / Eng Sub': drama?.telegramOrig || drama?.episodes.find((e) => e.audio === 'Original / Eng Sub')?.telegramUrl || (drama?.availableAudios.includes('Original / Eng Sub') ? drama.telegramUrl : undefined),
+  };
+
+  // List only audio tracks that actually have an http link or are present in availableAudios
+  const availableTrackList = (['Hindi Dubbed', 'Hindi Fan Dubbed', 'Original / Eng Sub'] as AudioType[]).filter(
+    (audio) => {
+      const link = audioLinkMap[audio];
+      if (link && link.startsWith('http')) return true;
+      if (audio === 'Hindi Fan Dubbed' && drama?.availableAudios.some((a) => a.includes('Fan'))) return true;
+      if (drama?.availableAudios.includes(audio)) return true;
+      return false;
+    }
+  );
+
+  // If availableTrackList is empty but drama has a valid telegramUrl, ensure at least defaultAudio is available
+  if (availableTrackList.length === 0 && drama?.telegramUrl && drama.telegramUrl.startsWith('http')) {
+    const fallback = drama.defaultAudio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : (drama.defaultAudio || 'Hindi Dubbed');
+    availableTrackList.push(fallback as AudioType);
+    if (!audioLinkMap[fallback]) {
+      audioLinkMap[fallback] = drama.telegramUrl;
+    }
+  }
+
   // Determine initial active audio track based on what's available
   const [activeAudio, setActiveAudio] = useState<AudioType>(() => {
     if (!drama) return 'Hindi Dubbed';
-    if (drama.telegramHindi) return 'Hindi Dubbed';
-    if (drama.telegramFanDub) return 'Fan Dubbed';
-    if (drama.telegramOrig) return 'Original / Eng Sub';
-    return drama.availableAudios[0] || drama.defaultAudio || 'Hindi Dubbed';
+    if (audioLinkMap['Hindi Dubbed']?.startsWith('http')) return 'Hindi Dubbed';
+    if (audioLinkMap['Hindi Fan Dubbed']?.startsWith('http')) return 'Hindi Fan Dubbed';
+    if (audioLinkMap['Original / Eng Sub']?.startsWith('http')) return 'Original / Eng Sub';
+    return availableTrackList[0] || drama.defaultAudio || 'Hindi Dubbed';
   });
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
 
-  // Link for each audio track strictly from drama
-  const audioLinkMap: Record<AudioType, string | undefined> = {
-    'Hindi Dubbed': drama?.telegramHindi,
-    'Fan Dubbed': drama?.telegramFanDub,
-    'Original / Eng Sub': drama?.telegramOrig,
-  };
-
-  // List only audio tracks that actually have an http link
-  const availableTrackList = (['Hindi Dubbed', 'Fan Dubbed', 'Original / Eng Sub'] as AudioType[]).filter(
-    (audio) => Boolean(audioLinkMap[audio] && audioLinkMap[audio]?.startsWith('http'))
-  );
-
   // Synchronize activeAudio when drama changes
   React.useEffect(() => {
     if (drama) {
-      if (drama.telegramHindi && drama.telegramHindi.startsWith('http')) {
+      if (audioLinkMap['Hindi Dubbed']?.startsWith('http')) {
         setActiveAudio('Hindi Dubbed');
-      } else if (drama.telegramFanDub && drama.telegramFanDub.startsWith('http')) {
-        setActiveAudio('Fan Dubbed');
-      } else if (drama.telegramOrig && drama.telegramOrig.startsWith('http')) {
+      } else if (audioLinkMap['Hindi Fan Dubbed']?.startsWith('http')) {
+        setActiveAudio('Hindi Fan Dubbed');
+      } else if (audioLinkMap['Original / Eng Sub']?.startsWith('http')) {
         setActiveAudio('Original / Eng Sub');
-      } else if (drama.availableAudios.length > 0) {
-        setActiveAudio(drama.availableAudios[0]);
+      } else if (availableTrackList.length > 0) {
+        setActiveAudio(availableTrackList[0]);
       }
     }
   }, [drama]);
@@ -259,7 +275,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               <div className="flex items-center gap-2">
                 <Volume2 className="w-4 h-4 text-[#e50914]" />
                 <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                  Telegram Direct Links ({availableTrackList.length} Audio {availableTrackList.length > 1 ? 'Tracks' : 'Track'} Ready)
+                  Telegram Direct Links ({Math.max(availableTrackList.length, drama.availableAudios.length || 1)} Audio {Math.max(availableTrackList.length, drama.availableAudios.length || 1) > 1 ? 'Tracks' : 'Track'} Ready)
                 </h4>
               </div>
               <span className="text-[11px] text-zinc-400">
@@ -271,7 +287,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               {availableTrackList.map((audio) => {
                 const link = audioLinkMap[audio];
                 const isSelected = activeAudio === audio;
-                const icon = audio === 'Hindi Dubbed' ? '🇮🇳' : audio === 'Fan Dubbed' ? '🎙️' : '🌐';
+                const icon = audio === 'Hindi Dubbed' ? '🇮🇳' : audio.includes('Fan') ? '🎙️' : '🌐';
                 return (
                   <div
                     key={audio}
@@ -306,6 +322,32 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         <Send className="w-3 h-3" />
                         <span>Open Link</span>
                       </a>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Promised / Coming Soon Audios */}
+              {drama.comingSoonAudios && drama.comingSoonAudios.map((audio) => {
+                const icon = audio === 'Hindi Dubbed' ? '🇮🇳' : audio.includes('Fan') ? '🎙️' : '🌐';
+                const audioLabel = audio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : audio;
+                return (
+                  <div
+                    key={`cs-${audio}`}
+                    className="p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.03] flex flex-col justify-between gap-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-zinc-300 flex items-center gap-1.5">
+                        <span>{icon}</span>
+                        <span>{audioLabel}</span>
+                      </span>
+                      <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-black">
+                        ⏳ Coming Soon
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1 text-[10px] text-zinc-400">
+                      <span>Dubbing / In Pipeline</span>
+                      <span className="text-amber-400 font-bold">Dropping Soon</span>
                     </div>
                   </div>
                 );

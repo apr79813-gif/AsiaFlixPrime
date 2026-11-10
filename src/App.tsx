@@ -5,6 +5,7 @@ import { SakuraCanvas } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
 import { AudienceNotificationBanner } from './components/AudienceNotificationBanner';
 import { Navbar } from './components/Navbar';
+import { Home, Search, X, Play, Star, Clock, Film } from 'lucide-react';
 import { HeroBanner } from './components/HeroBanner';
 import { SpotlightBar } from './components/SpotlightBar';
 import { WeekendMegaLineupSection } from './components/WeekendMegaLineupSection';
@@ -126,12 +127,13 @@ export default function App() {
     const saved = localStorage.getItem('asiaflix_notifications');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch (e) {
         console.error('Error parsing notifications:', e);
       }
     }
-    return INITIAL_NOTIFICATIONS;
+    return [];
   });
 
   // --- WATCHLIST STATE ---
@@ -189,6 +191,9 @@ export default function App() {
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isArcadeOpen, setIsArcadeOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isInstantSearchOpen, setIsInstantSearchOpen] = useState(false);
+  const [instantSearchQuery, setInstantSearchQuery] = useState('');
+  const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies'>('All');
   const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security'>('trending');
 
   // --- HOMEPAGE HERO BANNERS / BACKGROUND POSTERS STATE ---
@@ -278,6 +283,27 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Force 100% exact Laptop layout on phones & small screens (1360px proportional scaling)
+  useEffect(() => {
+    const applyDesktopScale = () => {
+      document.body.style.minWidth = '1360px';
+      if (window.innerWidth < 1360) {
+        const scale = window.innerWidth / 1360;
+        (document.documentElement.style as any).zoom = String(scale);
+      } else {
+        (document.documentElement.style as any).zoom = '1';
+      }
+    };
+
+    applyDesktopScale();
+    window.addEventListener('resize', applyDesktopScale);
+    return () => {
+      window.removeEventListener('resize', applyDesktopScale);
+      document.body.style.minWidth = '';
+      (document.documentElement.style as any).zoom = '1';
+    };
   }, []);
 
   // --- SUPABASE AUTH USER STATE ---
@@ -407,56 +433,67 @@ export default function App() {
     const rawLines = rawText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
     if (rawLines.length === 0) return [];
 
-    if (rawLines.length === 1) {
-      const singleLine = rawLines[0];
-      const urlMatch = singleLine.match(/https?:\/\/[^\s"',]+/);
-      const url = urlMatch ? urlMatch[0] : singleLine;
-      if (!url.startsWith('http')) return [];
+    const audioLabel = audio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : audio;
 
-      const epMatch = singleLine.match(/(?:ep|episode|part|e)\s*[:=\-]?\s*(\d+)/i);
-      const epNum = epMatch ? parseInt(epMatch[1]) : (isFilm ? 'Full Movie' : 'Batch / Latest Drop');
-      const isSingleEp = Boolean(epMatch);
-
-      return [
-        {
-          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
-          episodeNumber: epNum,
-          title: isFilm
-            ? `${cleanTitle} (1080p FHD Movie)`
-            : isSingleEp
-            ? `${cleanTitle} · Episode ${epNum} (${audio})`
-            : `${cleanTitle} · Master Pack (${audio})`,
-          audio,
-          telegramUrl: url,
-          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
-          quality: '1080p FHD',
-          isMerged: !isSingleEp && !isFilm,
-          format: isFilm ? 'movie' : isSingleEp ? 'single' : 'merged',
-        },
-      ];
-    }
-
-    // Multiple lines: parse each line into an EpisodeItem
     const episodes: EpisodeItem[] = [];
+
     rawLines.forEach((line, idx) => {
       const urlMatch = line.match(/https?:\/\/[^\s"',]+/);
       if (!urlMatch) return;
       const url = urlMatch[0];
 
-      const epMatch = line.match(/(?:ep|episode|part|e)\s*[:=\-]?\s*(\d+)/i) || line.match(/^(\d+)\s*[:=\.\-]/);
-      const epNum = epMatch ? parseInt(epMatch[1]) : idx + 1;
+      // Match explicit episode range or episode number (e.g. "Ep 1-3", "Episodes 7-10", "Ep 4", "Part 2", "E05")
+      const rangeMatch = line.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+\s*-\s*\d+)/i) ||
+                         line.match(/^(\d+\s*-\s*\d+)\s*[:=\.\-]/);
+      const singleMatch = line.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+)/i) || 
+                          line.match(/^(\d+)\s*[:=\.\-]/);
 
-      episodes.push({
-        id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
-        episodeNumber: epNum,
-        title: `${cleanTitle} · Episode ${epNum} (${audio})`,
-        audio,
-        telegramUrl: url,
-        duration: detailsRaw || '1080p FHD',
-        quality: '1080p FHD',
-        isMerged: false,
-        format: 'single',
-      });
+      if (rangeMatch) {
+        const epRange = rangeMatch[1].replace(/\s+/g, '');
+        episodes.push({
+          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epRange}`,
+          episodeNumber: epRange,
+          title: `${cleanTitle} — Episodes ${epRange} (${audioLabel})`,
+          audio,
+          telegramUrl: url,
+          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+          quality: '1080p FHD',
+          isMerged: true,
+          format: 'merged',
+        });
+      } else if (singleMatch) {
+        const epNum = parseInt(singleMatch[1], 10);
+        episodes.push({
+          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
+          episodeNumber: epNum,
+          title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} — Episode ${epNum} (${audioLabel})`,
+          audio,
+          telegramUrl: url,
+          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+          quality: '1080p FHD',
+          isMerged: false,
+          format: isFilm ? 'movie' : 'single',
+        });
+      } else {
+        // Direct link without explicit Ep label (e.g. "https://t.me/c/...") -> Master Pack / Full Series / Movie
+        const isMulti = rawLines.length > 1;
+        const fallbackEp = isFilm ? 'Full Movie' : isMulti ? (idx + 1) : 'Full Series Batch';
+        episodes.push({
+          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${isMulti ? idx + 1 : 'batch'}`,
+          episodeNumber: fallbackEp,
+          title: isFilm
+            ? `${cleanTitle} (1080p FHD Movie)`
+            : isMulti
+            ? `${cleanTitle} — Episode ${idx + 1} (${audioLabel})`
+            : `${cleanTitle} — Full Series Batch (${audioLabel})`,
+          audio,
+          telegramUrl: url,
+          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+          quality: '1080p FHD',
+          isMerged: !isFilm,
+          format: isFilm ? 'movie' : isMulti ? 'single' : 'merged',
+        });
+      }
     });
 
     return episodes;
@@ -579,10 +616,24 @@ export default function App() {
         const hasFanDubHttp = Boolean(tFanDub && (tFanDub.startsWith('http') || tFanDub.includes('http')));
         const hasOrigHttp = Boolean(tOrig && (tOrig.startsWith('http') || tOrig.includes('http')));
 
-        // STRICT RULE: If a row does NOT have any http link in T1, T2, or T3 (all three are empty), SKIP that row completely
-        if (!hasHindiHttp && !hasFanDubHttp && !hasOrigHttp) {
+        const isComingSoonPattern = /coming\s*soon|upcoming|soon/i;
+        const isHindiComingSoon = !hasHindiHttp && isComingSoonPattern.test(tHindi);
+        const isFanDubComingSoon = !hasFanDubHttp && isComingSoonPattern.test(tFanDub);
+        const isOrigComingSoon = !hasOrigHttp && isComingSoonPattern.test(tOrig);
+
+        const hasAnyHttp = hasHindiHttp || hasFanDubHttp || hasOrigHttp;
+        const hasAnyComingSoon = isHindiComingSoon || isFanDubComingSoon || isOrigComingSoon;
+
+        // Skip row if ALL THREE have neither http nor coming soon
+        if (!hasAnyHttp && !hasAnyComingSoon) {
           continue;
         }
+
+        // Track comingSoonAudios
+        const comingSoonAudios: AudioType[] = [];
+        if (isHindiComingSoon) comingSoonAudios.push('Hindi Dubbed');
+        if (isFanDubComingSoon) comingSoonAudios.push('Hindi Fan Dubbed');
+        if (isOrigComingSoon) comingSoonAudios.push('Original / Eng Sub');
 
         const categoryRaw = catIdx >= 0 ? row[catIdx]?.trim() || 'K-Drama' : 'K-Drama';
         const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
@@ -594,7 +645,6 @@ export default function App() {
         const tagsRaw = tagsIdx >= 0 ? row[tagsIdx]?.trim() || '' : '';
         const detailsRaw = detailsIdx >= 0 ? row[detailsIdx]?.trim() || '' : '';
         const scheduleRaw = scheduleIdx >= 0 ? row[scheduleIdx]?.trim() || '' : '';
-        const statusRaw = statusIdx >= 0 ? row[statusIdx]?.trim() || '' : '';
         
         // STRICT HERO BANNER RULE: Only include if explicitly set to yes, true, 1, or valid image/http URL
         const rawBannerVal = bannerIdx >= 0 ? row[bannerIdx]?.trim().toLowerCase() || '' : '';
@@ -634,21 +684,13 @@ export default function App() {
           return normalizedKey === t || normalizedKey.includes(t) || t.includes(normalizedKey);
         });
 
-        // Determine mapped status
-        let dramaStatus: DramaStatus = 'Now Streaming (Ongoing)';
-        if (statusRaw.toLowerCase().includes('completed') || statusRaw.toLowerCase().includes('full')) {
-          dramaStatus = 'Completed (Full Series)';
-        } else if (statusRaw.toLowerCase().includes('coming') || statusRaw.toLowerCase().includes('upcoming')) {
-          dramaStatus = 'Coming Soon';
-        }
-
         // Available audios strictly from which of T1, T2, T3 have http links
         const availableAudios: AudioType[] = [];
         if (hasHindiHttp) availableAudios.push('Hindi Dubbed');
-        if (hasFanDubHttp) availableAudios.push('Fan Dubbed');
+        if (hasFanDubHttp) availableAudios.push('Hindi Fan Dubbed');
         if (hasOrigHttp) availableAudios.push('Original / Eng Sub');
 
-        const defaultAudio: AudioType = availableAudios[0] || 'Hindi Dubbed';
+        const defaultAudio: AudioType = availableAudios[0] || (comingSoonAudios[0] ? comingSoonAudios[0] : 'Hindi Dubbed');
 
         const extractFirstUrl = (text: string) => {
           const m = text.match(/https?:\/\/[^\s"',]+/);
@@ -659,30 +701,78 @@ export default function App() {
           ? extractFirstUrl(tHindi)
           : hasFanDubHttp
           ? extractFirstUrl(tFanDub)
-          : extractFirstUrl(tOrig);
+          : hasOrigHttp
+          ? extractFirstUrl(tOrig)
+          : 'https://t.me/+yJH68LvfrT9hZDVl';
 
         const yearMatch = cleanTitle.match(/\b(20\d\d)\b/);
         const releaseYear = yearMatch ? parseInt(yearMatch[1], 10) : 2026;
 
         // Parse multi-line or single episode links from all 3 Telegram columns
         const hindiEpisodes = hasHindiHttp ? parseTelegramEpisodeLinks(tHindi, 'Hindi Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
-        const fanEpisodes = hasFanDubHttp ? parseTelegramEpisodeLinks(tFanDub, 'Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
+        const fanEpisodes = hasFanDubHttp ? parseTelegramEpisodeLinks(tFanDub, 'Hindi Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
         const origEpisodes = hasOrigHttp ? parseTelegramEpisodeLinks(tOrig, 'Original / Eng Sub', dramaId, cleanTitle, isFilm, detailsRaw) : [];
 
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
 
-        // Parse totalEpisodes from Details (e.g. "24 Episodes" -> 24; "1:44:00" -> 1)
-        let totalEpCount = 1;
-        if (isFilm || (detailsRaw && detailsRaw.includes(':') && !detailsRaw.toLowerCase().includes('ep'))) {
-          totalEpCount = 1;
-        } else if (parsedEpisodes.length > 1) {
-          totalEpCount = parsedEpisodes.length;
-        } else if (detailsRaw) {
-          const matchNum = detailsRaw.match(/(\d+)/);
-          totalEpCount = matchNum ? parseInt(matchNum[1], 10) : 16;
-        } else {
-          totalEpCount = 16;
+        // Parse total planned episodes from Details (e.g. "10 Episodes" -> 10, "24 Episodes" -> 24)
+        let plannedTotal = 0;
+        if (detailsRaw) {
+          const m = detailsRaw.match(/(\d+)\s*(?:ep|episode)/i) || detailsRaw.match(/(\d+)/);
+          if (m) plannedTotal = parseInt(m[1], 10);
         }
+
+        // Find highest uploaded episode number and explicit episode tags
+        let maxUploadedEp = 0;
+        let hasExplicitEpNumbers = false;
+        let hasSingleFullPack = false;
+
+        parsedEpisodes.forEach((ep) => {
+          if (typeof ep.episodeNumber === 'number') {
+            hasExplicitEpNumbers = true;
+            if (ep.episodeNumber > maxUploadedEp) maxUploadedEp = ep.episodeNumber;
+          } else if (typeof ep.episodeNumber === 'string') {
+            const rangeParts = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
+            if (rangeParts) {
+              hasExplicitEpNumbers = true;
+              const endNum = parseInt(rangeParts[2], 10);
+              if (endNum > maxUploadedEp) maxUploadedEp = endNum;
+            } else {
+              const singleInStr = ep.episodeNumber.match(/(\d+)/);
+              if (singleInStr) {
+                hasExplicitEpNumbers = true;
+                const n = parseInt(singleInStr[1], 10);
+                if (n > maxUploadedEp) maxUploadedEp = n;
+              } else {
+                hasSingleFullPack = true;
+              }
+            }
+          }
+        });
+
+        // AUTOMATIC STATUS DETECTION (Requirement 3):
+        // Single direct pack links (without explicit Ep tags) or full series links -> Completed (Full Series)
+        let dramaStatus: DramaStatus = 'Completed (Full Series)';
+        let statusText = isFilm ? 'Completed (Full Movie)' : 'Completed (Full Series)';
+
+        if (!hasAnyHttp && hasAnyComingSoon) {
+          dramaStatus = 'Coming Soon';
+          statusText = 'Coming Soon';
+        } else if (isFilm) {
+          dramaStatus = 'Completed (Full Series)';
+          statusText = 'Completed (Full Movie)';
+        } else if (hasExplicitEpNumbers && plannedTotal > 0 && maxUploadedEp < plannedTotal && !hasSingleFullPack) {
+          dramaStatus = 'Now Streaming (Ongoing)';
+          statusText = `Now Streaming Ep ${maxUploadedEp}`;
+        } else if (hasExplicitEpNumbers && plannedTotal === 0 && maxUploadedEp > 0 && !hasSingleFullPack) {
+          dramaStatus = 'Now Streaming (Ongoing)';
+          statusText = `Now Streaming Ep ${maxUploadedEp}`;
+        } else {
+          dramaStatus = 'Completed (Full Series)';
+          statusText = 'Completed (Full Series)';
+        }
+
+        let totalEpCount = plannedTotal > 0 ? plannedTotal : parsedEpisodes.length > 0 ? parsedEpisodes.length : (isFilm ? 1 : 16);
 
         // If title already seen in another row
         if (parsedDramasMap.has(dramaId)) {
@@ -696,15 +786,18 @@ export default function App() {
           }
           if (detailsRaw && !prev.details) prev.details = detailsRaw;
           if (scheduleRaw && !prev.schedule) prev.schedule = scheduleRaw;
-          if (statusRaw && !prev.statusText) prev.statusText = statusRaw;
+          if (statusText && !prev.statusText) prev.statusText = statusText;
           if (ageRating && !prev.ageRating) prev.ageRating = ageRating;
           if (subCategory && !prev.subCategory) prev.subCategory = subCategory;
-          if (statusRaw.includes('Now Streaming') || statusRaw.includes('Ep')) {
+          if (dramaStatus === 'Now Streaming (Ongoing)') {
             prev.status = 'Now Streaming (Ongoing)';
           }
           availableAudios.forEach((a) => {
             if (!prev.availableAudios.includes(a)) prev.availableAudios.push(a);
           });
+          if (comingSoonAudios.length > 0) {
+            prev.comingSoonAudios = Array.from(new Set([...(prev.comingSoonAudios || []), ...comingSoonAudios]));
+          }
           if (parsedCast.length > 0) {
             prev.leadCast = Array.from(new Set([...(prev.leadCast || []), ...parsedCast]));
           }
@@ -748,7 +841,7 @@ export default function App() {
           category: dramaCategory,
           releaseYear,
           status: dramaStatus,
-          statusText: statusRaw || undefined,
+          statusText: statusText || undefined,
           ageRating: ageRating || undefined,
           subCategory: subCategory || undefined,
           rating: ratingVal || 9.2,
@@ -762,6 +855,7 @@ export default function App() {
           scheduleInfo: scheduleRaw || detailsRaw || '2026 VIP Release',
           availableAudios,
           defaultAudio,
+          comingSoonAudios: comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
           isFeatured: isTrendingInSheet,
           isTrending: isTrendingInSheet || true,
           isSpotlight: isTrendingInSheet,
@@ -815,6 +909,104 @@ export default function App() {
       const uniqueParsed = Array.from(parsedDramasMap.values());
       if (uniqueParsed.length > 0) {
         mergePreservingCuratedAndCustom(uniqueParsed);
+
+        // --- AUTOMATIC LIVE NOTIFICATIONS WHEN GOOGLE SHEET UPDATES ---
+        try {
+          const snapshotRaw = localStorage.getItem('asiaflix_sheet_snapshot_v1');
+          const prevSnapshot: Record<string, { title: string; statusText?: string; epCount?: number; status: string }> = snapshotRaw
+            ? JSON.parse(snapshotRaw)
+            : {};
+
+          const newNotifs: ReleaseNotification[] = [];
+          const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' Today';
+
+          if (Object.keys(prevSnapshot).length === 0) {
+            // First time snapshot: create initial real notifications from current ongoing/recent items
+            uniqueParsed
+              .filter((d) => d.status.includes('Ongoing') || d.status.includes('Now Streaming') || d.statusText?.includes('Ep'))
+              .slice(0, 5)
+              .forEach((d) => {
+                newNotifs.push({
+                  id: `notif-initial-${d.id}`,
+                  title: `🎬 ${d.title}`,
+                  dramaId: d.id,
+                  message: `${d.title} is live! ${d.statusText || 'Fresh episodes are now streaming'} in 1080p FHD.`,
+                  audioType: d.defaultAudio,
+                  timestamp: nowStr,
+                  isRead: false,
+                  type: 'new_episode',
+                });
+              });
+          } else {
+            // Diff against previous snapshot
+            uniqueParsed.forEach((d) => {
+              const old = prevSnapshot[d.id];
+              if (!old) {
+                // Brand new title added to Sheet
+                newNotifs.push({
+                  id: `notif-new-${d.id}-${Date.now()}`,
+                  title: `🆕 New Added: ${d.title}`,
+                  dramaId: d.id,
+                  message: `${d.title} (${d.statusText || d.status}) has just been added to the VIP library!`,
+                  audioType: d.defaultAudio,
+                  timestamp: nowStr,
+                  isRead: false,
+                  type: 'new_drama',
+                });
+              } else {
+                // Check if episode count or statusText increased
+                if (old.statusText !== d.statusText && d.statusText?.toLowerCase().includes('ep')) {
+                  newNotifs.push({
+                    id: `notif-ep-${d.id}-${Date.now()}`,
+                    title: `🎬 New Episode Uploaded: ${d.title}`,
+                    dramaId: d.id,
+                    message: `${d.title} — ${d.statusText} is now live on AsiaFlix Telegram VIP!`,
+                    audioType: d.defaultAudio,
+                    timestamp: nowStr,
+                    isRead: false,
+                    type: 'new_episode',
+                  });
+                } else if (old.status.includes('Coming') && !d.status.includes('Coming')) {
+                  // Transitioned from Coming Soon to Now Streaming / Completed
+                  newNotifs.push({
+                    id: `notif-avail-${d.id}-${Date.now()}`,
+                    title: `🔥 Now Available: ${d.title}`,
+                    dramaId: d.id,
+                    message: `${d.title} is now ${d.statusText || d.status} with zero ads!`,
+                    audioType: d.defaultAudio,
+                    timestamp: nowStr,
+                    isRead: false,
+                    type: 'new_drama',
+                  });
+                }
+              }
+            });
+          }
+
+          if (newNotifs.length > 0) {
+            setNotifications((prev) => {
+              const existingIds = new Set(prev.map((n) => n.id));
+              const dedupedNew = newNotifs.filter((n) => !existingIds.has(n.id));
+              const updated = [...dedupedNew, ...prev].slice(0, 30);
+              localStorage.setItem('asiaflix_notifications', JSON.stringify(updated));
+              return updated;
+            });
+          }
+
+          // Save current snapshot
+          const currentSnapshot: Record<string, { title: string; statusText?: string; epCount?: number; status: string }> = {};
+          uniqueParsed.forEach((d) => {
+            currentSnapshot[d.id] = {
+              title: d.title,
+              statusText: d.statusText,
+              epCount: d.episodes.length,
+              status: d.status,
+            };
+          });
+          localStorage.setItem('asiaflix_sheet_snapshot_v1', JSON.stringify(currentSnapshot));
+        } catch (notifErr) {
+          console.warn('Error computing live notifications:', notifErr);
+        }
       }
 
       setSheetSyncState({
@@ -1194,6 +1386,25 @@ export default function App() {
     window.scrollTo({ top: 400, behavior: 'smooth' });
   };
 
+  const handleGoHome = () => {
+    setSearchQuery('');
+    setInstantSearchQuery('');
+    setInstantFilter('All');
+    setSelectedAudio('all');
+    setSelectedCategory('all');
+    setSelectedYear('all');
+    setSelectedStatus('all');
+    setSelectedDrama(null);
+    setIsWatchlistOpen(false);
+    setIsNotificationsOpen(false);
+    setIsRequestOpen(false);
+    setIsSupportOpen(false);
+    setIsArcadeOpen(false);
+    setIsAdminOpen(false);
+    setIsInstantSearchOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   return (
@@ -1227,11 +1438,14 @@ export default function App() {
         sheetSyncCount={dramas.length}
         isSheetSyncing={sheetSyncState.isSyncing}
         onRefreshSheet={() => fetchGoogleSheetData()}
+        onOpenSearch={() => setIsInstantSearchOpen(true)}
+        onOpenSearchModal={() => setIsInstantSearchOpen(true)}
+        onGoHome={handleGoHome}
       />
 
       {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
-      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 px-4 sm:px-6 relative z-30">
-        <div className="max-w-7xl mx-auto flex items-center justify-center sm:justify-between gap-3 overflow-x-auto no-scrollbar">
+      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 px-4 sm:px-6 lg:px-8 relative z-30">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-center sm:justify-between gap-3 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-2.5 sm:gap-3 mx-auto flex-nowrap shrink-0">
             {/* Perk 1: 100% Free Access */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.3)] transition-all shrink-0">
@@ -1311,7 +1525,7 @@ export default function App() {
       <main className="flex-1 pb-16">
         {/* If search query or specific filter is active: show isolated instant search results */}
         {searchQuery.trim() !== '' || selectedAudio !== 'all' || selectedCategory !== 'all' || selectedYear !== 'all' || selectedStatus !== 'all' ? (
-          <section className="max-w-7xl mx-auto px-4 sm:px-6 mb-12">
+          <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-xl font-black text-white flex items-center gap-2">
@@ -1357,7 +1571,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
+              <div className="grid grid-cols-6 gap-4">
                 {filteredDramas.map((drama, idx) => (
                   <DramaCard
                     key={drama.id}
@@ -1439,12 +1653,12 @@ export default function App() {
               />
             )}
 
-            {/* 5. Fan Dubbed & Special Dubs */}
+            {/* 5. Hindi Fan Dubbed & Special Dubs */}
             {fanDubbedList.length > 0 && (
               <DramaRow
                 id="sec-fan-dubbed"
-                title="Fan Dubbed & Exclusive Community Dubs"
-                subtitle="Community voice projects and fast releases"
+                title="Hindi Fan Dubbed Collection"
+                subtitle="Community voice projects and fast releases in Hindi audio"
                 icon="🎙️🌸"
                 dramas={fanDubbedList}
                 onSelectDrama={(d) => setSelectedDrama(d)}
@@ -1626,6 +1840,240 @@ export default function App() {
           telegramBotSettings={telegramBotSettings}
           onUpdateTelegramBotSettings={setTelegramBotSettings}
         />
+      )}
+
+      {/* 8. ALWAYS-VISIBLE FLOATING QUICK ACTION DOCK (HOME & SEARCH - ALL DEVICES) */}
+      <aside 
+        aria-label="Quick Navigation Dock" 
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
+      >
+        {/* Floating Home Button */}
+        <button
+          onClick={handleGoHome}
+          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-[#e50914] text-white text-xs font-black transition-all hover:scale-105 active:scale-95 shadow-md cursor-pointer group"
+          title="Return to Home & Reset All Filters"
+        >
+          <Home className="w-4 h-4 text-zinc-300 group-hover:text-white" />
+          <span className="font-bold">Home</span>
+        </button>
+
+        {/* Floating Search Button */}
+        <button
+          onClick={() => setIsInstantSearchOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-xs font-black shadow-[0_0_15px_rgba(229,9,20,0.4)] transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          title="Instant Search Dramas, Movies, and Cast"
+        >
+          <Search className="w-4 h-4" />
+          <span className="font-bold">Search</span>
+        </button>
+      </aside>
+
+      {/* 9. INSTANT SEARCH POPUP MODAL (ALWAYS ACCESSIBLE ACROSS ALL DEVICES) */}
+      {isInstantSearchOpen && (
+        <div 
+          onClick={() => setIsInstantSearchOpen(false)}
+          className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 pt-16 sm:pt-20 bg-black/85 backdrop-blur-md animate-fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl bg-[#111218] rounded-2xl border border-white/15 shadow-[0_25px_60px_rgba(0,0,0,0.95)] overflow-hidden flex flex-col max-h-[85vh] animate-slide-down"
+          >
+            {/* Search Input Bar */}
+            <div className="p-4 border-b border-white/10 flex items-center gap-3 bg-white/[0.03]">
+              <Search className="w-5 h-5 text-red-500 shrink-0" />
+              <input
+                type="text"
+                autoFocus
+                value={instantSearchQuery}
+                onChange={(e) => setInstantSearchQuery(e.target.value)}
+                placeholder="Search Asian dramas, movies, actors, or genres..."
+                className="w-full bg-transparent text-white text-sm sm:text-base font-semibold outline-none placeholder-zinc-500"
+              />
+              {instantSearchQuery && (
+                <button
+                  onClick={() => setInstantSearchQuery('')}
+                  className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-white/10"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={() => setIsInstantSearchOpen(false)}
+                className="px-2.5 py-1 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 text-xs font-bold shrink-0 ml-1 border border-white/10"
+              >
+                Esc
+              </button>
+            </div>
+
+            {/* Quick Audio & Category Filter Pills */}
+            <div className="px-4 py-2.5 border-b border-white/10 bg-black/40 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs">
+              <span className="text-zinc-500 font-bold shrink-0 text-[11px] uppercase tracking-wider mr-1">Filter:</span>
+              {([
+                { id: 'All', label: 'All', icon: '✨' },
+                { id: 'Hindi Dubbed', label: 'Hindi Dubbed', icon: '🇮🇳' },
+                { id: 'Hindi Fan Dubbed', label: 'Hindi Fan Dubbed', icon: '🎙️' },
+                { id: 'Original / Eng Sub', label: 'Original / Eng Sub', icon: '🌐' },
+                { id: 'K-Drama', label: 'K-Drama', icon: '🇰🇷' },
+                { id: 'C-Drama', label: 'C-Drama', icon: '🇨🇳' },
+                { id: 'Movies', label: 'Movies', icon: '🎬' },
+              ] as const).map((pill) => (
+                <button
+                  key={pill.id}
+                  onClick={() => setInstantFilter(pill.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                    instantFilter === pill.id
+                      ? 'bg-[#e50914] text-white shadow-[0_0_12px_rgba(229,9,20,0.5)] border border-red-500/50 scale-105'
+                      : 'bg-white/[0.05] hover:bg-white/10 text-zinc-300 border border-white/10'
+                  }`}
+                >
+                  {pill.icon && <span>{pill.icon}</span>}
+                  <span>{pill.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Instant Filter Results Header */}
+            {(() => {
+              const q = instantSearchQuery.trim().toLowerCase();
+              const matchingResults = dramas.filter((d) => {
+                // Text search matching
+                if (q) {
+                  const matches = (
+                    d.title.toLowerCase().includes(q) ||
+                    d.category.toLowerCase().includes(q) ||
+                    (d.subCategory && d.subCategory.toLowerCase().includes(q)) ||
+                    (d.leadCast && d.leadCast.some((c) => c.toLowerCase().includes(q))) ||
+                    (d.hashtags && d.hashtags.some((t) => t.toLowerCase().includes(q))) ||
+                    (d.synopsis && d.synopsis.toLowerCase().includes(q)) ||
+                    (d.details && d.details.toLowerCase().includes(q))
+                  );
+                  if (!matches) return false;
+                }
+
+                // Quick filter pill matching
+                if (instantFilter === 'All') return true;
+                if (instantFilter === 'Hindi Dubbed') {
+                  return Boolean(d.telegramHindi) || d.availableAudios.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan')) || d.defaultAudio === 'Hindi Dubbed';
+                }
+                if (instantFilter === 'Hindi Fan Dubbed') {
+                  return Boolean(d.telegramFanDub) || d.availableAudios.some((a) => a.toLowerCase().includes('fan')) || d.defaultAudio.toLowerCase().includes('fan');
+                }
+                if (instantFilter === 'Original / Eng Sub') {
+                  return Boolean(d.telegramOrig) || d.availableAudios.some((a) => a.toLowerCase().includes('original') || a.toLowerCase().includes('eng')) || d.defaultAudio.toLowerCase().includes('original');
+                }
+                if (instantFilter === 'K-Drama') {
+                  return d.category === 'K-Drama';
+                }
+                if (instantFilter === 'C-Drama') {
+                  return d.category === 'C-Drama';
+                }
+                if (instantFilter === 'Movies') {
+                  return d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie;
+                }
+                return true;
+              });
+
+              return (
+                <>
+                  <div className="px-4 py-2 bg-white/[0.02] border-b border-white/5 flex items-center justify-between text-xs text-zinc-400">
+                    <span>Found <strong className="text-white font-bold">{matchingResults.length}</strong> matching titles</span>
+                    <button
+                      onClick={() => {
+                        setSearchQuery(instantSearchQuery);
+                        if (instantFilter === 'Hindi Dubbed' || instantFilter === 'Hindi Fan Dubbed' || instantFilter === 'Original / Eng Sub') {
+                          setSelectedAudio(instantFilter);
+                        } else if (instantFilter === 'K-Drama' || instantFilter === 'C-Drama') {
+                          setSelectedCategory(instantFilter);
+                        } else if (instantFilter === 'Movies') {
+                          setSelectedCategory('Asian Movies');
+                        }
+                        setIsInstantSearchOpen(false);
+                        window.scrollTo({ top: 480, behavior: 'smooth' });
+                      }}
+                      className="text-red-400 hover:text-red-300 font-bold hover:underline cursor-pointer"
+                    >
+                      View on Home Grid →
+                    </button>
+                  </div>
+
+                  {/* Instant Results List */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    {matchingResults.length === 0 ? (
+                      <div className="py-12 text-center text-zinc-400">
+                        <p className="text-sm font-bold text-zinc-300">
+                          {instantSearchQuery ? `No drama found for "${instantSearchQuery}"` : `No titles found for "${instantFilter}" filter`}
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-1">Try another title, actor name, or request it to be uploaded.</p>
+                        <button
+                          onClick={() => {
+                            setIsInstantSearchOpen(false);
+                            setIsRequestOpen(true);
+                          }}
+                          className="mt-3 px-3 py-1.5 rounded-xl bg-[#e50914] hover:bg-red-600 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+                        >
+                          Request This Title
+                        </button>
+                      </div>
+                    ) : (
+                      matchingResults.slice(0, 30).map((d) => (
+                        <div
+                          key={`search-res-${d.id}`}
+                          onClick={() => {
+                            setSelectedDrama(d);
+                            setIsInstantSearchOpen(false);
+                          }}
+                          className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-red-500/40 transition-all cursor-pointer flex items-center justify-between gap-3 group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <img
+                              src={d.poster}
+                              alt={d.title}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-14 rounded-lg object-cover shrink-0 bg-zinc-900 border border-white/10"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700";
+                              }}
+                            />
+                            <div className="min-w-0">
+                              <h4 className="text-xs sm:text-sm font-black text-white group-hover:text-red-400 transition-colors truncate">
+                                {d.title}
+                              </h4>
+                              <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-zinc-400 flex-wrap">
+                                <span className="text-white font-bold">{d.category}</span>
+                                <span>•</span>
+                                <span className="text-amber-300 font-bold flex items-center gap-0.5">
+                                  <Star className="w-2.5 h-2.5 fill-amber-400" />
+                                  {d.rating}
+                                </span>
+                                <span>•</span>
+                                <span className="text-sky-400 font-bold">{d.details || `${d.releaseYear}`}</span>
+                              </div>
+                              {d.subCategory && (
+                                <p className="text-[10px] text-zinc-400 truncate mt-0.5">{d.subCategory}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] bg-red-600/20 text-red-300 px-2 py-0.5 rounded font-bold">
+                              {d.defaultAudio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : d.defaultAudio}
+                            </span>
+                            <button
+                              className="p-2 rounded-lg bg-white/10 group-hover:bg-[#e50914] text-white transition-colors"
+                              title="View Episodes & Telegram Links"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-white" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
       )}
     </div>
   );

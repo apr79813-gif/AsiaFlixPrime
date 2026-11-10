@@ -7,7 +7,9 @@ import {
   Film, 
   Send, 
   Sparkles,
-  Flower2
+  Flower2,
+  Search,
+  Home
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -26,6 +28,9 @@ interface NavbarProps {
   sheetSyncCount?: number;
   isSheetSyncing?: boolean;
   onRefreshSheet?: () => void;
+  onOpenSearch?: () => void;
+  onGoHome?: () => void;
+  onOpenSearchModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -44,9 +49,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   sheetSyncCount = 202,
   isSheetSyncing = false,
   onRefreshSheet,
+  onOpenSearch,
+  onGoHome,
+  onOpenSearchModal,
 }) => {
   const logoClicksRef = useRef(0);
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleOpenSearchAction = onOpenSearchModal || onOpenSearch;
 
   const handleLogoClick = (e: React.MouseEvent) => {
     if (isAdminAuthenticated) {
@@ -71,7 +81,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-50 bg-[#08080c]/95 backdrop-blur-md border-b border-white/[0.08] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
         {/* Brand */}
         <div className="flex items-center gap-3 shrink-0 min-w-0">
           <div onClick={handleLogoClick} className="flex items-center gap-2.5 sm:gap-3 group cursor-pointer select-none shrink-0">
@@ -109,6 +119,30 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* ALWAYS-VISIBLE PROMINENT HOME BUTTON (PHONE, TABLET, LAPTOP) */}
+          {onGoHome && (
+            <button
+              onClick={onGoHome}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-[#e50914] border border-white/10 text-xs font-black text-white transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0 group hover:scale-105 active:scale-95"
+              title="Return to Home Screen & Reset Filters"
+            >
+              <Home className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white" />
+              <span>Home</span>
+            </button>
+          )}
+
+          {/* ALWAYS-VISIBLE PROMINENT SEARCH BUTTON (PHONE, TABLET, LAPTOP) */}
+          {handleOpenSearchAction && (
+            <button
+              onClick={handleOpenSearchAction}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 border border-red-500/40 text-xs font-black text-white transition-all shadow-[0_0_15px_rgba(229,9,20,0.35)] cursor-pointer whitespace-nowrap shrink-0 hover:scale-105 active:scale-95"
+              title="Quick Search Dramas, Movies, and Cast"
+            >
+              <Search className="w-3.5 h-3.5 text-white" />
+              <span>Search</span>
+            </button>
+          )}
+
           {/* Google Sheet Live Sync Pill */}
           {onRefreshSheet && (
             <button

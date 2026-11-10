@@ -37,6 +37,19 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   // Determine active telegram URL
   const primaryTelegram = drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl || 'https://t.me/+yJH68LvfrT9hZDVl';
 
+  // Primary audio display label
+  const primaryAudioBadge = drama.telegramHindi
+    ? 'IN HINDI'
+    : drama.telegramFanDub
+    ? 'HINDI FAN DUB'
+    : drama.telegramOrig
+    ? 'ORIGINAL'
+    : drama.defaultAudio === 'Hindi Fan Dubbed' || drama.defaultAudio === 'Fan Dubbed'
+    ? 'HINDI FAN DUB'
+    : drama.defaultAudio === 'Original / Eng Sub'
+    ? 'ORIGINAL'
+    : 'IN HINDI';
+
   return (
     <div className="group relative bg-[#111218] rounded-xl border border-white/[0.08] hover:border-[#e50914]/60 transition-all duration-300 flex flex-col overflow-hidden hover:shadow-[0_12px_30px_rgba(0,0,0,0.8)] hover:-translate-y-1">
       {/* Poster Container */}
@@ -56,66 +69,30 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         />
 
         {/* Gradient Scrim */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#111218] via-transparent to-black/40 opacity-80 group-hover:opacity-60 transition-opacity" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#111218] via-transparent to-black/50 opacity-80 group-hover:opacity-60 transition-opacity" />
 
-        {/* Top Badges */}
-        <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1 pointer-events-none">
-          <div className="flex flex-col gap-1 items-start">
-            {isRankOne && (
-              <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-lg flex items-center gap-0.5 pointer-events-auto shadow-amber-500/40 animate-pulse">
-                👑 TOP 1
-              </span>
-            )}
-            
-            {/* Audio Badges (Telegram 1, 2, 3 indicators - strictly when links are live) */}
-            <div className="flex flex-wrap gap-1 pointer-events-auto">
-              {drama.telegramHindi && (
-                <span className="bg-[#e50914] text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
-                  🇮🇳 Hindi
-                </span>
-              )}
-
-              {drama.telegramFanDub && (
-                <span className="bg-purple-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
-                  🎙️ Fan Dub
-                </span>
-              )}
-
-              {drama.telegramOrig && (
-                <span className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm">
-                  🌐 Eng Sub
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-1 pointer-events-auto shrink-0">
-            <span className="bg-black/80 backdrop-blur-md text-zinc-300 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow">
-              {drama.category}
+        {/* Top-Left of Poster: Only #1 badge (if rank 1) & Primary Audio pill */}
+        <div className="absolute top-2 left-2 flex flex-col gap-1 items-start pointer-events-none z-10">
+          {isRankOne && (
+            <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-lg flex items-center gap-0.5 pointer-events-auto shadow-amber-500/40 animate-pulse">
+              👑 TOP 1
             </span>
-            {drama.ageRating && (
-              <span className="bg-black/85 backdrop-blur-md text-amber-300 text-[8px] sm:text-[9px] font-black px-1.5 py-0.2 rounded border border-amber-500/30 shadow">
-                {drama.ageRating}
-              </span>
-            )}
-            {drama.subCategory && (
-              <span className="bg-zinc-900/90 backdrop-blur-md text-zinc-300 text-[8px] sm:text-[9px] font-medium px-1.5 py-0.2 rounded border border-white/10 shadow truncate max-w-[85px]">
-                {drama.subCategory}
-              </span>
-            )}
-          </div>
+          )}
+          <span className="bg-[#e50914] text-white text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-md pointer-events-auto">
+            {primaryAudioBadge}
+          </span>
         </div>
 
-        {/* Watchlist Quick Button */}
+        {/* Top-Right of Poster: ONLY Watchlist Bookmark button */}
         <button
           onClick={(e) => {
             e.stopPropagation();
             onToggleWatchlist(drama);
           }}
-          className={`absolute top-2 right-2 p-1.5 sm:p-2 rounded-lg backdrop-blur-md border transition-all z-10 ${
+          className={`absolute top-2 right-2 p-1.5 sm:p-2 rounded-lg backdrop-blur-md border transition-all z-20 ${
             isWatchlisted
               ? 'bg-amber-500/80 border-amber-400 text-black shadow-lg opacity-100'
-              : 'bg-black/60 border-white/20 text-white hover:bg-[#e50914] hover:border-[#e50914] opacity-0 group-hover:opacity-100'
+              : 'bg-black/60 border-white/20 text-white hover:bg-[#e50914] hover:border-[#e50914] opacity-80 group-hover:opacity-100'
           }`}
           title={isWatchlisted ? 'In Watchlist' : 'Add to Watchlist'}
         >
@@ -129,11 +106,11 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
         </div>
 
-        {/* Status Bottom Floating Row (Displays exact status text e.g. "Now Streaming Ep 6") */}
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] sm:text-[11px] pointer-events-none">
+        {/* Bottom of Poster: Glowing Status pill on Left, Star Rating on Right */}
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] sm:text-[11px] pointer-events-none z-10">
           <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 text-white font-bold">
             <span className={`w-1.5 h-1.5 rounded-full ${getStatusDotColor()}`} />
-            <span className="text-[9px] sm:text-[10px] truncate max-w-[105px] sm:max-w-[130px]">
+            <span className="text-[9px] sm:text-[10px] truncate max-w-[110px] sm:max-w-[135px]">
               {drama.statusText || drama.status.replace(/ \(.*\)/, '')}
             </span>
           </div>
@@ -145,9 +122,10 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         </div>
       </div>
 
-      {/* Info Container */}
-      <div className="p-3 sm:p-3.5 flex flex-col flex-1 justify-between gap-2 sm:gap-2.5">
-        <div>
+      {/* Card Body Container */}
+      <div className="p-3 sm:p-3.5 flex flex-col flex-1 justify-between gap-2">
+        <div className="space-y-1.5">
+          {/* Drama Title */}
           <h3 
             onClick={() => onSelect(drama)}
             className="text-xs sm:text-sm font-black text-white hover:text-red-400 transition-colors line-clamp-1 cursor-pointer" 
@@ -156,37 +134,61 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             {drama.title}
           </h3>
 
-          {/* Details & Schedule Section */}
-          <div className="flex items-center justify-between mt-1 text-[10px] sm:text-[11px] text-zinc-400 gap-1 flex-wrap">
+          {/* Metadata Row: Category, Age Rating, Release Year */}
+          <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 flex-wrap">
+            <span className="bg-white/10 text-white px-1.5 py-0.2 rounded font-bold">
+              {drama.category}
+            </span>
+            {drama.ageRating && (
+              <span className="bg-black/80 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded font-black text-[9px]">
+                {drama.ageRating}
+              </span>
+            )}
+            <span className="text-zinc-500 font-bold">{drama.releaseYear}</span>
+          </div>
+
+          {/* Clean Genre / SubCategory Tags in Card Body */}
+          {drama.subCategory && (
+            <p className="text-[11px] text-zinc-300 font-medium line-clamp-1">
+              ✨ {drama.subCategory}
+            </p>
+          )}
+
+          {/* Exact Details & Audio Availability Pills */}
+          <div className="flex items-center justify-between gap-1 pt-1 flex-wrap text-[10px]">
             {drama.details ? (
-              <span className="text-sky-400 font-bold flex items-center gap-1 truncate max-w-[120px]">
-                {isMovie ? <Film className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
-                <span>{drama.details}</span>
+              <span className="text-sky-400 font-bold flex items-center gap-1 truncate max-w-[110px]">
+                {isMovie ? <Film className="w-2.5 h-2.5 shrink-0" /> : <Clock className="w-2.5 h-2.5 shrink-0" />}
+                <span className="truncate">{drama.details}</span>
               </span>
             ) : (
               <span className="text-zinc-500 font-medium">{isMovie ? 'Movie' : 'Series'}</span>
             )}
-            <span className="text-zinc-500 font-semibold">{drama.releaseYear}</span>
+
+            {/* Audio Track Indicators */}
+            <div className="flex items-center gap-1 shrink-0">
+              {drama.telegramHindi && (
+                <span className="text-[9px] bg-red-600/20 text-red-300 border border-red-500/30 px-1 rounded font-bold" title="Hindi Dubbed Live">
+                  Hindi
+                </span>
+              )}
+              {drama.telegramFanDub && (
+                <span className="text-[9px] bg-purple-600/20 text-purple-300 border border-purple-500/30 px-1 rounded font-bold" title="Hindi Fan Dubbed Live">
+                  Fan Dub
+                </span>
+              )}
+              {drama.telegramOrig && (
+                <span className="text-[9px] bg-blue-600/20 text-blue-300 border border-blue-500/30 px-1 rounded font-bold" title="Original / Eng Sub Live">
+                  Orig
+                </span>
+              )}
+              {drama.comingSoonAudios && drama.comingSoonAudios.length > 0 && (
+                <span className="text-[8px] bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1 rounded font-bold" title="More Audios Coming Soon">
+                  ⏳ Soon
+                </span>
+              )}
+            </div>
           </div>
-
-          {/* Weekly Drop Schedule if Ongoing */}
-          {drama.schedule && drama.schedule.trim() ? (
-            <div className="mt-1 flex items-center gap-1 text-[9px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded truncate">
-              <Calendar className="w-2.5 h-2.5 shrink-0" />
-              <span className="truncate">{drama.schedule}</span>
-            </div>
-          ) : drama.status.includes('Completed') ? (
-            <div className="mt-1 text-[9px] font-bold text-emerald-400/90 truncate">
-              {isMovie ? '🎬 Full Movie HD' : '✅ Full Series Complete'}
-            </div>
-          ) : null}
-
-          {/* Lead Cast Preview */}
-          {drama.leadCast && drama.leadCast.length > 0 && (
-            <p className="mt-1 text-[9px] text-zinc-400 truncate font-medium">
-              🎭 {drama.leadCast.slice(0, 2).join(', ')}
-            </p>
-          )}
         </div>
 
         {/* Action Buttons */}

@@ -26,7 +26,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   isAdminAuthenticated,
 }) => {
   return (
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 my-10">
+    <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-10">
       <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-[#1c0f14] via-[#12131a] to-[#0a0a0f] border border-[#e50914]/30 shadow-[0_10px_40px_rgba(229,9,20,0.15)] p-5 sm:p-7">
         {/* Ambient background glows */}
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#e50914]/10 rounded-full blur-3xl pointer-events-none" />
@@ -126,11 +126,8 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           #{idx + 1}
                         </span>
                       )}
-                      <span className="bg-gradient-to-r from-amber-500 to-red-600 text-black font-black text-[9px] uppercase tracking-wider px-2 py-0.5 rounded shadow-lg">
-                        {drama.weekendSlot || drama.scheduleInfo || 'Weekend Drop'}
-                      </span>
                       <span className="bg-[#e50914] text-white text-[9px] font-bold px-1.5 py-0.2 rounded shadow">
-                        {drama.defaultAudio}
+                        {drama.defaultAudio === 'Fan Dubbed' ? 'Hindi Fan Dub' : drama.defaultAudio}
                       </span>
                     </div>
 
@@ -161,12 +158,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       >
                         {drama.title}
                       </h3>
-                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-0.5 truncate">
-                        {drama.details && (
-                          <span className="text-sky-400 font-bold">{drama.details}</span>
-                        )}
-                        {drama.details && (drama.schedule || drama.scheduleInfo) && <span>·</span>}
-                        <span className="truncate">{drama.schedule || drama.scheduleInfo || 'Weekend Mega Drop'}</span>
+                      <div className="flex items-center justify-between gap-1 text-[11px] text-zinc-400 mt-1">
+                        <span className="text-sky-400 font-bold truncate max-w-[130px]">
+                          {drama.details || 'Full HD 1080p'}
+                        </span>
+                        <span className="text-zinc-500 font-bold shrink-0">{drama.releaseYear}</span>
                       </div>
                     </div>
 

@@ -1,4 +1,4 @@
-export type AudioType = 'Hindi Dubbed' | 'Fan Dubbed' | 'Original / Eng Sub';
+export type AudioType = 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Fan Dubbed' | 'Original / Eng Sub';
 
 export type DramaCategory = 
   | 'K-Drama' 

@@ -50,7 +50,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   if (!uniqueDramas || uniqueDramas.length === 0) return null;
 
   return (
-    <section id={id} className="max-w-7xl mx-auto px-4 sm:px-6 mb-12">
+    <section id={id} className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12">
       {/* Header */}
       <div className="flex items-center justify-between gap-4 mb-4">
         <div>

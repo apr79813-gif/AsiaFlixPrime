@@ -37,19 +37,33 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   const todayShort = getTodayShortName();
   const todayFull = getTodayFullName();
 
+  const isDramaTrackAiringToday = (d: DramaItem) => {
+    if (d.activeTrackSchedules && d.activeTrackSchedules.length > 0) {
+      return d.activeTrackSchedules.some((t) => isAiringToday(t.scheduleText));
+    }
+    return isAiringToday(d.schedule);
+  };
+
+  const isDramaTrackOnDay = (d: DramaItem, day: DayShort) => {
+    if (d.activeTrackSchedules && d.activeTrackSchedules.length > 0) {
+      return d.activeTrackSchedules.some((t) => isDramaAiringOnDay(t.scheduleText, day));
+    }
+    return isDramaAiringOnDay(d.schedule, day);
+  };
+
   // Count items airing today
   const todayDroppingCount = useMemo(() => {
-    return weekendDramas.filter((d) => isAiringToday(d.schedule)).length;
+    return weekendDramas.filter((d) => isDramaTrackAiringToday(d)).length;
   }, [weekendDramas]);
 
   // Filter dramas by selected day
   const filteredDramas = useMemo(() => {
     if (selectedDayFilter === 'all') return weekendDramas;
     if (selectedDayFilter === 'today') {
-      const todayList = weekendDramas.filter((d) => isAiringToday(d.schedule));
+      const todayList = weekendDramas.filter((d) => isDramaTrackAiringToday(d));
       return todayList.length > 0 ? todayList : weekendDramas;
     }
-    return weekendDramas.filter((d) => isDramaAiringOnDay(d.schedule, selectedDayFilter));
+    return weekendDramas.filter((d) => isDramaTrackOnDay(d, selectedDayFilter));
   }, [weekendDramas, selectedDayFilter]);
 
   return (
@@ -148,7 +162,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           {DAYS_ORDER.map((day) => {
             const isToday = day === todayShort;
             const isSelected = selectedDayFilter === day;
-            const dayCount = weekendDramas.filter((d) => isDramaAiringOnDay(d.schedule, day)).length;
+            const dayCount = weekendDramas.filter((d) => isDramaTrackOnDay(d, day)).length;
 
             return (
               <button
@@ -191,8 +205,25 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           <div className="relative">
             <div className="flex gap-4 overflow-x-auto pb-4 pt-1 scrollbar-thin scrollbar-thumb-red-600/40 scrollbar-track-transparent snap-x">
               {filteredDramas.map((drama, idx) => {
-                const droppingToday = isAiringToday(drama.schedule);
-                const audioLabel = drama.defaultAudio === 'Fan Dubbed' ? 'Hindi Fan Dub' : drama.defaultAudio;
+                const droppingToday = isDramaTrackAiringToday(drama);
+                const hasComingSoonAudios = Boolean(drama.comingSoonAudios && drama.comingSoonAudios.length > 0);
+                
+                // Prioritize Coming Soon audio track if it has upcoming audios
+                const effectiveAudio = hasComingSoonAudios && drama.comingSoonAudios
+                  ? drama.comingSoonAudios[0]
+                  : drama.defaultAudio;
+                
+                const audioLabel = effectiveAudio === 'Hindi Dubbed' 
+                  ? '🔊 IN HINDI' 
+                  : effectiveAudio === 'Hindi Fan Dubbed' 
+                  ? '🎙️ HINDI FAN DUB' 
+                  : '🌐 ORIG / ENG SUB';
+
+                const audioBadgeColor = effectiveAudio === 'Hindi Dubbed'
+                  ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40'
+                  : effectiveAudio === 'Hindi Fan Dubbed'
+                  ? 'bg-gradient-to-r from-[#9333ea] to-[#ec4899] text-white border-purple-400/40'
+                  : 'bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white border-sky-400/40';
 
                 return (
                   <div
@@ -232,37 +263,39 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                             #{idx + 1}
                           </span>
                         )}
-                        <span className="bg-[#e50914] text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow">
+                        <span className={`${audioBadgeColor} text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow border`}>
                           {audioLabel}
                         </span>
                       </div>
 
-                      {/* Top Right of Poster: High-Contrast Release Day Pill */}
-                      <div className="absolute top-2.5 right-2.5 z-10 pointer-events-none max-w-[125px]">
-                        {droppingToday ? (
-                          <span className="bg-gradient-to-r from-emerald-500 to-amber-500 text-black font-black text-[9px] px-2 py-1 rounded-full shadow-[0_0_12px_rgba(52,211,153,0.8)] border border-emerald-300 animate-pulse flex items-center gap-1 truncate">
-                            <span>🔥 TODAY</span>
-                            {drama.schedule && <span className="opacity-80 truncate">• {drama.schedule}</span>}
+                      {/* Top Right of Poster: Compact Crisp Neon Badge ONLY when Airing Today */}
+                      {droppingToday && (
+                        <div className="absolute top-2.5 right-2.5 z-10 pointer-events-none">
+                          <span className="bg-black/85 backdrop-blur-md text-emerald-300 font-black text-[9px] px-2 py-0.5 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.5)] border border-emerald-400/50 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                            <span>⚡ AIRING TODAY</span>
                           </span>
-                        ) : drama.schedule ? (
-                          <span className="bg-black/85 backdrop-blur-md text-amber-300 border border-amber-500/40 font-black text-[9px] px-2 py-0.5 rounded-full shadow flex items-center gap-1 truncate">
-                            <span>🗓️</span>
-                            <span className="truncate">{drama.schedule}</span>
-                          </span>
-                        ) : (
-                          <span className="bg-black/80 backdrop-blur-md text-sky-300 border border-sky-500/30 font-bold text-[9px] px-2 py-0.5 rounded-full shadow truncate">
-                            ⚡ Ongoing Weekly
-                          </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       {/* Bottom of Poster: Exact StatusText on Left (Never cut off) & Rating on Right */}
                       <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] z-10 pointer-events-none">
                         <div className="flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/15 text-white font-bold max-w-[140px]">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse shrink-0" />
-                          <span className="truncate text-[9px] sm:text-[10px] text-emerald-300 font-extrabold">
-                            {drama.statusText || 'Now Streaming'}
-                          </span>
+                          {hasComingSoonAudios ? (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
+                              <span className="truncate text-[9px] sm:text-[10px] text-amber-300 font-extrabold">
+                                ⏳ Coming Soon
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse shrink-0" />
+                              <span className="truncate text-[9px] sm:text-[10px] text-emerald-300 font-extrabold">
+                                {drama.statusText || 'Now Streaming'}
+                              </span>
+                            </>
+                          )}
                         </div>
 
                         <span className="bg-black/90 backdrop-blur-md text-amber-300 font-black px-1.5 py-0.5 rounded border border-white/15 shrink-0 flex items-center gap-0.5">
@@ -282,18 +315,53 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           {drama.title}
                         </h3>
 
-                        {/* Dedicated Highlighted Schedule Strip */}
-                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[10px] font-bold">
-                          <span>🗓️</span>
-                          <span className="truncate">
-                            Drops: <strong className="text-white">{drama.schedule || 'Weekly Drop'}</strong>
-                          </span>
-                          {droppingToday && (
-                            <span className="ml-auto bg-emerald-400 text-black px-1 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse">
-                              AIRING
+                        {/* Neon Glass Schedule Pod (Per-Track Active Schedules) */}
+                        {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {drama.activeTrackSchedules.map((track) => {
+                              const trackToday = isAiringToday(track.scheduleText);
+                              const colorCls =
+                                track.key === 't1'
+                                  ? 'bg-red-500/15 border-red-500/35 text-red-200'
+                                  : track.key === 't2'
+                                  ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
+                                  : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
+                              const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
+                              const epLabel = track.isComingSoon
+                                ? 'Soon'
+                                : track.totalEp > 0
+                                ? `Ep ${track.currentEp}/${track.totalEp}`
+                                : `Ep ${track.currentEp}`;
+
+                              return (
+                                <div
+                                  key={track.key}
+                                  className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border backdrop-blur-sm ${colorCls}`}
+                                >
+                                  <div className="flex items-center gap-1 min-w-0">
+                                    <span className="shrink-0">{icon}</span>
+                                    <span className="truncate font-extrabold">{track.shortLabel}</span>
+                                    <span className="opacity-80 shrink-0 text-[9px]">({epLabel})</span>
+                                    <span className="opacity-60 shrink-0">•</span>
+                                    <span className="truncate text-white/95">🗓️ {track.scheduleText}</span>
+                                  </div>
+                                  {trackToday && (
+                                    <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-400/50 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse">
+                                      🔥 TODAY
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[10px] font-bold">
+                            <span>🗓️</span>
+                            <span className="truncate">
+                              Drops: <strong className="text-white">{drama.schedule || 'Weekly Drop'}</strong>
                             </span>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         {/* Details & Release Year */}
                         <div className="flex items-center justify-between gap-1 text-[11px] text-zinc-400 pt-0.5">

@@ -65,6 +65,15 @@ export interface DramaItem {
   hashtags?: string[];         // Hashtags parsed from sheet (e.g. ["#Kdrama", "#Romance"])
   isMovie?: boolean;           // true if film/movie without multiple episodic drops
   comingSoonAudios?: AudioType[]; // Audios promised or in dubbing phase but link not yet dropped
+  activeTrackSchedules?: Array<{
+    key: 't1' | 't2' | 't3';
+    audio: AudioType;
+    shortLabel: string;
+    scheduleText: string;
+    currentEp: number;
+    totalEp: number;
+    isComingSoon: boolean;
+  }>;
 }
 
 export interface WeekendSettings {

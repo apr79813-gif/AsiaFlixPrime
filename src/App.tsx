@@ -28,6 +28,9 @@ import {
   insertNotificationIntoSupabase,
   fetchSheetSnapshotFromSupabase,
   saveSheetSnapshotToSupabase,
+  cleanupOldSpamNotificationsFromSupabase,
+  deleteNotificationFromSupabase,
+  clearAllNotificationsFromSupabase,
   syncUserAccountWithSupabase,
   saveUserWatchlistToSupabase,
   getActiveSupabaseUser 
@@ -448,19 +451,16 @@ export default function App() {
 
   const syncCatalogAndNotifs = async () => {
     try {
+      // Purge any old spam notifications from Supabase
+      await cleanupOldSpamNotificationsFromSupabase();
+
       const sbNotifs = await fetchNotificationsFromSupabase();
-      if (sbNotifs && sbNotifs.length > 0) {
-        setNotifications((prev) => {
-          const notifMap = new Map<string, ReleaseNotification>();
-          sbNotifs.forEach((n) => notifMap.set(n.id, n));
-          prev.forEach((n) => {
-            if (!notifMap.has(n.id)) notifMap.set(n.id, n);
-          });
-          return Array.from(notifMap.values());
-        });
+      if (sbNotifs) {
+        setNotifications(sbNotifs);
+        localStorage.setItem('asiaflix_notifications', JSON.stringify(sbNotifs));
       }
-    } catch (e) {
-      console.warn('Supabase notifications sync caught:', e);
+    } catch {
+      // Silent fallback if Supabase notifications sync fails
     }
 
     // Direct Sheet sync with cache busting - website catalog comes 100% from Google Sheet
@@ -594,28 +594,30 @@ export default function App() {
   const fetchGoogleSheetData = async (targetUrl?: string): Promise<{ success: boolean; count?: number; error?: string }> => {
     setSheetSyncState((prev) => ({ ...prev, isSyncing: true }));
     const baseUrl = targetUrl || googleSheetUrl || SHEET_CSV_URL;
-    const cacheBusterUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    const sheetIdMatch = baseUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    const sheetId = sheetIdMatch ? sheetIdMatch[1] : '1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U';
+    const ts = Date.now();
+
+    const candidateUrls = [
+      `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=0&t=${ts}`,
+      `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0&t=${ts}`,
+      '/assets/aistudio/AsiaFlix_Catalog_5a28a2f8',
+    ];
 
     try {
       let text = '';
-      try {
-        const res = await fetch(cacheBusterUrl, { cache: 'no-store' });
-        if (res.ok) {
-          text = await res.text();
-        }
-      } catch (netErr) {
-        console.warn('Network fetch from Google Sheet URL failed, trying local catalog asset:', netErr);
-      }
-
-      // If online sheet failed or returned empty, load local updated catalog
-      if (!text || text.length < 50) {
+      for (const url of candidateUrls) {
         try {
-          const localRes = await fetch('/assets/aistudio/AsiaFlix_Catalog_5a28a2f8');
-          if (localRes.ok) {
-            text = await localRes.text();
+          const res = await fetch(url, { cache: 'no-store' });
+          if (res.ok) {
+            const body = await res.text();
+            if (body && body.length >= 50) {
+              text = body;
+              break;
+            }
           }
-        } catch (localErr) {
-          console.warn('Local catalog fallback failed:', localErr);
+        } catch {
+          // Silently try next endpoint
         }
       }
 
@@ -853,6 +855,116 @@ export default function App() {
           }
         });
 
+        // PER-TRACK SCHEDULE PARSING & AUTO-HIDE COMPLETED TRACKS
+        const getTrackStats = (eps: EpisodeItem[]) => {
+          let trackMaxEp = 0;
+          let trackFullPack = false;
+          eps.forEach((ep) => {
+            if (typeof ep.episodeNumber === 'number') {
+              if (ep.episodeNumber > trackMaxEp) trackMaxEp = ep.episodeNumber;
+            } else if (typeof ep.episodeNumber === 'string') {
+              const rangeParts = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
+              if (rangeParts) {
+                const endNum = parseInt(rangeParts[2], 10);
+                if (endNum > trackMaxEp) trackMaxEp = endNum;
+              } else {
+                const singleInStr = ep.episodeNumber.match(/(\d+)/);
+                if (singleInStr) {
+                  const n = parseInt(singleInStr[1], 10);
+                  if (n > trackMaxEp) trackMaxEp = n;
+                } else {
+                  trackFullPack = true;
+                }
+              }
+            }
+          });
+          return { trackMaxEp, trackFullPack };
+        };
+
+        const trackScheduleMap: Partial<Record<'t1' | 't2' | 't3', string>> = {};
+        let hasPerTrackPrefix = false;
+        if (scheduleRaw) {
+          const trackRegex = /\b(t1|t2|t3|hindi\s*dub|fan\s*dub|orig(?:inal)?)\b\s*[:=\-]?\s*([^,|;\n]+)/gi;
+          let match: RegExpExecArray | null;
+          while ((match = trackRegex.exec(scheduleRaw)) !== null) {
+            hasPerTrackPrefix = true;
+            const prefix = match[1].toLowerCase().replace(/\s+/g, '');
+            const schedText = match[2].trim();
+            if (schedText) {
+              if (prefix === 't1' || prefix.startsWith('hindi')) trackScheduleMap.t1 = schedText;
+              else if (prefix === 't2' || prefix.startsWith('fan')) trackScheduleMap.t2 = schedText;
+              else if (prefix === 't3' || prefix.startsWith('orig')) trackScheduleMap.t3 = schedText;
+            }
+          }
+        }
+
+        const activeTrackSchedules: NonNullable<DramaItem['activeTrackSchedules']> = [];
+        const trackDefs: Array<{
+          key: 't1' | 't2' | 't3';
+          audio: AudioType;
+          shortLabel: string;
+          eps: EpisodeItem[];
+          hasHttp: boolean;
+          isComingSoon: boolean;
+        }> = [
+          {
+            key: 't1',
+            audio: 'Hindi Dubbed',
+            shortLabel: 'Hindi',
+            eps: hindiEpisodes,
+            hasHttp: hasHindiHttp,
+            isComingSoon: comingSoonAudios.includes('Hindi Dubbed'),
+          },
+          {
+            key: 't2',
+            audio: 'Hindi Fan Dubbed',
+            shortLabel: 'Fan Dub',
+            eps: fanEpisodes,
+            hasHttp: hasFanDubHttp,
+            isComingSoon: comingSoonAudios.includes('Hindi Fan Dubbed'),
+          },
+          {
+            key: 't3',
+            audio: 'Original / Eng Sub',
+            shortLabel: 'Orig',
+            eps: origEpisodes,
+            hasHttp: hasOrigHttp,
+            isComingSoon: comingSoonAudios.includes('Original / Eng Sub'),
+          },
+        ];
+
+        trackDefs.forEach((td) => {
+          const specificSched = trackScheduleMap[td.key];
+          const effectiveSched = hasPerTrackPrefix ? specificSched : scheduleRaw.trim();
+          if (!effectiveSched) return;
+
+          const { trackMaxEp, trackFullPack } = getTrackStats(td.eps);
+          const isTrackCompleted =
+            !td.isComingSoon &&
+            td.hasHttp &&
+            ((plannedTotal > 0 && trackMaxEp >= plannedTotal) || trackFullPack || isFilm);
+
+          if (isTrackCompleted) return;
+
+          const isOngoing =
+            td.hasHttp &&
+            trackMaxEp > 0 &&
+            (plannedTotal === 0 || trackMaxEp < plannedTotal) &&
+            !trackFullPack;
+
+          if (isOngoing || td.isComingSoon) {
+            activeTrackSchedules.push({
+              key: td.key,
+              audio: td.audio,
+              shortLabel: td.shortLabel,
+              scheduleText: effectiveSched,
+              currentEp: trackMaxEp,
+              totalEp: plannedTotal,
+              isComingSoon: td.isComingSoon,
+            });
+          }
+        });
+
         // AUTOMATIC STATUS DETECTION (Requirement 3):
         // Single direct pack links (without explicit Ep tags) or full series links -> Completed (Full Series)
         let dramaStatus: DramaStatus = 'Completed (Full Series)';
@@ -982,6 +1094,7 @@ export default function App() {
           leadCast: parsedCast,
           hashtags: parsedTags,
           isMovie: isFilm,
+          activeTrackSchedules: activeTrackSchedules.length > 0 ? activeTrackSchedules : undefined,
         };
 
         parsedDramasMap.set(dramaId, item);
@@ -1096,21 +1209,16 @@ export default function App() {
           const prevSnapshot = await fetchSheetSnapshotFromSupabase();
 
           if (!prevSnapshot || Object.keys(prevSnapshot).length === 0) {
-            // First time: save baseline snapshot to Supabase and purge old Coming Soon notifications
+            // First time / fresh baseline: save baseline snapshot silently to Supabase without blasting notifications
             await saveSheetSnapshotToSupabase(currentSnapshot);
-            setNotifications((prev) =>
-              prev.filter(
-                (n) =>
-                  !n.title.toLowerCase().includes('coming soon') &&
-                  !n.message.toLowerCase().includes('coming soon')
-              )
-            );
           } else {
             const columnsConfig = [
               { key: 't1' as const, name: 'Hindi Dubbed' },
               { key: 't2' as const, name: 'Hindi Fan Dubbed' },
               { key: 't3' as const, name: 'Original / Eng Sub' },
             ];
+
+            const pendingInserts: Array<{ title: string; message: string }> = [];
 
             // Compare each audio column (t1, t2, t3) independently against prevSnapshot[d.id]
             for (const d of uniqueParsed) {
@@ -1147,35 +1255,42 @@ export default function App() {
 
                 // 1. Column changed from 'none' to 'coming_soon'
                 if (oldCol.state === 'none' && currCol.state === 'coming_soon') {
-                  await insertNotificationIntoSupabase(
-                    d.title,
-                    `${col.name} Coming Soon!`
-                  );
+                  pendingInserts.push({
+                    title: d.title,
+                    message: `${col.name} Coming Soon!`,
+                  });
                 }
                 // 2. Column changed from 'none' or 'coming_soon' to 'streaming'
                 else if ((oldCol.state === 'none' || oldCol.state === 'coming_soon') && currCol.state === 'streaming') {
                   if (currCol.maxEp > 0) {
-                    await insertNotificationIntoSupabase(
-                      d.title,
-                      `${col.name} Ep ${currCol.maxEp} Added`
-                    );
+                    pendingInserts.push({
+                      title: d.title,
+                      message: `${col.name} Ep ${currCol.maxEp} Added`,
+                    });
                   } else {
-                    await insertNotificationIntoSupabase(
-                      d.title,
-                      `${col.name} Full ${d.isMovie ? 'Movie' : 'Series'} Added`
-                    );
+                    pendingInserts.push({
+                      title: d.title,
+                      message: `${col.name} Full ${d.isMovie ? 'Movie' : 'Series'} Added`,
+                    });
                   }
                 }
                 // 3. Column was already 'streaming' and col.maxEp > oldCol.maxEp (or col.epCount > oldCol.epCount)
                 else if (currCol.state === 'streaming' && oldCol.state === 'streaming') {
                   if (currCol.maxEp > oldCol.maxEp || currCol.epCount > oldCol.epCount) {
                     const epNum = currCol.maxEp > 0 ? currCol.maxEp : currCol.epCount;
-                    await insertNotificationIntoSupabase(
-                      d.title,
-                      `${col.name} Ep ${epNum} Added`
-                    );
+                    pendingInserts.push({
+                      title: d.title,
+                      message: `${col.name} Ep ${epNum} Added`,
+                    });
                   }
                 }
+              }
+            }
+
+            // Only insert notifications if 1 to 3 items were updated (protects against bulk blasts)
+            if (pendingInserts.length > 0 && pendingInserts.length <= 3) {
+              for (const item of pendingInserts) {
+                await insertNotificationIntoSupabase(item.title, item.message);
               }
             }
 
@@ -1333,6 +1448,25 @@ export default function App() {
   // --- NOTIFICATIONS ACTIONS ---
   const handleMarkAllNotifsAsRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+  };
+
+  const handleClearAllNotifications = async () => {
+    setNotifications([]);
+    localStorage.removeItem('asiaflix_notifications');
+    try {
+      await clearAllNotificationsFromSupabase();
+    } catch (e) {
+      console.warn('Error clearing notifications from Supabase:', e);
+    }
+  };
+
+  const handleDeleteNotification = async (notifId: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    try {
+      await deleteNotificationFromSupabase(notifId);
+    } catch (e) {
+      console.warn('Error deleting notification from Supabase:', e);
+    }
   };
 
   const handleSelectNotification = (notif: ReleaseNotification) => {
@@ -1505,26 +1639,16 @@ export default function App() {
     return dramas.slice(0, 4);
   }, [dramas]);
 
-  // Weekly Episode Drops & Airing Lineup items
+  // Weekly Episode Drops & Airing Lineup items (STRICT: only titles with active ongoing/coming-soon track schedules)
   const weekendDramas = useMemo(() => {
     const seen = new Set<string>();
     return dramas.filter((d) => {
       if (!d || !d.id || seen.has(d.id)) return false;
-
-      const hasExplicitSchedule = Boolean(d.schedule && d.schedule.trim());
-      const isActivelyOngoing = d.status === 'Now Streaming (Ongoing)' || Boolean(d.statusText && d.statusText.includes('Now Streaming'));
-      const isCompleted = d.status.includes('Completed') || d.status.includes('Full');
-
-      // Completed series are excluded unless they explicitly have a schedule defined in the Sheet
-      if (isCompleted && !hasExplicitSchedule) {
-        return false;
-      }
-
-      if (hasExplicitSchedule || isActivelyOngoing || d.isWeekendLineup) {
+      const hasActiveTrack = Boolean(d.activeTrackSchedules && d.activeTrackSchedules.length > 0);
+      if (hasActiveTrack) {
         seen.add(d.id);
         return true;
       }
-
       return false;
     });
   }, [dramas]);
@@ -1569,14 +1693,16 @@ export default function App() {
     return dramas.filter((d) => (d.status.includes('Ongoing') || d.status.includes('Now Streaming')) && !seen.has(d.id) && seen.add(d.id));
   }, [dramas]);
   const ongoingDramas = useMemo(() => dramas.filter((d) => d.status.includes('Ongoing') || d.status.includes('Now Streaming')), [dramas]);
+  
+  // STRICT: Only include titles that actually have active streaming links in their respective column (T1, T2, T3)
   const hindiDubbedList = useMemo(() => dramas.filter((d) => 
-    Boolean(d.telegramHindi || d.availableAudios.some((a) => a.toLowerCase().includes('hindi')) || d.defaultAudio.toLowerCase().includes('hindi') || d.comingSoonAudios?.includes('Hindi Dubbed'))
+    Boolean(d.telegramHindi && d.telegramHindi.toLowerCase().includes('http'))
   ), [dramas]);
   const fanDubbedList = useMemo(() => dramas.filter((d) => 
-    Boolean(d.telegramFanDub || d.availableAudios.some((a) => a.toLowerCase().includes('fan')) || d.defaultAudio.toLowerCase().includes('fan') || d.comingSoonAudios?.some((a) => a.toLowerCase().includes('fan')))
+    Boolean(d.telegramFanDub && d.telegramFanDub.toLowerCase().includes('http'))
   ), [dramas]);
   const origEngSubList = useMemo(() => dramas.filter((d) => 
-    Boolean(d.telegramOrig || d.availableAudios.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub')) || d.defaultAudio.toLowerCase().includes('orig') || d.comingSoonAudios?.includes('Original / Eng Sub'))
+    Boolean(d.telegramOrig && d.telegramOrig.toLowerCase().includes('http'))
   ), [dramas]);
   const kdramaList = useMemo(() => dramas.filter((d) => d.category === 'K-Drama'), [dramas]);
   const cdramaList = useMemo(() => dramas.filter((d) => d.category === 'C-Drama'), [dramas]);
@@ -1793,6 +1919,7 @@ export default function App() {
                     rank={idx + 1}
                     isTopOne={idx === 0}
                     activeAudioContext={selectedAudio}
+                    isComingSoonContext={selectedStatus === 'Coming Soon'}
                   />
                 ))}
               </div>
@@ -1837,6 +1964,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isComingSoonContext={true}
             />
 
             {/* 3. Trending Now (Curated VIP Picks) */}
@@ -2034,6 +2162,8 @@ export default function App() {
         onClose={() => setIsNotificationsOpen(false)}
         notifications={notifications}
         onMarkAllAsRead={handleMarkAllNotifsAsRead}
+        onClearAll={handleClearAllNotifications}
+        onDeleteNotification={handleDeleteNotification}
         onSelectNotification={handleSelectNotification}
         botUsername={telegramBotSettings.botUsername}
       />

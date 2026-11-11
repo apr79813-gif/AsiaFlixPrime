@@ -177,13 +177,15 @@ export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotificat
   }
 }
 
+export const SNAPSHOT_SYSTEM_KEY_V2 = '__SYSTEM_SHEET_SNAPSHOT_V2__';
+
 // Fetch Google Sheet catalog snapshot from Supabase hidden system row
-export async function fetchSheetSnapshotFromSupabase(): Promise<Record<string, any> | null> {
+export async function fetchSheetSnapshotFromSupabase(key: string = SNAPSHOT_SYSTEM_KEY_V2): Promise<Record<string, any> | null> {
   try {
     const { data, error } = await supabase
       .from('release_notifications')
       .select('id, heading, message')
-      .eq('heading', '__SYSTEM_SHEET_SNAPSHOT__')
+      .eq('heading', key)
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -197,14 +199,14 @@ export async function fetchSheetSnapshotFromSupabase(): Promise<Record<string, a
 }
 
 // Upsert Google Sheet catalog snapshot into Supabase hidden system row
-export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, any>): Promise<boolean> {
+export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, any>, key: string = SNAPSHOT_SYSTEM_KEY_V2): Promise<boolean> {
   try {
     const messageJson = JSON.stringify(snapshotObj);
 
     const { data: existing } = await supabase
       .from('release_notifications')
       .select('id')
-      .eq('heading', '__SYSTEM_SHEET_SNAPSHOT__')
+      .eq('heading', key)
       .limit(1);
 
     if (existing && existing.length > 0) {
@@ -222,7 +224,7 @@ export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, an
       const { error } = await supabase
         .from('release_notifications')
         .insert({
-          heading: '__SYSTEM_SHEET_SNAPSHOT__',
+          heading: key,
           message: messageJson,
           is_published: true,
           published_at: new Date().toISOString(),
@@ -232,6 +234,87 @@ export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, an
     }
   } catch (err) {
     console.warn('Error saving sheet snapshot to Supabase:', err);
+    return false;
+  }
+}
+
+// Purge old spam notifications and historical completed catalog blasts from Supabase
+export async function cleanupOldSpamNotificationsFromSupabase(): Promise<boolean> {
+  try {
+    const { data: rows, error: fetchErr } = await supabase
+      .from('release_notifications')
+      .select('id, heading, message')
+      .eq('is_published', true);
+
+    if (fetchErr || !rows || rows.length === 0) return true;
+
+    const spamIds: string[] = [];
+    const oldYearsPattern = /\((?:201[0-9]|202[0-4])\)/; // (2010)-(2024)
+
+    rows.forEach((r) => {
+      if (r.heading?.startsWith('__')) return; // keep system snapshots and accounts
+      const msg = r.message || '';
+      const heading = r.heading || '';
+
+      const isOldSpamTemplate = 
+        msg.includes('Audio Added —') ||
+        msg.includes('New Episodes Added (') ||
+        msg.includes('New Series/Movie Added (') ||
+        msg.includes('Ep Added (') ||
+        msg.includes('Episodes Added (');
+
+      // Purge notifications on old catalog titles (2016-2024) unless they explicitly indicate Coming Soon
+      const isOldCatalogSpam = oldYearsPattern.test(heading) && !msg.toLowerCase().includes('coming soon');
+
+      if (isOldSpamTemplate || isOldCatalogSpam) {
+        spamIds.push(r.id);
+      }
+    });
+
+    if (spamIds.length > 0) {
+      await supabase
+        .from('release_notifications')
+        .delete()
+        .in('id', spamIds);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Error cleaning old spam notifications from Supabase:', err);
+    return false;
+  }
+}
+
+// Delete a single notification from Supabase
+export async function deleteNotificationFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('release_notifications')
+      .delete()
+      .eq('id', id);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// Clear all public notifications from Supabase
+export async function clearAllNotificationsFromSupabase(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('release_notifications')
+      .select('id, heading');
+    
+    if (error || !data) return false;
+    const deleteIds = data.filter((r) => !r.heading?.startsWith('__')).map((r) => r.id);
+    if (deleteIds.length > 0) {
+      await supabase
+        .from('release_notifications')
+        .delete()
+        .in('id', deleteIds);
+    }
+    return true;
+  } catch {
     return false;
   }
 }

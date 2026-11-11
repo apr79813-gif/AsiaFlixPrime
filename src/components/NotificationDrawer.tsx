@@ -8,6 +8,8 @@ interface NotificationDrawerProps {
   onClose: () => void;
   notifications: ReleaseNotification[];
   onMarkAllAsRead: () => void;
+  onClearAll?: () => void;
+  onDeleteNotification?: (id: string) => void;
   onSelectNotification: (notif: ReleaseNotification) => void;
   botUsername?: string;
 }
@@ -17,6 +19,8 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   onClose,
   notifications,
   onMarkAllAsRead,
+  onClearAll,
+  onDeleteNotification,
   onSelectNotification,
   botUsername = 'asiaflix_request_bot',
 }) => {
@@ -71,6 +75,15 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
               >
                 <CheckCheck className="w-3.5 h-3.5" />
                 <span>Mark Read</span>
+              </button>
+            )}
+            {notifications.length > 0 && onClearAll && (
+              <button
+                onClick={onClearAll}
+                className="text-[11px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 p-1 hover:bg-red-500/10 rounded transition-colors"
+                title="Clear all alerts"
+              >
+                <span>Clear All</span>
               </button>
             )}
             <button
@@ -172,9 +185,23 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
 
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5 text-[10px] text-zinc-500">
                       <span>{notif.timestamp}</span>
-                      <span className="text-zinc-400 flex items-center gap-0.5 group-hover:text-white transition-colors font-bold">
-                        View Drama <ArrowRight className="w-2.5 h-2.5" />
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {onDeleteNotification && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteNotification(notif.id);
+                            }}
+                            className="text-zinc-500 hover:text-red-400 p-0.5 rounded hover:bg-white/10 transition-colors"
+                            title="Delete notification"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                        <span className="text-zinc-400 flex items-center gap-0.5 group-hover:text-white transition-colors font-bold">
+                          View Drama <ArrowRight className="w-2.5 h-2.5" />
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>

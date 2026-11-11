@@ -11,6 +11,7 @@ interface DramaCardProps {
   rank?: number;
   isTopOne?: boolean;
   activeAudioContext?: AudioType | string;
+  isComingSoonContext?: boolean;
 }
 
 export const DramaCard: React.FC<DramaCardProps> = ({
@@ -21,11 +22,18 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   rank,
   isTopOne,
   activeAudioContext,
+  isComingSoonContext = false,
 }) => {
   const isRankOne = isTopOne || rank === 1 || drama.spotlightTag === 'TOP #1';
   const isToday = Boolean(drama.schedule && isAiringToday(drama.schedule));
+  const isComingSoonActive = Boolean(
+    isComingSoonContext || 
+    drama.status === 'Coming Soon' || 
+    (drama.statusText && drama.statusText.toLowerCase().includes('coming soon'))
+  );
 
   const getStatusDotColor = () => {
+    if (isComingSoonActive) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
     const s = (drama.statusText || drama.status).toLowerCase();
     if (s.includes('completed') || s.includes('full')) return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]';
     if (s.includes('coming') || s.includes('upcoming')) return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]';
@@ -44,23 +52,31 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   // Context-aware active audio determination
   const normCtx = (activeAudioContext || '').toLowerCase();
   const hasHindi = Boolean(
-    drama.telegramHindi ||
-    drama.availableAudios?.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan')) ||
-    drama.comingSoonAudios?.includes('Hindi Dubbed')
+    (drama.telegramHindi && drama.telegramHindi.toLowerCase().includes('http')) ||
+    drama.availableAudios?.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan'))
   );
   const hasFanDub = Boolean(
-    drama.telegramFanDub ||
-    drama.availableAudios?.some((a) => a.toLowerCase().includes('fan')) ||
-    drama.comingSoonAudios?.some((a) => a.toLowerCase().includes('fan'))
+    (drama.telegramFanDub && drama.telegramFanDub.toLowerCase().includes('http')) ||
+    drama.availableAudios?.some((a) => a.toLowerCase().includes('fan'))
   );
   const hasOrig = Boolean(
-    drama.telegramOrig ||
-    drama.availableAudios?.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub')) ||
-    drama.comingSoonAudios?.includes('Original / Eng Sub')
+    (drama.telegramOrig && drama.telegramOrig.toLowerCase().includes('http')) ||
+    drama.availableAudios?.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub'))
   );
 
   let displayAudio: 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' = 'Hindi Dubbed';
-  if (normCtx.includes('hindi') && !normCtx.includes('fan') && hasHindi) {
+
+  if (isComingSoonActive && drama.comingSoonAudios && drama.comingSoonAudios.length > 0) {
+    // In Coming Soon context: MUST ONLY show the coming soon audio, NEVER the completed defaultAudio!
+    const csAudio = drama.comingSoonAudios[0];
+    if (csAudio === 'Hindi Fan Dubbed' || csAudio === 'Fan Dubbed') {
+      displayAudio = 'Hindi Fan Dubbed';
+    } else if (csAudio === 'Original / Eng Sub') {
+      displayAudio = 'Original / Eng Sub';
+    } else {
+      displayAudio = 'Hindi Dubbed';
+    }
+  } else if (normCtx.includes('hindi') && !normCtx.includes('fan') && hasHindi) {
     displayAudio = 'Hindi Dubbed';
   } else if (normCtx.includes('fan') && hasFanDub) {
     displayAudio = 'Hindi Fan Dubbed';
@@ -79,6 +95,9 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       displayAudio = 'Hindi Fan Dubbed';
     } else if (hasOrig) {
       displayAudio = 'Original / Eng Sub';
+    } else if (drama.comingSoonAudios && drama.comingSoonAudios.length > 0) {
+      const cs = drama.comingSoonAudios[0];
+      displayAudio = (cs === 'Hindi Fan Dubbed' || cs === 'Fan Dubbed') ? 'Hindi Fan Dubbed' : cs === 'Original / Eng Sub' ? 'Original / Eng Sub' : 'Hindi Dubbed';
     } else {
       displayAudio = 'Hindi Dubbed';
     }
@@ -161,7 +180,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           <div className="flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/15 text-white font-bold max-w-[160px] sm:max-w-[185px]">
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor()}`} />
             <span className="text-[9px] sm:text-[10px] truncate text-emerald-300 font-extrabold">
-              {drama.statusText || drama.status.replace(/ \(.*\)/, '')}
+              {isComingSoonActive ? 'Coming Soon' : (drama.statusText || drama.status.replace(/ \(.*\)/, ''))}
             </span>
           </div>
 
@@ -184,20 +203,44 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             {drama.title}
           </h3>
 
-          {/* Schedule Badge (Driven by Google Sheet Schedule column) */}
-          {drama.schedule && drama.schedule.trim() && (
-            <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
-              isToday
-                ? 'bg-gradient-to-r from-emerald-500/20 via-black/40 to-amber-500/20 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]'
-                : 'bg-amber-500/10 text-amber-300 border-amber-500/25'
-            }`}>
-              <span className="shrink-0">🗓️</span>
-              <span className="truncate">Drops: <strong className="text-white">{drama.schedule}</strong></span>
-              {isToday && (
-                <span className="ml-auto bg-gradient-to-r from-emerald-400 to-amber-400 text-black px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse">
-                  🔥 TODAY
-                </span>
-              )}
+          {/* Neon Glass Schedule Pod (Per-Track Active Schedules) */}
+          {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {drama.activeTrackSchedules.map((track) => {
+                const trackToday = isAiringToday(track.scheduleText);
+                const colorCls =
+                  track.key === 't1'
+                    ? 'bg-red-500/15 border-red-500/35 text-red-200'
+                    : track.key === 't2'
+                    ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
+                    : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
+                const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
+                const epLabel = track.isComingSoon
+                  ? 'Soon'
+                  : track.totalEp > 0
+                  ? `Ep ${track.currentEp}/${track.totalEp}`
+                  : `Ep ${track.currentEp}`;
+
+                return (
+                  <div
+                    key={track.key}
+                    className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border backdrop-blur-sm ${colorCls}`}
+                  >
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="shrink-0">{icon}</span>
+                      <span className="truncate font-extrabold">{track.shortLabel}</span>
+                      <span className="opacity-80 shrink-0 text-[9px]">({epLabel})</span>
+                      <span className="opacity-60 shrink-0">•</span>
+                      <span className="truncate text-white/95">🗓️ {track.scheduleText}</span>
+                    </div>
+                    {trackToday && (
+                      <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-400/50 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse">
+                        🔥 TODAY
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -234,25 +277,53 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 
             {/* Audio Track Indicators in signature high-contrast color themes */}
             <div className="flex items-center gap-1 shrink-0">
-              {drama.telegramHindi && (
-                <span className="text-[9px] bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border border-red-400/40 shadow-[0_0_8px_rgba(229,9,20,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Hindi Dubbed Live">
-                  Hindi
-                </span>
-              )}
-              {drama.telegramFanDub && (
-                <span className="text-[9px] bg-gradient-to-r from-[#9333ea] via-[#a855f7] to-[#ec4899] text-white border border-purple-400/40 shadow-[0_0_8px_rgba(168,85,247,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Hindi Fan Dubbed Live">
-                  Fan Dub
-                </span>
-              )}
-              {drama.telegramOrig && (
-                <span className="text-[9px] bg-gradient-to-r from-[#0284c7] via-[#0ea5e9] to-[#2563eb] text-white border border-sky-400/40 shadow-[0_0_8px_rgba(14,165,233,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Original / Eng Sub Live">
-                  Orig
-                </span>
-              )}
-              {drama.comingSoonAudios && drama.comingSoonAudios.length > 0 && (
-                <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-bold" title="More Audios Coming Soon">
-                  ⏳ Soon
-                </span>
+              {isComingSoonActive ? (
+                // In Coming Soon context: ONLY show what is Coming Soon
+                drama.comingSoonAudios && drama.comingSoonAudios.length > 0 ? (
+                  drama.comingSoonAudios.map((audio) => {
+                    const label = audio === 'Hindi Dubbed' ? '⏳ Hindi Soon' : audio === 'Hindi Fan Dubbed' ? '⏳ Fan Soon' : '⏳ Orig Soon';
+                    const colorClass = audio === 'Hindi Dubbed'
+                      ? 'bg-gradient-to-r from-red-600/30 to-amber-600/30 text-amber-200 border-amber-500/50'
+                      : audio === 'Hindi Fan Dubbed'
+                      ? 'bg-gradient-to-r from-purple-600/30 to-pink-600/30 text-pink-200 border-purple-500/50'
+                      : 'bg-gradient-to-r from-sky-600/30 to-blue-600/30 text-sky-200 border-sky-500/50';
+                    return (
+                      <span key={audio} className={`text-[9px] px-1.5 py-0.5 rounded font-black tracking-wide border shadow-sm ${colorClass}`}>
+                        {label}
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
+                    ⏳ Coming Soon
+                  </span>
+                )
+              ) : (
+                // Normal Streaming Context
+                <>
+                  {drama.telegramHindi && (
+                    <span className="text-[9px] bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border border-red-400/40 shadow-[0_0_8px_rgba(229,9,20,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Hindi Dubbed Live">
+                      Hindi
+                    </span>
+                  )}
+                  {drama.telegramFanDub && (
+                    <span className="text-[9px] bg-gradient-to-r from-[#9333ea] via-[#a855f7] to-[#ec4899] text-white border border-purple-400/40 shadow-[0_0_8px_rgba(168,85,247,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Hindi Fan Dubbed Live">
+                      Fan Dub
+                    </span>
+                  )}
+                  {drama.telegramOrig && (
+                    <span className="text-[9px] bg-gradient-to-r from-[#0284c7] via-[#0ea5e9] to-[#2563eb] text-white border border-sky-400/40 shadow-[0_0_8px_rgba(14,165,233,0.4)] px-1.5 py-0.5 rounded font-black tracking-wide" title="Original / Eng Sub Live">
+                      Orig
+                    </span>
+                  )}
+                  {drama.comingSoonAudios && drama.comingSoonAudios.length > 0 && (
+                    drama.comingSoonAudios.map((aud) => (
+                      <span key={aud} className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-bold" title={`${aud} Coming Soon`}>
+                        {aud === 'Hindi Dubbed' ? '⏳ Hindi Soon' : aud === 'Hindi Fan Dubbed' ? '⏳ Fan Soon' : '⏳ Orig Soon'}
+                      </span>
+                    ))
+                  )}
+                </>
               )}
             </div>
           </div>

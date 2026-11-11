@@ -13,6 +13,7 @@ interface DramaRowProps {
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (dramaId: string) => boolean;
   activeAudioContext?: AudioType | string;
+  isComingSoonContext?: boolean;
 }
 
 export const DramaRow: React.FC<DramaRowProps> = ({
@@ -25,6 +26,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   onToggleWatchlist,
   isWatchlisted,
   activeAudioContext,
+  isComingSoonContext = false,
 }) => {
   const rowRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -120,6 +122,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
               rank={idx + 1}
               isTopOne={idx === 0}
               activeAudioContext={activeAudioContext}
+              isComingSoonContext={isComingSoonContext}
             />
           ))}
         </div>
@@ -138,6 +141,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
                 rank={idx + 1}
                 isTopOne={idx === 0}
                 activeAudioContext={activeAudioContext}
+                isComingSoonContext={isComingSoonContext}
               />
             </div>
           ))}

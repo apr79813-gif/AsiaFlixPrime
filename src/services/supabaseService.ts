@@ -1,5 +1,5 @@
 import { supabase, ADMIN_EMAIL, ADMIN_EMAILS } from '../lib/supabase';
-import { DramaItem, AudioType, DramaCategory, DramaStatus, ReleaseNotification, EpisodeItem } from '../types/drama';
+import { DramaItem, AudioType, DramaCategory, DramaStatus, ReleaseNotification, EpisodeItem, WatchlistEntry } from '../types/drama';
 
 export interface SupabaseTitleRow {
   id: string;
@@ -149,7 +149,7 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
   }
 }
 
-// Fetch published release notifications from Supabase
+// Fetch published release notifications from Supabase (filtering out hidden system and user rows)
 export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotification[] | null> {
   try {
     const { data, error } = await supabase
@@ -157,11 +157,14 @@ export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotificat
       .select('*')
       .eq('is_published', true)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
 
     if (error || !data || data.length === 0) return null;
 
-    return data.map((n) => ({
+    // Hide any system snapshot or user account rows
+    const publicNotifs = data.filter((n) => !n.heading?.startsWith('__'));
+
+    return publicNotifs.map((n) => ({
       id: n.id,
       title: n.heading,
       message: n.message || '',
@@ -171,6 +174,71 @@ export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotificat
     }));
   } catch {
     return null;
+  }
+}
+
+// Fetch Google Sheet catalog snapshot from Supabase hidden system row
+export async function fetchSheetSnapshotFromSupabase(): Promise<Record<string, {
+  title: string;
+  maxEp?: number;
+  epCount?: number;
+  audios?: string[];
+  statusText?: string;
+}> | null> {
+  try {
+    const { data, error } = await supabase
+      .from('release_notifications')
+      .select('id, heading, message')
+      .eq('heading', '__SYSTEM_SHEET_SNAPSHOT__')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error || !data || data.length === 0) return null;
+    const parsed = JSON.parse(data[0].message || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (err) {
+    console.warn('Error reading sheet snapshot from Supabase:', err);
+    return null;
+  }
+}
+
+// Upsert Google Sheet catalog snapshot into Supabase hidden system row
+export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, any>): Promise<boolean> {
+  try {
+    const messageJson = JSON.stringify(snapshotObj);
+
+    const { data: existing } = await supabase
+      .from('release_notifications')
+      .select('id')
+      .eq('heading', '__SYSTEM_SHEET_SNAPSHOT__')
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      const { error } = await supabase
+        .from('release_notifications')
+        .update({
+          message: messageJson,
+          is_published: true,
+          published_at: new Date().toISOString(),
+        })
+        .eq('id', existing[0].id);
+
+      return !error;
+    } else {
+      const { error } = await supabase
+        .from('release_notifications')
+        .insert({
+          heading: '__SYSTEM_SHEET_SNAPSHOT__',
+          message: messageJson,
+          is_published: true,
+          published_at: new Date().toISOString(),
+        });
+
+      return !error;
+    }
+  } catch (err) {
+    console.warn('Error saving sheet snapshot to Supabase:', err);
+    return false;
   }
 }
 
@@ -284,6 +352,227 @@ export async function insertNotificationIntoSupabase(
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Database error' };
+  }
+}
+
+export interface CloudUserData {
+  email: string;
+  password?: string;
+  watchlist: WatchlistEntry[];
+  watchedEpisodesMap: Record<string, (number | string)[]>;
+}
+
+// 100% persistent Cloud Account & Watchlist Sync stored in Supabase release_notifications
+export async function syncUserAccountWithSupabase(
+  email: string,
+  password?: string,
+  mode: 'login' | 'signup' | 'fetch' = 'login',
+  currentLocalWatchlist: WatchlistEntry[] = [],
+  currentLocalWatchedEpisodes: Record<string, (number | string)[]> = {}
+): Promise<{
+  success: boolean;
+  user?: { id: string; email: string };
+  watchlist?: WatchlistEntry[];
+  watchedEpisodesMap?: Record<string, (number | string)[]>;
+  error?: string;
+}> {
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address' };
+    }
+    const headingKey = `__USER_ACCOUNT__:${normalizedEmail}`;
+
+    const { data: rows, error: selectError } = await supabase
+      .from('release_notifications')
+      .select('id, heading, message')
+      .eq('heading', headingKey)
+      .limit(1);
+
+    if (selectError) {
+      console.warn('Account lookup notice:', selectError);
+    }
+
+    const existingRow = rows && rows.length > 0 ? rows[0] : null;
+
+    if (mode === 'signup') {
+      if (!password || password.length < 4) {
+        return { success: false, error: 'Password must be at least 4 characters' };
+      }
+
+      if (existingRow) {
+        // If account already exists and password matches, log the user in seamlessly!
+        try {
+          const accountData: CloudUserData = JSON.parse(existingRow.message || '{}');
+          if (accountData.password === password) {
+            return {
+              success: true,
+              user: { id: normalizedEmail, email: normalizedEmail },
+              watchlist: accountData.watchlist || currentLocalWatchlist,
+              watchedEpisodesMap: accountData.watchedEpisodesMap || currentLocalWatchedEpisodes,
+            };
+          } else {
+            return {
+              success: false,
+              error: 'An account with this email already exists. Please switch to Sign In with your password.',
+            };
+          }
+        } catch {}
+      }
+
+      // Create new account row with current local watchlist & episodes
+      const newAccountData: CloudUserData = {
+        email: normalizedEmail,
+        password,
+        watchlist: currentLocalWatchlist,
+        watchedEpisodesMap: currentLocalWatchedEpisodes,
+      };
+
+      if (existingRow) {
+        await supabase
+          .from('release_notifications')
+          .update({
+            message: JSON.stringify(newAccountData),
+            is_published: true,
+            published_at: new Date().toISOString(),
+          })
+          .eq('id', existingRow.id);
+      } else {
+        await supabase
+          .from('release_notifications')
+          .insert({
+            heading: headingKey,
+            message: JSON.stringify(newAccountData),
+            is_published: true,
+            published_at: new Date().toISOString(),
+          });
+      }
+
+      return {
+        success: true,
+        user: { id: normalizedEmail, email: normalizedEmail },
+        watchlist: newAccountData.watchlist,
+        watchedEpisodesMap: newAccountData.watchedEpisodesMap,
+      };
+    }
+
+    if (mode === 'login') {
+      if (!existingRow) {
+        return {
+          success: false,
+          error: 'Account not found — click Sign Up to create your free account.',
+        };
+      }
+
+      try {
+        const accountData: CloudUserData = JSON.parse(existingRow.message || '{}');
+        if (accountData.password && password && accountData.password !== password) {
+          return { success: false, error: 'Incorrect password. Please try again.' };
+        }
+
+        return {
+          success: true,
+          user: { id: normalizedEmail, email: normalizedEmail },
+          watchlist: accountData.watchlist || [],
+          watchedEpisodesMap: accountData.watchedEpisodesMap || {},
+        };
+      } catch {
+        return { success: false, error: 'Failed to read account data' };
+      }
+    }
+
+    // mode === 'fetch' (silent session restoration on page load)
+    if (mode === 'fetch') {
+      if (!existingRow) {
+        return {
+          success: true,
+          user: { id: normalizedEmail, email: normalizedEmail },
+          watchlist: [],
+          watchedEpisodesMap: {},
+        };
+      }
+
+      try {
+        const accountData: CloudUserData = JSON.parse(existingRow.message || '{}');
+        return {
+          success: true,
+          user: { id: normalizedEmail, email: normalizedEmail },
+          watchlist: accountData.watchlist || [],
+          watchedEpisodesMap: accountData.watchedEpisodesMap || {},
+        };
+      } catch {
+        return {
+          success: true,
+          user: { id: normalizedEmail, email: normalizedEmail },
+          watchlist: [],
+          watchedEpisodesMap: {},
+        };
+      }
+    }
+
+    return { success: false, error: 'Invalid mode' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Cloud account sync failed' };
+  }
+}
+
+// Save updated user watchlist and watched episodes to Supabase
+export async function saveUserWatchlistToSupabase(
+  email: string,
+  watchlist: WatchlistEntry[],
+  watchedEpisodesMap: Record<string, (number | string)[]>
+): Promise<boolean> {
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return false;
+    const headingKey = `__USER_ACCOUNT__:${normalizedEmail}`;
+
+    const { data: rows } = await supabase
+      .from('release_notifications')
+      .select('id, message')
+      .eq('heading', headingKey)
+      .limit(1);
+
+    if (rows && rows.length > 0) {
+      let existingData: CloudUserData = { email: normalizedEmail, watchlist: [], watchedEpisodesMap: {} };
+      try {
+        existingData = JSON.parse(rows[0].message || '{}');
+      } catch {}
+
+      existingData.watchlist = watchlist;
+      existingData.watchedEpisodesMap = watchedEpisodesMap;
+
+      const { error } = await supabase
+        .from('release_notifications')
+        .update({
+          message: JSON.stringify(existingData),
+          is_published: true,
+          published_at: new Date().toISOString(),
+        })
+        .eq('id', rows[0].id);
+
+      return !error;
+    } else {
+      const accountData: CloudUserData = {
+        email: normalizedEmail,
+        watchlist,
+        watchedEpisodesMap,
+      };
+
+      const { error } = await supabase
+        .from('release_notifications')
+        .insert({
+          heading: headingKey,
+          message: JSON.stringify(accountData),
+          is_published: true,
+          published_at: new Date().toISOString(),
+        });
+
+      return !error;
+    }
+  } catch (err) {
+    console.warn('Error saving user watchlist to Supabase:', err);
+    return false;
   }
 }
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DramaItem, WatchlistEntry, WatchlistStatus } from '../types/drama';
-import { X, Bookmark, Trash2, ExternalLink, Play, CheckCircle2, Film, Cloud, UserCheck, LogOut, KeyRound } from 'lucide-react';
-import { loginWithSupabaseAuth, signUpWithSupabaseAuth, signOutFromSupabase } from '../services/supabaseService';
+import { X, Bookmark, Trash2, ExternalLink, Film, Cloud, LogOut } from 'lucide-react';
+import { syncUserAccountWithSupabase } from '../services/supabaseService';
 
 interface WatchlistDrawerProps {
   isOpen: boolean;
@@ -12,7 +12,12 @@ interface WatchlistDrawerProps {
   onRemoveFromWatchlist: (dramaId: string) => void;
   onUpdateStatus: (dramaId: string, status: WatchlistStatus) => void;
   supabaseUser?: any | null;
-  onUserChange?: (user: any | null) => void;
+  onUserChange?: (
+    user: any | null,
+    cloudWatchlist?: WatchlistEntry[],
+    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>
+  ) => void;
+  watchedEpisodesMap?: Record<string, (number | string)[]>;
 }
 
 export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
@@ -25,6 +30,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
   onUpdateStatus,
   supabaseUser,
   onUserChange,
+  watchedEpisodesMap = {},
 }) => {
   const [activeTab, setActiveTab] = useState<'all' | WatchlistStatus>('all');
   const [showAuthCard, setShowAuthCard] = useState(false);
@@ -42,38 +48,52 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
     setIsAuthLoading(true);
     setAuthMsg(null);
 
-    if (authMode === 'login') {
-      const res = await loginWithSupabaseAuth(email, password);
-      if (res.error) {
-        setAuthMsg({ text: res.error, isError: true });
-      } else {
-        setAuthMsg({ text: 'Signed in! Cloud sync active.', isError: false });
-        if (onUserChange) onUserChange(res.user);
-        setTimeout(() => setShowAuthCard(false), 1500);
-      }
+    const res = await syncUserAccountWithSupabase(
+      email,
+      password,
+      authMode,
+      watchlist,
+      watchedEpisodesMap
+    );
+
+    if (!res.success) {
+      setAuthMsg({ text: res.error || 'Authentication failed', isError: true });
     } else {
-      const res = await signUpWithSupabaseAuth(email, password);
-      if (res.error) {
-        setAuthMsg({ text: res.error, isError: true });
-      } else {
-        setAuthMsg({ text: 'Account created! Your watchlist will now sync across devices.', isError: false });
-        if (onUserChange) onUserChange(res.user);
-        setTimeout(() => setShowAuthCard(false), 2000);
+      setAuthMsg({
+        text: authMode === 'login' ? 'Signed in! Cloud sync active.' : 'Account created & synced across devices!',
+        isError: false,
+      });
+      if (onUserChange) {
+        onUserChange(res.user, res.watchlist, res.watchedEpisodesMap);
       }
+      setTimeout(() => setShowAuthCard(false), 1500);
     }
     setIsAuthLoading(false);
   };
 
-  const handleSignOut = async () => {
-    await signOutFromSupabase();
+  const handleSignOut = () => {
     if (onUserChange) onUserChange(null);
     setAuthMsg({ text: 'Signed out successfully.', isError: false });
-    setTimeout(() => setAuthMsg(null), 2500);
+    setTimeout(() => setAuthMsg(null), 2000);
   };
 
-  const filteredEntries = watchlist.filter((entry) => {
+  // Match each watchlist entry with its actual DramaItem from the catalog
+  const resolvedItems = watchlist
+    .map((entry) => {
+      const drama = allDramas.find(
+        (d) =>
+          d.id === entry.dramaId ||
+          d.id === 'sheet-' + entry.dramaId ||
+          (entry.dramaId && d.id.replace('sheet-', '') === entry.dramaId.replace('sheet-', '')) ||
+          (entry.dramaTitle && d.title.toLowerCase() === entry.dramaTitle.toLowerCase())
+      );
+      return drama ? { entry, drama } : null;
+    })
+    .filter((item): item is { entry: WatchlistEntry; drama: DramaItem } => item !== null);
+
+  const filteredItems = resolvedItems.filter((item) => {
     if (activeTab === 'all') return true;
-    return entry.status === activeTab;
+    return item.entry.status === activeTab;
   });
 
   return (
@@ -105,10 +125,10 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
         {/* Cloud Sync Bar */}
         <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/5 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
-            <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+            <Cloud className={`w-3.5 h-3.5 ${supabaseUser ? 'text-emerald-400' : 'text-zinc-500'}`} />
             {supabaseUser ? (
               <span className="text-[11px] text-emerald-300 font-bold flex items-center gap-1">
-                <span>Cloud Sync Active</span>
+                <span>Cloud Sync: {supabaseUser.email}</span>
               </span>
             ) : (
               <span className="text-[11px] text-zinc-400 font-medium">Guest Mode (Device Storage)</span>
@@ -118,7 +138,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
           {supabaseUser ? (
             <button
               onClick={handleSignOut}
-              className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1"
+              className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 cursor-pointer"
             >
               <LogOut className="w-3 h-3" />
               <span>Sign Out</span>
@@ -126,7 +146,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
           ) : (
             <button
               onClick={() => setShowAuthCard(!showAuthCard)}
-              className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline"
+              className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
             >
               {showAuthCard ? 'Hide Form' : '☁️ Cloud Sync (Multi-Device)'}
             </button>
@@ -138,12 +158,15 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
           <form onSubmit={handleAuthSubmit} className="p-3.5 bg-black/50 border-b border-white/10 space-y-2.5 text-xs animate-fade-in">
             <div className="flex items-center justify-between">
               <span className="font-black text-white text-[11px]">
-                {authMode === 'login' ? 'Sign In to Sync' : 'Create Account to Sync'}
+                {authMode === 'login' ? 'Sign In to Sync' : 'Create Free Cloud Account'}
               </span>
               <button
                 type="button"
-                onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-                className="text-[10px] text-zinc-400 hover:text-white underline"
+                onClick={() => {
+                  setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                  setAuthMsg(null);
+                }}
+                className="text-[10px] text-zinc-400 hover:text-white underline cursor-pointer"
               >
                 {authMode === 'login' ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}
               </button>
@@ -177,52 +200,52 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
             <button
               type="submit"
               disabled={isAuthLoading}
-              className="w-full py-1.5 rounded-lg bg-[#10b981] hover:bg-emerald-600 text-white font-black text-[11px] shadow transition-all"
+              className="w-full py-1.5 rounded-lg bg-[#10b981] hover:bg-emerald-600 text-white font-black text-[11px] shadow transition-all cursor-pointer"
             >
-              {isAuthLoading ? 'Processing...' : authMode === 'login' ? 'Sign In & Sync' : 'Sign Up & Sync'}
+              {isAuthLoading ? 'Processing...' : authMode === 'login' ? 'Sign In & Sync' : 'Sign Up & Sync Watchlist'}
             </button>
           </form>
         )}
 
-        {/* Status Filter Tabs */}
-        <div className="p-3 border-b border-white/5 flex gap-1.5 overflow-x-auto">
+        {/* Status Filter Tabs (Accurately counts matched catalog dramas) */}
+        <div className="p-3 border-b border-white/5 flex gap-1.5 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'all' ? 'bg-[#e50914] text-white shadow-sm' : 'bg-white/[0.04] text-zinc-400 hover:text-white'
             }`}
           >
-            All ({watchlist.length})
+            All ({resolvedItems.length})
           </button>
           <button
             onClick={() => setActiveTab('watching')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'watching' ? 'bg-[#e50914] text-white shadow-sm' : 'bg-white/[0.04] text-zinc-400 hover:text-white'
             }`}
           >
-            ▶️ Watching ({watchlist.filter((w) => w.status === 'watching').length})
+            ▶️ Watching ({resolvedItems.filter((i) => i.entry.status === 'watching').length})
           </button>
           <button
             onClick={() => setActiveTab('want_to_watch')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'want_to_watch' ? 'bg-[#e50914] text-white shadow-sm' : 'bg-white/[0.04] text-zinc-400 hover:text-white'
             }`}
           >
-            🔖 Want ({watchlist.filter((w) => w.status === 'want_to_watch').length})
+            🔖 Want ({resolvedItems.filter((i) => i.entry.status === 'want_to_watch').length})
           </button>
           <button
             onClick={() => setActiveTab('completed')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'completed' ? 'bg-[#e50914] text-white shadow-sm' : 'bg-white/[0.04] text-zinc-400 hover:text-white'
             }`}
           >
-            ✅ Done ({watchlist.filter((w) => w.status === 'completed').length})
+            ✅ Done ({resolvedItems.filter((i) => i.entry.status === 'completed').length})
           </button>
         </div>
 
         {/* Content list */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {filteredEntries.length === 0 ? (
+          {filteredItems.length === 0 ? (
             <div className="py-16 text-center text-zinc-400">
               <Film className="w-12 h-12 mx-auto mb-3 text-zinc-600 opacity-60" />
               <p className="text-sm font-bold text-zinc-300">No dramas in this list yet</p>
@@ -231,11 +254,8 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
               </p>
             </div>
           ) : (
-            filteredEntries.map((entry) => {
-              const drama = allDramas.find((d) => d.id === entry.dramaId);
-              if (!drama) return null;
-
-              const watchedCount = entry.watchedEpisodes.length;
+            filteredItems.map(({ entry, drama }) => {
+              const watchedCount = entry.watchedEpisodes?.length || 0;
               const totalCount = drama.totalEpisodes || drama.episodes.length || 1;
               const progressPct = Math.min(100, Math.round((watchedCount / totalCount) * 100));
 
@@ -254,7 +274,11 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
                     <img
                       src={drama.poster}
                       alt={drama.title}
+                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
+                      }}
                     />
                   </div>
 
@@ -272,8 +296,8 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
                         </h4>
 
                         <button
-                          onClick={() => onRemoveFromWatchlist(drama.id)}
-                          className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                          onClick={() => onRemoveFromWatchlist(entry.dramaId)}
+                          className="text-zinc-500 hover:text-red-400 transition-colors p-1 cursor-pointer"
                           title="Remove from Watchlist"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -305,8 +329,8 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
                     <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-white/5">
                       <select
                         value={entry.status}
-                        onChange={(e) => onUpdateStatus(drama.id, e.target.value as WatchlistStatus)}
-                        className="bg-black/60 border border-white/10 text-zinc-300 text-[10px] font-bold rounded px-2 py-1 outline-none"
+                        onChange={(e) => onUpdateStatus(entry.dramaId, e.target.value as WatchlistStatus)}
+                        className="bg-black/60 border border-white/10 text-zinc-300 text-[10px] font-bold rounded px-2 py-1 outline-none cursor-pointer"
                       >
                         <option value="want_to_watch">🔖 Want to Watch</option>
                         <option value="watching">▶️ Currently Watching</option>
@@ -319,7 +343,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
                           onSelectDrama(drama);
                           onClose();
                         }}
-                        className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1"
+                        className="text-[10px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 cursor-pointer"
                       >
                         <span>Episodes</span>
                         <ExternalLink className="w-3 h-3" />

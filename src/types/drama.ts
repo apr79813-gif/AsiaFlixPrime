@@ -78,6 +78,7 @@ export type WatchlistStatus = 'want_to_watch' | 'watching' | 'completed' | 'drop
 
 export interface WatchlistEntry {
   dramaId: string;
+  dramaTitle?: string;
   status: WatchlistStatus;
   watchedEpisodes: (number | string)[];
   addedAt: number;

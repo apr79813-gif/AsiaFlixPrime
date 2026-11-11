@@ -24,6 +24,11 @@ import { Footer } from './components/Footer';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
+  insertNotificationIntoSupabase,
+  fetchSheetSnapshotFromSupabase,
+  saveSheetSnapshotToSupabase,
+  syncUserAccountWithSupabase,
+  saveUserWatchlistToSupabase,
   getActiveSupabaseUser 
 } from './services/supabaseService';
 
@@ -136,36 +141,64 @@ export default function App() {
     return [];
   });
 
-  // --- WATCHLIST STATE ---
+  // --- WATCHLIST STATE (CLEAN & CLOUD-SYNCABLE) ---
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() => {
-    const saved = localStorage.getItem('asiaflix_watchlist_v2');
+    const saved = localStorage.getItem('asiaflix_watchlist_v3');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error('Error parsing watchlist:', e);
       }
     }
-    return [
-      { dramaId: 'rain-or-shine', status: 'watching', watchedEpisodes: [1, 2, 3], addedAt: Date.now() - 86400000, lastUpdated: Date.now() },
-      { dramaId: 'king-the-land', status: 'want_to_watch', watchedEpisodes: [], addedAt: Date.now() - 172800000, lastUpdated: Date.now() },
-    ];
+    return [];
   });
 
   // --- WATCHED EPISODES MAPPING (dramaId -> array of episodeNumber) ---
   const [watchedEpisodesMap, setWatchedEpisodesMap] = useState<Record<string, (number | string)[]>>(() => {
-    const saved = localStorage.getItem('asiaflix_watched_episodes_v2');
+    const saved = localStorage.getItem('asiaflix_watched_episodes_v3');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
       } catch (e) {
         console.error('Error parsing watched episodes:', e);
       }
     }
-    return {
-      'rain-or-shine': [1, 2, 3],
-    };
+    return {};
   });
+
+  // --- SUPABASE & CLOUD USER ACCOUNT STATE ---
+  const [supabaseUser, setSupabaseUser] = useState<{ id: string; email: string } | null>(() => {
+    const saved = localStorage.getItem('asiaflix_logged_in_user_v1');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.email) return parsed;
+      } catch {}
+    }
+    return null;
+  });
+
+  const handleUserChange = (
+    user: any | null,
+    cloudWatchlist?: WatchlistEntry[],
+    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>
+  ) => {
+    setSupabaseUser(user);
+    if (user && user.email) {
+      localStorage.setItem('asiaflix_logged_in_user_v1', JSON.stringify(user));
+      if (cloudWatchlist && cloudWatchlist.length > 0) {
+        setWatchlist(cloudWatchlist);
+      }
+      if (cloudWatchedEpisodesMap && Object.keys(cloudWatchedEpisodesMap).length > 0) {
+        setWatchedEpisodesMap(cloudWatchedEpisodesMap);
+      }
+    } else {
+      localStorage.removeItem('asiaflix_logged_in_user_v1');
+    }
+  };
 
   // --- SUPPORT TICKETS ---
   const [tickets, setTickets] = useState<SupportTicket[]>(INITIAL_TICKETS);
@@ -250,12 +283,18 @@ export default function App() {
   }, [weekendSettings]);
 
   useEffect(() => {
-    localStorage.setItem('asiaflix_watchlist_v2', JSON.stringify(watchlist));
-  }, [watchlist]);
+    localStorage.setItem('asiaflix_watchlist_v3', JSON.stringify(watchlist));
+    if (supabaseUser?.email) {
+      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap);
+    }
+  }, [watchlist, supabaseUser?.email]);
 
   useEffect(() => {
-    localStorage.setItem('asiaflix_watched_episodes_v2', JSON.stringify(watchedEpisodesMap));
-  }, [watchedEpisodesMap]);
+    localStorage.setItem('asiaflix_watched_episodes_v3', JSON.stringify(watchedEpisodesMap));
+    if (supabaseUser?.email) {
+      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap);
+    }
+  }, [watchedEpisodesMap, supabaseUser?.email]);
 
   useEffect(() => {
     localStorage.setItem('asiaflix_notifications', JSON.stringify(notifications));
@@ -306,12 +345,38 @@ export default function App() {
     };
   }, []);
 
-  // --- SUPABASE AUTH USER STATE ---
-  const [supabaseUser, setSupabaseUser] = useState<any | null>(null);
-
-  // Initial sync: Supabase Cloud first, then Sheet fallback
+  // Initial sync: Restore cloud watchlist if user is logged in, then sync catalog & notifications
   useEffect(() => {
-    getActiveSupabaseUser().then((u) => setSupabaseUser(u));
+    const savedUserStr = localStorage.getItem('asiaflix_logged_in_user_v1');
+    if (savedUserStr) {
+      try {
+        const savedUser = JSON.parse(savedUserStr);
+        if (savedUser && savedUser.email) {
+          syncUserAccountWithSupabase(savedUser.email, undefined, 'fetch').then((res) => {
+            if (res.success) {
+              if (res.watchlist && res.watchlist.length > 0) {
+                setWatchlist(res.watchlist);
+              }
+              if (res.watchedEpisodesMap && Object.keys(res.watchedEpisodesMap).length > 0) {
+                setWatchedEpisodesMap(res.watchedEpisodesMap);
+              }
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Error restoring user session:', e);
+      }
+    } else {
+      // Also check native Supabase auth session if present
+      getActiveSupabaseUser().then((u) => {
+        if (u && u.email) {
+          const userObj = { id: u.id, email: u.email };
+          setSupabaseUser(userObj);
+          localStorage.setItem('asiaflix_logged_in_user_v1', JSON.stringify(userObj));
+        }
+      });
+    }
+
     syncCatalogAndNotifs();
   }, []);
 
@@ -910,102 +975,128 @@ export default function App() {
       if (uniqueParsed.length > 0) {
         mergePreservingCuratedAndCustom(uniqueParsed);
 
-        // --- AUTOMATIC LIVE NOTIFICATIONS WHEN GOOGLE SHEET UPDATES ---
+        // --- GLOBAL SUPABASE AUTO-NOTIFICATIONS FOR GOOGLE SHEET UPDATES ---
         try {
-          const snapshotRaw = localStorage.getItem('asiaflix_sheet_snapshot_v1');
-          const prevSnapshot: Record<string, { title: string; statusText?: string; epCount?: number; status: string }> = snapshotRaw
-            ? JSON.parse(snapshotRaw)
-            : {};
+          // ONLY track dramas that actually have at least one valid http stream link in T1, T2, or T3
+          // (Ignore "Coming Soon" rows without links, and ignore changes to Poster, Synopsis, Details, Rating, Age Rating, Cast, or Sub-Category!)
+          const dramasWithStreamLinks = uniqueParsed.filter((d) => {
+            const hasHttpInT1 = Boolean(d.telegramHindi && d.telegramHindi.toLowerCase().includes('http'));
+            const hasHttpInT2 = Boolean(d.telegramFanDub && d.telegramFanDub.toLowerCase().includes('http'));
+            const hasHttpInT3 = Boolean(d.telegramOrig && d.telegramOrig.toLowerCase().includes('http'));
+            const hasPrimaryHttp = Boolean(d.telegramUrl && d.telegramUrl.startsWith('http') && !d.telegramUrl.includes('+yJH68LvfrT9hZDVl'));
+            return hasHttpInT1 || hasHttpInT2 || hasHttpInT3 || hasPrimaryHttp;
+          });
 
-          const newNotifs: ReleaseNotification[] = [];
-          const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' Today';
+          const currentSnapshot: Record<string, {
+            title: string;
+            maxEp: number;
+            epCount: number;
+            audios: string[];
+            statusText?: string;
+          }> = {};
 
-          if (Object.keys(prevSnapshot).length === 0) {
-            // First time snapshot: create initial real notifications from current ongoing/recent items
-            uniqueParsed
-              .filter((d) => d.status.includes('Ongoing') || d.status.includes('Now Streaming') || d.statusText?.includes('Ep'))
-              .slice(0, 5)
-              .forEach((d) => {
-                newNotifs.push({
-                  id: `notif-initial-${d.id}`,
-                  title: `🎬 ${d.title}`,
-                  dramaId: d.id,
-                  message: `${d.title} is live! ${d.statusText || 'Fresh episodes are now streaming'} in 1080p FHD.`,
-                  audioType: d.defaultAudio,
-                  timestamp: nowStr,
-                  isRead: false,
-                  type: 'new_episode',
-                });
-              });
-          } else {
-            // Diff against previous snapshot
-            uniqueParsed.forEach((d) => {
-              const old = prevSnapshot[d.id];
-              if (!old) {
-                // Brand new title added to Sheet
-                newNotifs.push({
-                  id: `notif-new-${d.id}-${Date.now()}`,
-                  title: `🆕 New Added: ${d.title}`,
-                  dramaId: d.id,
-                  message: `${d.title} (${d.statusText || d.status}) has just been added to the VIP library!`,
-                  audioType: d.defaultAudio,
-                  timestamp: nowStr,
-                  isRead: false,
-                  type: 'new_drama',
-                });
-              } else {
-                // Check if episode count or statusText increased
-                if (old.statusText !== d.statusText && d.statusText?.toLowerCase().includes('ep')) {
-                  newNotifs.push({
-                    id: `notif-ep-${d.id}-${Date.now()}`,
-                    title: `🎬 New Episode Uploaded: ${d.title}`,
-                    dramaId: d.id,
-                    message: `${d.title} — ${d.statusText} is now live on AsiaFlix Telegram VIP!`,
-                    audioType: d.defaultAudio,
-                    timestamp: nowStr,
-                    isRead: false,
-                    type: 'new_episode',
-                  });
-                } else if (old.status.includes('Coming') && !d.status.includes('Coming')) {
-                  // Transitioned from Coming Soon to Now Streaming / Completed
-                  newNotifs.push({
-                    id: `notif-avail-${d.id}-${Date.now()}`,
-                    title: `🔥 Now Available: ${d.title}`,
-                    dramaId: d.id,
-                    message: `${d.title} is now ${d.statusText || d.status} with zero ads!`,
-                    audioType: d.defaultAudio,
-                    timestamp: nowStr,
-                    isRead: false,
-                    type: 'new_drama',
-                  });
+          dramasWithStreamLinks.forEach((d) => {
+            let maxEp = 0;
+            d.episodes.forEach((ep) => {
+              if (typeof ep.episodeNumber === 'number') {
+                if (ep.episodeNumber > maxEp) maxEp = ep.episodeNumber;
+              } else if (typeof ep.episodeNumber === 'string') {
+                const rangeParts = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
+                if (rangeParts) {
+                  const endNum = parseInt(rangeParts[2], 10);
+                  if (endNum > maxEp) maxEp = endNum;
+                } else {
+                  const singleMatch = ep.episodeNumber.match(/(\d+)/);
+                  if (singleMatch) {
+                    const n = parseInt(singleMatch[1], 10);
+                    if (n > maxEp) maxEp = n;
+                  }
                 }
               }
             });
-          }
 
-          if (newNotifs.length > 0) {
-            setNotifications((prev) => {
-              const existingIds = new Set(prev.map((n) => n.id));
-              const dedupedNew = newNotifs.filter((n) => !existingIds.has(n.id));
-              const updated = [...dedupedNew, ...prev].slice(0, 30);
-              localStorage.setItem('asiaflix_notifications', JSON.stringify(updated));
-              return updated;
-            });
-          }
-
-          // Save current snapshot
-          const currentSnapshot: Record<string, { title: string; statusText?: string; epCount?: number; status: string }> = {};
-          uniqueParsed.forEach((d) => {
             currentSnapshot[d.id] = {
               title: d.title,
-              statusText: d.statusText,
+              maxEp,
               epCount: d.episodes.length,
-              status: d.status,
+              audios: d.availableAudios,
+              statusText: d.statusText,
             };
           });
-          localStorage.setItem('asiaflix_sheet_snapshot_v1', JSON.stringify(currentSnapshot));
+
+          // Fetch previous snapshot from Supabase hidden system row
+          const prevSnapshot = await fetchSheetSnapshotFromSupabase();
+
+          if (!prevSnapshot || Object.keys(prevSnapshot).length === 0) {
+            // First time: save baseline snapshot to Supabase and purge old Coming Soon notifications
+            await saveSheetSnapshotToSupabase(currentSnapshot);
+            setNotifications((prev) =>
+              prev.filter(
+                (n) =>
+                  !n.title.toLowerCase().includes('coming soon') &&
+                  !n.message.toLowerCase().includes('coming soon')
+              )
+            );
+          } else {
+            // Compare each drama with links against the Supabase snapshot
+            for (const d of dramasWithStreamLinks) {
+              const old = prevSnapshot[d.id];
+              if (!old) {
+                // Drama now has an http link and was NOT in the previous snapshot
+                const audiosStr = d.availableAudios.join(', ') || d.defaultAudio;
+                const statusLabel = d.statusText || 'Now Streaming';
+                await insertNotificationIntoSupabase(
+                  d.title,
+                  `New Series/Movie Added (${audiosStr}) — ${statusLabel}`
+                );
+              } else {
+                // Existing drama: check if maxEp or epCount increased
+                const currMaxEp = currentSnapshot[d.id]?.maxEp || 0;
+                const oldMaxEp = old.maxEp || 0;
+                const currEpCount = currentSnapshot[d.id]?.epCount || 0;
+                const oldEpCount = old.epCount || 0;
+
+                if (currMaxEp > oldMaxEp || currEpCount > oldEpCount) {
+                  const audiosStr = d.availableAudios.join(', ') || d.defaultAudio;
+                  const epLabel = d.statusText?.includes('Ep')
+                    ? d.statusText.replace('Now Streaming ', '')
+                    : currMaxEp > 0
+                    ? `Ep ${currMaxEp}`
+                    : 'New Episodes';
+
+                  await insertNotificationIntoSupabase(
+                    d.title,
+                    `${epLabel} Added (${audiosStr})`
+                  );
+                }
+
+                // Check if a new audio track was added (e.g. Hindi Dubbed or Hindi Fan Dubbed)
+                const oldAudios = (old.audios || []) as string[];
+                const newlyAddedAudios = d.availableAudios.filter(
+                  (a) => !oldAudios.some((oa) => oa.toLowerCase() === a.toLowerCase())
+                );
+
+                for (const newAudio of newlyAddedAudios) {
+                  await insertNotificationIntoSupabase(
+                    d.title,
+                    `${newAudio} Audio Added — ${d.statusText || '1080p FHD'}`
+                  );
+                }
+              }
+            }
+
+            // Save updated snapshot back to Supabase
+            await saveSheetSnapshotToSupabase(currentSnapshot);
+          }
+
+          // Refresh notifications from Supabase so every browser gets live cloud updates
+          const cloudNotifs = await fetchNotificationsFromSupabase();
+          if (cloudNotifs && cloudNotifs.length > 0) {
+            setNotifications(cloudNotifs);
+            localStorage.setItem('asiaflix_notifications', JSON.stringify(cloudNotifs));
+          }
         } catch (notifErr) {
-          console.warn('Error computing live notifications:', notifErr);
+          console.warn('Error syncing cloud notifications with Supabase:', notifErr);
         }
       }
 
@@ -1061,6 +1152,7 @@ export default function App() {
         return [
           {
             dramaId: drama.id,
+            dramaTitle: drama.title,
             status: newStatus || 'want_to_watch',
             watchedEpisodes: [],
             addedAt: Date.now(),
@@ -1094,9 +1186,11 @@ export default function App() {
       setWatchlist((wList) => {
         const found = wList.find((w) => w.dramaId === dramaId);
         if (!found) {
+          const dramaObj = dramas.find((d) => d.id === dramaId);
           return [
             {
               dramaId,
+              dramaTitle: dramaObj?.title,
               status: 'watching',
               watchedEpisodes: updatedList,
               addedAt: Date.now(),
@@ -1781,7 +1875,8 @@ export default function App() {
         onRemoveFromWatchlist={handleRemoveFromWatchlist}
         onUpdateStatus={handleUpdateWatchlistStatus}
         supabaseUser={supabaseUser}
-        onUserChange={setSupabaseUser}
+        onUserChange={handleUserChange}
+        watchedEpisodesMap={watchedEpisodesMap}
       />
 
       {/* 3. Notifications Drawer */}
@@ -1845,7 +1940,7 @@ export default function App() {
       {/* 8. ALWAYS-VISIBLE FLOATING QUICK ACTION DOCK (HOME & SEARCH - ALL DEVICES) */}
       <aside 
         aria-label="Quick Navigation Dock" 
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
+        className="fixed bottom-16 right-6 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
       >
         {/* Floating Home Button */}
         <button

@@ -178,13 +178,7 @@ export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotificat
 }
 
 // Fetch Google Sheet catalog snapshot from Supabase hidden system row
-export async function fetchSheetSnapshotFromSupabase(): Promise<Record<string, {
-  title: string;
-  maxEp?: number;
-  epCount?: number;
-  audios?: string[];
-  statusText?: string;
-}> | null> {
+export async function fetchSheetSnapshotFromSupabase(): Promise<Record<string, any> | null> {
   try {
     const { data, error } = await supabase
       .from('release_notifications')

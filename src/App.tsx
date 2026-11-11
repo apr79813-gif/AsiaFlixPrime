@@ -21,6 +21,7 @@ import { ArcadeHubModal } from './components/ArcadeHubModal';
 import { AdminStudioModal } from './components/AdminStudioModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
+import { LiveToastNotification } from './components/LiveToastNotification';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
@@ -141,6 +142,9 @@ export default function App() {
     return [];
   });
 
+  // --- FLOATING LIVE PUSH NOTIFICATION TOAST POPUP STATE ---
+  const [activeToastNotif, setActiveToastNotif] = useState<ReleaseNotification | null>(null);
+
   // --- WATCHLIST STATE (CLEAN & CLOUD-SYNCABLE) ---
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() => {
     const saved = localStorage.getItem('asiaflix_watchlist_v3');
@@ -226,7 +230,7 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isInstantSearchOpen, setIsInstantSearchOpen] = useState(false);
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
-  const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies'>('All');
+  const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies' | 'Other Series'>('All');
   const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security'>('trending');
 
   // --- HOMEPAGE HERO BANNERS / BACKGROUND POSTERS STATE ---
@@ -378,6 +382,29 @@ export default function App() {
     }
 
     syncCatalogAndNotifs();
+  }, []);
+
+  // Auto-trigger live toast for fresh notification 2.5s after page load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (notifications.length > 0) {
+        const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
+        const latestNotif = notifications[0];
+        if (latestNotif && latestNotif.id !== lastToastId) {
+          sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
+          setActiveToastNotif(latestNotif);
+        }
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [notifications]);
+
+  // Background live sync: silently poll Google Sheet and Supabase notifications every 45 seconds
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      fetchGoogleSheetData();
+    }, 45000);
+    return () => clearInterval(pollInterval);
   }, []);
 
   // --- GOOGLE SHEET SYNC STATE ---
@@ -731,8 +758,19 @@ export default function App() {
         if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
         else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
         else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
-        else if (catLower.includes('j-drama') || catLower.includes('japanese')) dramaCategory = 'J-Drama';
-        else if (catLower.includes('sci-fi')) dramaCategory = 'Sci-Fi Series';
+        else if (catLower.includes('k-drama') || catLower.includes('korean')) dramaCategory = 'K-Drama';
+        else dramaCategory = 'Other Series';
+
+        // Preserve specific label (like J-Drama, Thai Drama) in subCategory if not explicitly given
+        const effectiveSubCategory = subCategory || (
+          catLower.includes('j-drama') || catLower.includes('japan')
+            ? 'J-Drama'
+            : catLower.includes('thai') || catLower.includes('t-drama')
+            ? 'Thai Drama'
+            : categoryRaw && !['K-Drama', 'C-Drama', 'Other Series'].includes(categoryRaw)
+            ? categoryRaw
+            : ''
+        );
 
         // Parse lead cast
         const parsedCast = castRaw 
@@ -880,6 +918,9 @@ export default function App() {
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
           }
+          // Move duplicate drama to the latest position in the map
+          parsedDramasMap.delete(dramaId);
+          parsedDramasMap.set(dramaId, prev);
           continue;
         }
 
@@ -908,7 +949,7 @@ export default function App() {
           status: dramaStatus,
           statusText: statusText || undefined,
           ageRating: ageRating || undefined,
-          subCategory: subCategory || undefined,
+          subCategory: effectiveSubCategory || undefined,
           rating: ratingVal || 9.2,
           poster: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
           backdrop: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200',
@@ -966,38 +1007,23 @@ export default function App() {
         }
       }
 
-      // 100% strict control from Google Sheet: parsedHeroBanners completely defines active carousel
+      // 100% strict control from Google Sheet: reverse parsedHeroBanners so newest added slide appears first
       if (parsedHeroBanners.length > 0) {
+        parsedHeroBanners.reverse();
         setHeroBanners(parsedHeroBanners);
       }
 
-      const uniqueParsed = Array.from(parsedDramasMap.values());
+      // Reverse catalog array so the bottom-most row of the Google Sheet appears FIRST (#1) everywhere
+      const uniqueParsed = Array.from(parsedDramasMap.values()).reverse();
       if (uniqueParsed.length > 0) {
         mergePreservingCuratedAndCustom(uniqueParsed);
 
         // --- GLOBAL SUPABASE AUTO-NOTIFICATIONS FOR GOOGLE SHEET UPDATES ---
         try {
-          // ONLY track dramas that actually have at least one valid http stream link in T1, T2, or T3
-          // (Ignore "Coming Soon" rows without links, and ignore changes to Poster, Synopsis, Details, Rating, Age Rating, Cast, or Sub-Category!)
-          const dramasWithStreamLinks = uniqueParsed.filter((d) => {
-            const hasHttpInT1 = Boolean(d.telegramHindi && d.telegramHindi.toLowerCase().includes('http'));
-            const hasHttpInT2 = Boolean(d.telegramFanDub && d.telegramFanDub.toLowerCase().includes('http'));
-            const hasHttpInT3 = Boolean(d.telegramOrig && d.telegramOrig.toLowerCase().includes('http'));
-            const hasPrimaryHttp = Boolean(d.telegramUrl && d.telegramUrl.startsWith('http') && !d.telegramUrl.includes('+yJH68LvfrT9hZDVl'));
-            return hasHttpInT1 || hasHttpInT2 || hasHttpInT3 || hasPrimaryHttp;
-          });
-
-          const currentSnapshot: Record<string, {
-            title: string;
-            maxEp: number;
-            epCount: number;
-            audios: string[];
-            statusText?: string;
-          }> = {};
-
-          dramasWithStreamLinks.forEach((d) => {
+          // Helper to get highest episode number and episode count
+          const getEpStats = (eps: EpisodeItem[]) => {
             let maxEp = 0;
-            d.episodes.forEach((ep) => {
+            eps.forEach((ep) => {
               if (typeof ep.episodeNumber === 'number') {
                 if (ep.episodeNumber > maxEp) maxEp = ep.episodeNumber;
               } else if (typeof ep.episodeNumber === 'string') {
@@ -1014,13 +1040,55 @@ export default function App() {
                 }
               }
             });
+            return { maxEp, epCount: eps.length };
+          };
+
+          const isComingSoonPattern = /coming\s*soon|upcoming|soon/i;
+
+          // Track T1 (Hindi Dubbed), T2 (Hindi Fan Dubbed), and T3 (Original / Eng Sub) SEPARATELY
+          const currentSnapshot: Record<string, {
+            title: string;
+            isMovie: boolean;
+            t1: { state: 'streaming' | 'coming_soon' | 'none'; maxEp: number; epCount: number };
+            t2: { state: 'streaming' | 'coming_soon' | 'none'; maxEp: number; epCount: number };
+            t3: { state: 'streaming' | 'coming_soon' | 'none'; maxEp: number; epCount: number };
+          }> = {};
+
+          uniqueParsed.forEach((d) => {
+            const hindiEpisodes = d.episodes.filter((e) => e.audio === 'Hindi Dubbed');
+            const fanEpisodes = d.episodes.filter((e) => e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed');
+            const origEpisodes = d.episodes.filter((e) => e.audio === 'Original / Eng Sub');
+
+            const hasHindiHttp = Boolean(d.telegramHindi && d.telegramHindi.toLowerCase().includes('http'));
+            const hasFanDubHttp = Boolean(d.telegramFanDub && d.telegramFanDub.toLowerCase().includes('http'));
+            const hasOrigHttp = Boolean(d.telegramOrig && d.telegramOrig.toLowerCase().includes('http'));
+
+            const isHindiComingSoon = !hasHindiHttp && (Boolean(d.comingSoonAudios?.includes('Hindi Dubbed')) || isComingSoonPattern.test(d.telegramHindi || ''));
+            const isFanDubComingSoon = !hasFanDubHttp && (Boolean(d.comingSoonAudios?.some((a) => a.toLowerCase().includes('fan'))) || isComingSoonPattern.test(d.telegramFanDub || ''));
+            const isOrigComingSoon = !hasOrigHttp && (Boolean(d.comingSoonAudios?.includes('Original / Eng Sub')) || isComingSoonPattern.test(d.telegramOrig || ''));
+
+            const hindiStats = getEpStats(hindiEpisodes);
+            const fanStats = getEpStats(fanEpisodes);
+            const origStats = getEpStats(origEpisodes);
 
             currentSnapshot[d.id] = {
               title: d.title,
-              maxEp,
-              epCount: d.episodes.length,
-              audios: d.availableAudios,
-              statusText: d.statusText,
+              isMovie: Boolean(d.isMovie),
+              t1: {
+                state: hasHindiHttp ? 'streaming' : isHindiComingSoon ? 'coming_soon' : 'none',
+                maxEp: hindiStats.maxEp,
+                epCount: hindiStats.epCount,
+              },
+              t2: {
+                state: hasFanDubHttp ? 'streaming' : isFanDubComingSoon ? 'coming_soon' : 'none',
+                maxEp: fanStats.maxEp,
+                epCount: fanStats.epCount,
+              },
+              t3: {
+                state: hasOrigHttp ? 'streaming' : isOrigComingSoon ? 'coming_soon' : 'none',
+                maxEp: origStats.maxEp,
+                epCount: origStats.epCount,
+              },
             };
           });
 
@@ -1038,49 +1106,75 @@ export default function App() {
               )
             );
           } else {
-            // Compare each drama with links against the Supabase snapshot
-            for (const d of dramasWithStreamLinks) {
-              const old = prevSnapshot[d.id];
-              if (!old) {
-                // Drama now has an http link and was NOT in the previous snapshot
-                const audiosStr = d.availableAudios.join(', ') || d.defaultAudio;
-                const statusLabel = d.statusText || 'Now Streaming';
-                await insertNotificationIntoSupabase(
-                  d.title,
-                  `New Series/Movie Added (${audiosStr}) — ${statusLabel}`
-                );
-              } else {
-                // Existing drama: check if maxEp or epCount increased
-                const currMaxEp = currentSnapshot[d.id]?.maxEp || 0;
-                const oldMaxEp = old.maxEp || 0;
-                const currEpCount = currentSnapshot[d.id]?.epCount || 0;
-                const oldEpCount = old.epCount || 0;
+            const columnsConfig = [
+              { key: 't1' as const, name: 'Hindi Dubbed' },
+              { key: 't2' as const, name: 'Hindi Fan Dubbed' },
+              { key: 't3' as const, name: 'Original / Eng Sub' },
+            ];
 
-                if (currMaxEp > oldMaxEp || currEpCount > oldEpCount) {
-                  const audiosStr = d.availableAudios.join(', ') || d.defaultAudio;
-                  const epLabel = d.statusText?.includes('Ep')
-                    ? d.statusText.replace('Now Streaming ', '')
-                    : currMaxEp > 0
-                    ? `Ep ${currMaxEp}`
-                    : 'New Episodes';
+            // Compare each audio column (t1, t2, t3) independently against prevSnapshot[d.id]
+            for (const d of uniqueParsed) {
+              const curr = currentSnapshot[d.id];
+              if (!curr) continue;
+              const oldEntry = prevSnapshot[d.id];
 
-                  await insertNotificationIntoSupabase(
-                    d.title,
-                    `${epLabel} Added (${audiosStr})`
-                  );
+              for (const col of columnsConfig) {
+                const currCol = curr[col.key];
+
+                // Extract old column state (with backward compatibility for previous snapshot format)
+                let oldCol: { state: 'streaming' | 'coming_soon' | 'none'; maxEp: number; epCount: number } = {
+                  state: 'none',
+                  maxEp: 0,
+                  epCount: 0,
+                };
+
+                if (oldEntry) {
+                  if (oldEntry[col.key]) {
+                    oldCol = oldEntry[col.key];
+                  } else if (Array.isArray(oldEntry.audios)) {
+                    const hasOldAudio = oldEntry.audios.some((a: string) =>
+                      a.toLowerCase().includes(col.name.toLowerCase().slice(0, 5))
+                    );
+                    if (hasOldAudio) {
+                      oldCol = {
+                        state: 'streaming',
+                        maxEp: oldEntry.maxEp || 0,
+                        epCount: oldEntry.epCount || 0,
+                      };
+                    }
+                  }
                 }
 
-                // Check if a new audio track was added (e.g. Hindi Dubbed or Hindi Fan Dubbed)
-                const oldAudios = (old.audios || []) as string[];
-                const newlyAddedAudios = d.availableAudios.filter(
-                  (a) => !oldAudios.some((oa) => oa.toLowerCase() === a.toLowerCase())
-                );
-
-                for (const newAudio of newlyAddedAudios) {
+                // 1. Column changed from 'none' to 'coming_soon'
+                if (oldCol.state === 'none' && currCol.state === 'coming_soon') {
                   await insertNotificationIntoSupabase(
                     d.title,
-                    `${newAudio} Audio Added — ${d.statusText || '1080p FHD'}`
+                    `${col.name} Coming Soon!`
                   );
+                }
+                // 2. Column changed from 'none' or 'coming_soon' to 'streaming'
+                else if ((oldCol.state === 'none' || oldCol.state === 'coming_soon') && currCol.state === 'streaming') {
+                  if (currCol.maxEp > 0) {
+                    await insertNotificationIntoSupabase(
+                      d.title,
+                      `${col.name} Ep ${currCol.maxEp} Added`
+                    );
+                  } else {
+                    await insertNotificationIntoSupabase(
+                      d.title,
+                      `${col.name} Full ${d.isMovie ? 'Movie' : 'Series'} Added`
+                    );
+                  }
+                }
+                // 3. Column was already 'streaming' and col.maxEp > oldCol.maxEp (or col.epCount > oldCol.epCount)
+                else if (currCol.state === 'streaming' && oldCol.state === 'streaming') {
+                  if (currCol.maxEp > oldCol.maxEp || currCol.epCount > oldCol.epCount) {
+                    const epNum = currCol.maxEp > 0 ? currCol.maxEp : currCol.epCount;
+                    await insertNotificationIntoSupabase(
+                      d.title,
+                      `${col.name} Ep ${epNum} Added`
+                    );
+                  }
                 }
               }
             }
@@ -1094,6 +1188,14 @@ export default function App() {
           if (cloudNotifs && cloudNotifs.length > 0) {
             setNotifications(cloudNotifs);
             localStorage.setItem('asiaflix_notifications', JSON.stringify(cloudNotifs));
+
+            // Trigger floating live toast if the top notification is new
+            const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
+            const latestNotif = cloudNotifs[0];
+            if (latestNotif && latestNotif.id !== lastToastId) {
+              sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
+              setActiveToastNotif(latestNotif);
+            }
           }
         } catch (notifErr) {
           console.warn('Error syncing cloud notifications with Supabase:', notifErr);
@@ -1337,15 +1439,15 @@ export default function App() {
 
       // 3. Category Filter
       if (selectedCategory !== 'all') {
+        const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
         if (selectedCategory === 'Asian Movies') {
-          const isMovie = d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie;
           if (!isMovie) return false;
         } else if (selectedCategory === 'Hollywood / Bollywood') {
           const isHollyBolly = d.category === 'Hollywood / Bollywood' || d.category.toLowerCase().includes('bolly') || d.category.toLowerCase().includes('holly');
           if (!isHollyBolly) return false;
-        } else if (selectedCategory === 'J-Drama') {
-          const isJDrama = d.category === 'J-Drama' || d.category.toLowerCase().includes('japan');
-          if (!isJDrama) return false;
+        } else if (selectedCategory === 'Other Series' || selectedCategory === 'J-Drama') {
+          const isOther = !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+          if (!isOther) return false;
         } else if (d.category !== selectedCategory) {
           return false;
         }
@@ -1403,20 +1505,28 @@ export default function App() {
     return dramas.slice(0, 4);
   }, [dramas]);
 
-  // Weekend Mega Lineup items
+  // Weekly Episode Drops & Airing Lineup items
   const weekendDramas = useMemo(() => {
     const seen = new Set<string>();
-    const curated = dramas.filter((d) => d.isWeekendLineup && !seen.has(d.id) && seen.add(d.id));
-    if (curated.length > 0) return curated;
-    return dramas.filter((d) =>
-      (d.scheduleInfo?.toLowerCase().includes('sat') ||
-        d.scheduleInfo?.toLowerCase().includes('sun') ||
-        d.schedule?.toLowerCase().includes('sat') ||
-        d.schedule?.toLowerCase().includes('sun') ||
-        d.status.includes('Ongoing')) &&
-      !seen.has(d.id) &&
-      seen.add(d.id)
-    );
+    return dramas.filter((d) => {
+      if (!d || !d.id || seen.has(d.id)) return false;
+
+      const hasExplicitSchedule = Boolean(d.schedule && d.schedule.trim());
+      const isActivelyOngoing = d.status === 'Now Streaming (Ongoing)' || Boolean(d.statusText && d.statusText.includes('Now Streaming'));
+      const isCompleted = d.status.includes('Completed') || d.status.includes('Full');
+
+      // Completed series are excluded unless they explicitly have a schedule defined in the Sheet
+      if (isCompleted && !hasExplicitSchedule) {
+        return false;
+      }
+
+      if (hasExplicitSchedule || isActivelyOngoing || d.isWeekendLineup) {
+        seen.add(d.id);
+        return true;
+      }
+
+      return false;
+    });
   }, [dramas]);
 
   // Continue Watching dramas
@@ -1463,10 +1573,17 @@ export default function App() {
     Boolean(d.telegramHindi || d.availableAudios.some((a) => a.toLowerCase().includes('hindi')) || d.defaultAudio.toLowerCase().includes('hindi') || d.comingSoonAudios?.includes('Hindi Dubbed'))
   ), [dramas]);
   const fanDubbedList = useMemo(() => dramas.filter((d) => 
-    Boolean(d.telegramFanDub || d.availableAudios.some((a) => a.toLowerCase().includes('fan')) || d.defaultAudio.toLowerCase().includes('fan') || d.comingSoonAudios?.includes('Fan Dubbed'))
+    Boolean(d.telegramFanDub || d.availableAudios.some((a) => a.toLowerCase().includes('fan')) || d.defaultAudio.toLowerCase().includes('fan') || d.comingSoonAudios?.some((a) => a.toLowerCase().includes('fan')))
+  ), [dramas]);
+  const origEngSubList = useMemo(() => dramas.filter((d) => 
+    Boolean(d.telegramOrig || d.availableAudios.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub')) || d.defaultAudio.toLowerCase().includes('orig') || d.comingSoonAudios?.includes('Original / Eng Sub'))
   ), [dramas]);
   const kdramaList = useMemo(() => dramas.filter((d) => d.category === 'K-Drama'), [dramas]);
   const cdramaList = useMemo(() => dramas.filter((d) => d.category === 'C-Drama'), [dramas]);
+  const otherSeriesList = useMemo(() => dramas.filter((d) => {
+    const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
+    return !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+  }), [dramas]);
   const asianMoviesList = useMemo(() => dramas.filter((d) => 
     d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie
   ), [dramas]);
@@ -1675,6 +1792,7 @@ export default function App() {
                     isWatchlisted={isDramaWatchlisted(drama.id)}
                     rank={idx + 1}
                     isTopOne={idx === 0}
+                    activeAudioContext={selectedAudio}
                   />
                 ))}
               </div>
@@ -1744,6 +1862,7 @@ export default function App() {
                 onSelectDrama={(d) => setSelectedDrama(d)}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
+                activeAudioContext="Hindi Dubbed"
               />
             )}
 
@@ -1758,6 +1877,22 @@ export default function App() {
                 onSelectDrama={(d) => setSelectedDrama(d)}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
+                activeAudioContext="Hindi Fan Dubbed"
+              />
+            )}
+
+            {/* Original Audio / Eng Sub Collection */}
+            {origEngSubList.length > 0 && (
+              <DramaRow
+                id="sec-orig-sub"
+                title="Original Audio / Eng Sub Collection"
+                subtitle="Authentic native audio with high quality English subtitles in 1080p FHD"
+                icon="💬🌐"
+                dramas={origEngSubList}
+                onSelectDrama={(d) => setSelectedDrama(d)}
+                onToggleWatchlist={handleToggleWatchlist}
+                isWatchlisted={isDramaWatchlisted}
+                activeAudioContext="Original / Eng Sub"
               />
             )}
 
@@ -1796,6 +1931,20 @@ export default function App() {
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
             />
+
+            {/* 🌐 Other Series (J-Drama, T-Drama & More) */}
+            {otherSeriesList.length > 0 && (
+              <DramaRow
+                id="sec-other-series"
+                title="🌐 Other Series (J-Drama, T-Drama & More)"
+                subtitle="Captivating Japanese, Taiwanese, Thai, and regional Asian dramas"
+                icon="🌐✨"
+                dramas={otherSeriesList}
+                onSelectDrama={(d) => setSelectedDrama(d)}
+                onToggleWatchlist={handleToggleWatchlist}
+                isWatchlisted={isDramaWatchlisted}
+              />
+            )}
 
             {/* 8. Asian Blockbuster Movies */}
             <DramaRow
@@ -2007,9 +2156,10 @@ export default function App() {
                 { id: 'All', label: 'All', icon: '✨' },
                 { id: 'Hindi Dubbed', label: 'Hindi Dubbed', icon: '🇮🇳' },
                 { id: 'Hindi Fan Dubbed', label: 'Hindi Fan Dubbed', icon: '🎙️' },
-                { id: 'Original / Eng Sub', label: 'Original / Eng Sub', icon: '🌐' },
+                { id: 'Original / Eng Sub', label: 'Original / Eng Sub', icon: '💬' },
                 { id: 'K-Drama', label: 'K-Drama', icon: '🇰🇷' },
                 { id: 'C-Drama', label: 'C-Drama', icon: '🇨🇳' },
+                { id: 'Other Series', label: 'Other Series', icon: '🌐' },
                 { id: 'Movies', label: 'Movies', icon: '🎬' },
               ] as const).map((pill) => (
                 <button
@@ -2062,6 +2212,10 @@ export default function App() {
                 if (instantFilter === 'C-Drama') {
                   return d.category === 'C-Drama';
                 }
+                if (instantFilter === 'Other Series') {
+                  const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
+                  return !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+                }
                 if (instantFilter === 'Movies') {
                   return d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie;
                 }
@@ -2077,7 +2231,7 @@ export default function App() {
                         setSearchQuery(instantSearchQuery);
                         if (instantFilter === 'Hindi Dubbed' || instantFilter === 'Hindi Fan Dubbed' || instantFilter === 'Original / Eng Sub') {
                           setSelectedAudio(instantFilter);
-                        } else if (instantFilter === 'K-Drama' || instantFilter === 'C-Drama') {
+                        } else if (instantFilter === 'K-Drama' || instantFilter === 'C-Drama' || instantFilter === 'Other Series') {
                           setSelectedCategory(instantFilter);
                         } else if (instantFilter === 'Movies') {
                           setSelectedCategory('Asian Movies');
@@ -2170,6 +2324,22 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 10. PHONE-STYLE FLOATING LIVE PUSH NOTIFICATION TOAST POPUP */}
+      <LiveToastNotification
+        notification={activeToastNotif}
+        drama={
+          activeToastNotif
+            ? dramas.find((d) => 
+                (activeToastNotif.dramaId && d.id === activeToastNotif.dramaId) ||
+                d.title.toLowerCase() === activeToastNotif.title.toLowerCase() ||
+                activeToastNotif.title.toLowerCase().includes(d.title.toLowerCase())
+              ) || null
+            : null
+        }
+        onOpenDrama={(drama) => setSelectedDrama(drama)}
+        onDismiss={() => setActiveToastNotif(null)}
+      />
     </div>
   );
 }

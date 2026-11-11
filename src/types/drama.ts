@@ -5,6 +5,7 @@ export type DramaCategory =
   | 'C-Drama' 
   | 'Asian Movies' 
   | 'Hollywood / Bollywood' 
+  | 'Other Series'
   | 'J-Drama'
   | 'Sci-Fi Series';
 

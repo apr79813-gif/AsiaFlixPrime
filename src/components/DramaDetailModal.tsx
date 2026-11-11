@@ -19,6 +19,7 @@ import {
   Check,
   AlertCircle
 } from 'lucide-react';
+import { isAiringToday } from '../services/scheduleHelper';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
@@ -109,6 +110,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama.category.toLowerCase().includes('bolly') || 
     drama.category.toLowerCase().includes('holly') ||
     Boolean(drama.details && (drama.details.includes(':') || drama.details.toLowerCase().includes('movie')));
+
+  const isDroppingToday = Boolean(drama.schedule && isAiringToday(drama.schedule));
 
   const currentAudioLink = audioLinkMap[activeAudio] || audioLinkMap[availableTrackList[0]];
 
@@ -451,16 +454,30 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-1">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-amber-400" />
-                <span>Release Schedule</span>
-              </span>
-              <p className="text-sm font-black text-amber-300">
-                {drama.schedule && drama.schedule.trim() ? drama.schedule : 'All Drops Completed (Full Batch Live)'}
+            <div className={`p-3.5 rounded-xl border space-y-1.5 transition-all ${
+              isDroppingToday 
+                ? 'bg-gradient-to-r from-emerald-950/40 via-black/40 to-amber-950/30 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15)]' 
+                : 'bg-white/[0.03] border-white/[0.06]'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Release Schedule</span>
+                </span>
+                {isDroppingToday && (
+                  <span className="bg-gradient-to-r from-emerald-400 to-amber-400 text-black text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow animate-pulse">
+                    🔥 New Episode Drops Today!
+                  </span>
+                )}
+              </div>
+              <p className="text-sm sm:text-base font-black text-amber-300 flex items-center gap-2">
+                <span>🗓️ Drops:</span>
+                <span className="text-white">{drama.schedule && drama.schedule.trim() ? drama.schedule : 'Full Series Completed (All Episodes Live)'}</span>
               </p>
               <p className="text-[11px] text-zinc-400">
-                {drama.schedule && drama.schedule.trim() ? 'Episodes drop as per weekly schedule' : 'Instant binge-watch on Telegram'}
+                {drama.schedule && drama.schedule.trim() 
+                  ? (isDroppingToday ? 'Today is official drop day! Fresh episodes uploaded on AsiaFlix VIP Telegram around 7:00 PM IST.' : `Episodes drop on scheduled days (${drama.schedule}) on AsiaFlix VIP Telegram.`)
+                  : 'All episodes and batches are ready for instant binge-watching in 1080p FHD.'}
               </p>
             </div>
           </div>

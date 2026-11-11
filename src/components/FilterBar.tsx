@@ -156,14 +156,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           🍿 Holly/Bolly
         </button>
         <button
-          onClick={() => onSelectCategory('J-Drama')}
+          onClick={() => onSelectCategory('Other Series')}
           className={`px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-            selectedCategory === 'J-Drama'
+            selectedCategory === 'Other Series' || selectedCategory === 'J-Drama'
               ? 'bg-white/20 text-white border border-white/30'
               : 'bg-white/[0.02] hover:bg-white/[0.06] text-zinc-400 border border-white/[0.06]'
           }`}
         >
-          🇯🇵 J-Drama
+          🌐 Other Series
         </button>
         <button
           onClick={() => onSelectStatus(selectedStatus === 'Coming Soon' ? 'all' : 'Coming Soon')}

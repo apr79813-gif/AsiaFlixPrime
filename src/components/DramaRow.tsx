@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { DramaItem } from '../types/drama';
+import { DramaItem, AudioType } from '../types/drama';
 import { DramaCard } from './DramaCard';
 import { ChevronLeft, ChevronRight, Grid, List } from 'lucide-react';
 
@@ -12,6 +12,7 @@ interface DramaRowProps {
   onSelectDrama: (drama: DramaItem) => void;
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (dramaId: string) => boolean;
+  activeAudioContext?: AudioType | string;
 }
 
 export const DramaRow: React.FC<DramaRowProps> = ({
@@ -23,6 +24,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   onSelectDrama,
   onToggleWatchlist,
   isWatchlisted,
+  activeAudioContext,
 }) => {
   const rowRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -117,6 +119,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
               isWatchlisted={isWatchlisted(drama.id)}
               rank={idx + 1}
               isTopOne={idx === 0}
+              activeAudioContext={activeAudioContext}
             />
           ))}
         </div>
@@ -134,6 +137,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
                 isWatchlisted={isWatchlisted(drama.id)}
                 rank={idx + 1}
                 isTopOne={idx === 0}
+                activeAudioContext={activeAudioContext}
               />
             </div>
           ))}

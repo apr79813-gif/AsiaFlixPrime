@@ -460,7 +460,7 @@ export default function App() {
         localStorage.setItem('asiaflix_notifications', JSON.stringify(sbNotifs));
       }
     } catch {
-      // Silent fallback if Supabase notifications sync fails
+      // Silent fallback
     }
 
     // Direct Sheet sync with cache busting - website catalog comes 100% from Google Sheet
@@ -593,31 +593,31 @@ export default function App() {
 
   const fetchGoogleSheetData = async (targetUrl?: string): Promise<{ success: boolean; count?: number; error?: string }> => {
     setSheetSyncState((prev) => ({ ...prev, isSyncing: true }));
-    const baseUrl = targetUrl || googleSheetUrl || SHEET_CSV_URL;
-    const sheetIdMatch = baseUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    const rawUrl = targetUrl || googleSheetUrl || SHEET_CSV_URL;
+    const sheetIdMatch = rawUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     const sheetId = sheetIdMatch ? sheetIdMatch[1] : '1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U';
     const ts = Date.now();
 
     const candidateUrls = [
       `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=0&t=${ts}`,
       `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0&t=${ts}`,
-      '/assets/aistudio/AsiaFlix_Catalog_5a28a2f8',
+      `/assets/aistudio/AsiaFlix_Catalog_5a28a2f8`,
     ];
 
     try {
       let text = '';
-      for (const url of candidateUrls) {
+      for (const candidate of candidateUrls) {
         try {
-          const res = await fetch(url, { cache: 'no-store' });
+          const res = await fetch(candidate, { cache: 'no-store' });
           if (res.ok) {
             const body = await res.text();
-            if (body && body.length >= 50) {
+            if (body && body.length >= 50 && !body.trim().startsWith('<!DOCTYPE') && !body.trim().startsWith('<html')) {
               text = body;
               break;
             }
           }
         } catch {
-          // Silently try next endpoint
+          // Silent fallback
         }
       }
 
@@ -827,143 +827,147 @@ export default function App() {
           if (m) plannedTotal = parseInt(m[1], 10);
         }
 
-        // Find highest uploaded episode number and explicit episode tags
-        let maxUploadedEp = 0;
-        let hasExplicitEpNumbers = false;
-        let hasSingleFullPack = false;
+        const computeTrackStats = (eps: EpisodeItem[]) => {
+          let maxEp = 0;
+          let hasExplicitEp = false;
+          let isFullPack = false;
 
-        parsedEpisodes.forEach((ep) => {
-          if (typeof ep.episodeNumber === 'number') {
-            hasExplicitEpNumbers = true;
-            if (ep.episodeNumber > maxUploadedEp) maxUploadedEp = ep.episodeNumber;
-          } else if (typeof ep.episodeNumber === 'string') {
-            const rangeParts = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
-            if (rangeParts) {
-              hasExplicitEpNumbers = true;
-              const endNum = parseInt(rangeParts[2], 10);
-              if (endNum > maxUploadedEp) maxUploadedEp = endNum;
-            } else {
-              const singleInStr = ep.episodeNumber.match(/(\d+)/);
-              if (singleInStr) {
-                hasExplicitEpNumbers = true;
-                const n = parseInt(singleInStr[1], 10);
-                if (n > maxUploadedEp) maxUploadedEp = n;
-              } else {
-                hasSingleFullPack = true;
-              }
-            }
-          }
-        });
-
-        // PER-TRACK SCHEDULE PARSING & AUTO-HIDE COMPLETED TRACKS
-        const getTrackStats = (eps: EpisodeItem[]) => {
-          let trackMaxEp = 0;
-          let trackFullPack = false;
           eps.forEach((ep) => {
             if (typeof ep.episodeNumber === 'number') {
-              if (ep.episodeNumber > trackMaxEp) trackMaxEp = ep.episodeNumber;
+              hasExplicitEp = true;
+              if (ep.episodeNumber > maxEp) maxEp = ep.episodeNumber;
             } else if (typeof ep.episodeNumber === 'string') {
               const rangeParts = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
               if (rangeParts) {
+                hasExplicitEp = true;
                 const endNum = parseInt(rangeParts[2], 10);
-                if (endNum > trackMaxEp) trackMaxEp = endNum;
+                if (endNum > maxEp) maxEp = endNum;
               } else {
                 const singleInStr = ep.episodeNumber.match(/(\d+)/);
                 if (singleInStr) {
+                  hasExplicitEp = true;
                   const n = parseInt(singleInStr[1], 10);
-                  if (n > trackMaxEp) trackMaxEp = n;
+                  if (n > maxEp) maxEp = n;
                 } else {
-                  trackFullPack = true;
+                  isFullPack = true;
                 }
               }
             }
           });
-          return { trackMaxEp, trackFullPack };
+
+          return { maxEp, hasExplicitEp, isFullPack };
         };
 
-        const trackScheduleMap: Partial<Record<'t1' | 't2' | 't3', string>> = {};
-        let hasPerTrackPrefix = false;
-        if (scheduleRaw) {
-          const trackRegex = /\b(t1|t2|t3|hindi\s*dub|fan\s*dub|orig(?:inal)?)\b\s*[:=\-]?\s*([^,|;\n]+)/gi;
-          let match: RegExpExecArray | null;
-          while ((match = trackRegex.exec(scheduleRaw)) !== null) {
-            hasPerTrackPrefix = true;
-            const prefix = match[1].toLowerCase().replace(/\s+/g, '');
-            const schedText = match[2].trim();
-            if (schedText) {
-              if (prefix === 't1' || prefix.startsWith('hindi')) trackScheduleMap.t1 = schedText;
-              else if (prefix === 't2' || prefix.startsWith('fan')) trackScheduleMap.t2 = schedText;
-              else if (prefix === 't3' || prefix.startsWith('orig')) trackScheduleMap.t3 = schedText;
+        const parseActiveTrackSchedules = (
+          schedStr: string,
+          allEps: EpisodeItem[],
+          t1Val: string | undefined,
+          t2Val: string | undefined,
+          t3Val: string | undefined,
+          csAudios: AudioType[] | undefined,
+          plannedTotalVal: number,
+          isMovieVal: boolean
+        ) => {
+          const cleanSched = (schedStr || '').trim();
+          if (!cleanSched) return [];
+
+          const prefixRegex = /\b(t1|t2|t3|hindi\s*dub(?:bed)?|fan\s*dub(?:bed)?|orig(?:inal)?)\b\s*[:=\-]?\s*([^,|;\n]+)/gi;
+          const perTrackMap: Partial<Record<'t1' | 't2' | 't3', string>> = {};
+          let hasPerTrackPrefixes = false;
+          let m: RegExpExecArray | null;
+
+          while ((m = prefixRegex.exec(cleanSched)) !== null) {
+            hasPerTrackPrefixes = true;
+            const tag = m[1].toLowerCase();
+            const val = m[2].trim();
+            if (!val) continue;
+            if (tag === 't1' || tag.startsWith('hindi')) {
+              perTrackMap.t1 = val;
+            } else if (tag === 't2' || tag.startsWith('fan')) {
+              perTrackMap.t2 = val;
+            } else if (tag === 't3' || tag.startsWith('orig')) {
+              perTrackMap.t3 = val;
             }
           }
-        }
 
-        const activeTrackSchedules: NonNullable<DramaItem['activeTrackSchedules']> = [];
-        const trackDefs: Array<{
-          key: 't1' | 't2' | 't3';
-          audio: AudioType;
-          shortLabel: string;
-          eps: EpisodeItem[];
-          hasHttp: boolean;
-          isComingSoon: boolean;
-        }> = [
-          {
-            key: 't1',
-            audio: 'Hindi Dubbed',
-            shortLabel: 'Hindi',
-            eps: hindiEpisodes,
-            hasHttp: hasHindiHttp,
-            isComingSoon: comingSoonAudios.includes('Hindi Dubbed'),
-          },
-          {
-            key: 't2',
-            audio: 'Hindi Fan Dubbed',
-            shortLabel: 'Fan Dub',
-            eps: fanEpisodes,
-            hasHttp: hasFanDubHttp,
-            isComingSoon: comingSoonAudios.includes('Hindi Fan Dubbed'),
-          },
-          {
-            key: 't3',
-            audio: 'Original / Eng Sub',
-            shortLabel: 'Orig',
-            eps: origEpisodes,
-            hasHttp: hasOrigHttp,
-            isComingSoon: comingSoonAudios.includes('Original / Eng Sub'),
-          },
-        ];
+          const tracksConfig: Array<{
+            key: 't1' | 't2' | 't3';
+            audio: AudioType;
+            shortLabel: string;
+            rawVal: string | undefined;
+            eps: EpisodeItem[];
+            isCs: boolean;
+          }> = [
+            {
+              key: 't1',
+              audio: 'Hindi Dubbed',
+              shortLabel: 'Hindi',
+              rawVal: t1Val,
+              eps: allEps.filter((e) => e.audio === 'Hindi Dubbed'),
+              isCs: Boolean(csAudios?.includes('Hindi Dubbed')),
+            },
+            {
+              key: 't2',
+              audio: 'Hindi Fan Dubbed',
+              shortLabel: 'Fan Dub',
+              rawVal: t2Val,
+              eps: allEps.filter((e) => e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed'),
+              isCs: Boolean(csAudios?.some((a) => a.toLowerCase().includes('fan'))),
+            },
+            {
+              key: 't3',
+              audio: 'Original / Eng Sub',
+              shortLabel: 'Orig',
+              rawVal: t3Val,
+              eps: allEps.filter((e) => e.audio === 'Original / Eng Sub'),
+              isCs: Boolean(csAudios?.includes('Original / Eng Sub')),
+            },
+          ];
 
-        trackDefs.forEach((td) => {
-          const specificSched = trackScheduleMap[td.key];
-          const effectiveSched = hasPerTrackPrefix ? specificSched : scheduleRaw.trim();
-          if (!effectiveSched) return;
+          const activeList: NonNullable<DramaItem['activeTrackSchedules']> = [];
 
-          const { trackMaxEp, trackFullPack } = getTrackStats(td.eps);
-          const isTrackCompleted =
-            !td.isComingSoon &&
-            td.hasHttp &&
-            ((plannedTotal > 0 && trackMaxEp >= plannedTotal) || trackFullPack || isFilm);
+          tracksConfig.forEach((tr) => {
+            const hasHttpLink = Boolean(tr.rawVal && tr.rawVal.toLowerCase().includes('http'));
+            const stats = computeTrackStats(tr.eps);
+            const trackMaxEp = stats.maxEp;
+            const isFullPack = stats.isFullPack;
+            const isComingSoon = tr.isCs && !hasHttpLink;
 
-          if (isTrackCompleted) return;
+            const isCompleted = !isComingSoon && hasHttpLink && (
+              (plannedTotalVal > 0 && trackMaxEp >= plannedTotalVal) ||
+              isFullPack ||
+              isMovieVal
+            );
+            if (isCompleted) return;
 
-          const isOngoing =
-            td.hasHttp &&
-            trackMaxEp > 0 &&
-            (plannedTotal === 0 || trackMaxEp < plannedTotal) &&
-            !trackFullPack;
+            const isOngoing = hasHttpLink && trackMaxEp > 0 && (plannedTotalVal === 0 || trackMaxEp < plannedTotalVal) && !isFullPack;
+            if (!isOngoing && !isComingSoon) return;
 
-          if (isOngoing || td.isComingSoon) {
-            activeTrackSchedules.push({
-              key: td.key,
-              audio: td.audio,
-              shortLabel: td.shortLabel,
-              scheduleText: effectiveSched,
+            const scheduleText = hasPerTrackPrefixes
+              ? (perTrackMap[tr.key] || '')
+              : cleanSched;
+
+            if (!scheduleText) return;
+
+            activeList.push({
+              key: tr.key,
+              audio: tr.audio,
+              shortLabel: tr.shortLabel,
+              scheduleText,
               currentEp: trackMaxEp,
-              totalEp: plannedTotal,
-              isComingSoon: td.isComingSoon,
+              totalEp: plannedTotalVal,
+              isComingSoon,
             });
-          }
-        });
+          });
+
+          return activeList;
+        };
+
+        // Find highest uploaded episode number and explicit episode tags across all tracks
+        const overallStats = computeTrackStats(parsedEpisodes);
+        const maxUploadedEp = overallStats.maxEp;
+        const hasExplicitEpNumbers = overallStats.hasExplicitEp;
+        const hasSingleFullPack = overallStats.isFullPack;
 
         // AUTOMATIC STATUS DETECTION (Requirement 3):
         // Single direct pack links (without explicit Ep tags) or full series links -> Completed (Full Series)
@@ -1001,6 +1005,9 @@ export default function App() {
           }
           if (detailsRaw && !prev.details) prev.details = detailsRaw;
           if (scheduleRaw && !prev.schedule) prev.schedule = scheduleRaw;
+          else if (scheduleRaw && prev.schedule && !prev.schedule.includes(scheduleRaw)) {
+            prev.schedule = `${prev.schedule}, ${scheduleRaw}`;
+          }
           if (statusText && !prev.statusText) prev.statusText = statusText;
           if (ageRating && !prev.ageRating) prev.ageRating = ageRating;
           if (subCategory && !prev.subCategory) prev.subCategory = subCategory;
@@ -1011,7 +1018,13 @@ export default function App() {
             if (!prev.availableAudios.includes(a)) prev.availableAudios.push(a);
           });
           if (comingSoonAudios.length > 0) {
-            prev.comingSoonAudios = Array.from(new Set([...(prev.comingSoonAudios || []), ...comingSoonAudios]));
+            const filteredCs = comingSoonAudios.filter((a) => {
+              if (a === 'Hindi Dubbed' && prev.telegramHindi) return false;
+              if ((a === 'Hindi Fan Dubbed' || a === 'Fan Dubbed') && prev.telegramFanDub) return false;
+              if (a === 'Original / Eng Sub' && prev.telegramOrig) return false;
+              return true;
+            });
+            prev.comingSoonAudios = Array.from(new Set([...(prev.comingSoonAudios || []), ...filteredCs]));
           }
           if (parsedCast.length > 0) {
             prev.leadCast = Array.from(new Set([...(prev.leadCast || []), ...parsedCast]));
@@ -1030,6 +1043,22 @@ export default function App() {
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
           }
+          // Recompute activeTrackSchedules for merged item
+          let prevPlannedTotal = 0;
+          if (prev.details) {
+            const pm = prev.details.match(/(\d+)\s*(?:ep|episode)/i) || prev.details.match(/(\d+)/);
+            if (pm) prevPlannedTotal = parseInt(pm[1], 10);
+          }
+          prev.activeTrackSchedules = parseActiveTrackSchedules(
+            prev.schedule || '',
+            prev.episodes,
+            prev.telegramHindi,
+            prev.telegramFanDub,
+            prev.telegramOrig,
+            prev.comingSoonAudios,
+            prevPlannedTotal,
+            Boolean(prev.isMovie)
+          );
           // Move duplicate drama to the latest position in the map
           parsedDramasMap.delete(dramaId);
           parsedDramasMap.set(dramaId, prev);
@@ -1053,6 +1082,17 @@ export default function App() {
               },
             ];
 
+        const activeTrackSchedules = parseActiveTrackSchedules(
+          scheduleRaw,
+          dramaEpisodes,
+          hasHindiHttp ? tHindi : undefined,
+          hasFanDubHttp ? tFanDub : undefined,
+          hasOrigHttp ? tOrig : undefined,
+          comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
+          plannedTotal,
+          isFilm
+        );
+
         const item: DramaItem = {
           id: dramaId,
           title: cleanTitle,
@@ -1074,6 +1114,7 @@ export default function App() {
           availableAudios,
           defaultAudio,
           comingSoonAudios: comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
+          activeTrackSchedules,
           isFeatured: isTrendingInSheet,
           isTrending: isTrendingInSheet || true,
           isSpotlight: isTrendingInSheet,
@@ -1094,7 +1135,6 @@ export default function App() {
           leadCast: parsedCast,
           hashtags: parsedTags,
           isMovie: isFilm,
-          activeTrackSchedules: activeTrackSchedules.length > 0 ? activeTrackSchedules : undefined,
         };
 
         parsedDramasMap.set(dramaId, item);
@@ -1312,8 +1352,8 @@ export default function App() {
               setActiveToastNotif(latestNotif);
             }
           }
-        } catch (notifErr) {
-          console.warn('Error syncing cloud notifications with Supabase:', notifErr);
+        } catch {
+          // Silent cloud notification sync catch
         }
       }
 
@@ -1325,7 +1365,6 @@ export default function App() {
 
       return { success: true, count: uniqueParsed.length };
     } catch (err: any) {
-      console.warn('Google Sheets live sync error:', err);
       setSheetSyncState((prev) => ({
         ...prev,
         isSyncing: false,
@@ -1639,13 +1678,13 @@ export default function App() {
     return dramas.slice(0, 4);
   }, [dramas]);
 
-  // Weekly Episode Drops & Airing Lineup items (STRICT: only titles with active ongoing/coming-soon track schedules)
+  // Weekly Episode Drops & Airing Lineup items (STRICT: only titles that have active per-track schedules)
   const weekendDramas = useMemo(() => {
     const seen = new Set<string>();
     return dramas.filter((d) => {
       if (!d || !d.id || seen.has(d.id)) return false;
-      const hasActiveTrack = Boolean(d.activeTrackSchedules && d.activeTrackSchedules.length > 0);
-      if (hasActiveTrack) {
+      const hasActiveSchedules = Boolean(d.activeTrackSchedules && d.activeTrackSchedules.length > 0);
+      if (hasActiveSchedules) {
         seen.add(d.id);
         return true;
       }

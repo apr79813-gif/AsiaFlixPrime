@@ -204,18 +204,18 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </h3>
 
           {/* Neon Glass Schedule Pod (Per-Track Active Schedules) */}
-          {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 && (
-            <div className="flex flex-col gap-1">
+          {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 ? (
+            <div className="space-y-1 pt-0.5">
               {drama.activeTrackSchedules.map((track) => {
                 const trackToday = isAiringToday(track.scheduleText);
-                const colorCls =
+                const themeClass =
                   track.key === 't1'
                     ? 'bg-red-500/15 border-red-500/35 text-red-200'
                     : track.key === 't2'
                     ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
                     : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
                 const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
-                const epLabel = track.isComingSoon
+                const progressLabel = track.isComingSoon
                   ? 'Soon'
                   : track.totalEp > 0
                   ? `Ep ${track.currentEp}/${track.totalEp}`
@@ -224,17 +224,18 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 return (
                   <div
                     key={track.key}
-                    className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border backdrop-blur-sm ${colorCls}`}
+                    className={`flex items-center justify-between gap-1 px-2 py-1 rounded-lg border backdrop-blur-md text-[9.5px] font-bold transition-all ${themeClass} ${
+                      trackToday ? 'shadow-[0_0_10px_rgba(16,185,129,0.25)]' : ''
+                    }`}
                   >
                     <div className="flex items-center gap-1 min-w-0">
                       <span className="shrink-0">{icon}</span>
-                      <span className="truncate font-extrabold">{track.shortLabel}</span>
-                      <span className="opacity-80 shrink-0 text-[9px]">({epLabel})</span>
-                      <span className="opacity-60 shrink-0">•</span>
-                      <span className="truncate text-white/95">🗓️ {track.scheduleText}</span>
+                      <span className="font-black text-white shrink-0">{track.shortLabel}</span>
+                      <span className="opacity-80 shrink-0 text-[8.5px]">({progressLabel})</span>
+                      <span className="text-zinc-300 truncate ml-0.5">🗓️ {track.scheduleText}</span>
                     </div>
                     {trackToday && (
-                      <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-400/50 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse">
+                      <span className="bg-gradient-to-r from-emerald-400 to-teal-400 text-black px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.7)]">
                         🔥 TODAY
                       </span>
                     )}
@@ -242,7 +243,21 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 );
               })}
             </div>
-          )}
+          ) : drama.activeTrackSchedules === undefined && drama.schedule && drama.schedule.trim() ? (
+            <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+              isToday
+                ? 'bg-gradient-to-r from-emerald-500/20 via-black/40 to-amber-500/20 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]'
+                : 'bg-amber-500/10 text-amber-300 border-amber-500/25'
+            }`}>
+              <span className="shrink-0">🗓️</span>
+              <span className="truncate">Drops: <strong className="text-white">{drama.schedule}</strong></span>
+              {isToday && (
+                <span className="ml-auto bg-gradient-to-r from-emerald-400 to-amber-400 text-black px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse">
+                  🔥 TODAY
+                </span>
+              )}
+            </div>
+          ) : null}
 
           {/* Metadata Row: Category, Age Rating, Release Year */}
           <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 flex-wrap">

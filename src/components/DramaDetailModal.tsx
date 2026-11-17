@@ -111,7 +111,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama.category.toLowerCase().includes('holly') ||
     Boolean(drama.details && (drama.details.includes(':') || drama.details.toLowerCase().includes('movie')));
 
-  const isDroppingToday = Boolean(drama.schedule && isAiringToday(drama.schedule));
+  const hasActiveTrackSchedules = Boolean(drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0);
+  const isDroppingToday = hasActiveTrackSchedules
+    ? Boolean(drama.activeTrackSchedules?.some((t) => isAiringToday(t.scheduleText)))
+    : Boolean(drama.activeTrackSchedules === undefined && drama.schedule && isAiringToday(drama.schedule));
 
   const currentAudioLink = audioLinkMap[activeAudio] || audioLinkMap[availableTrackList[0]];
 
@@ -454,7 +457,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </p>
             </div>
 
-            <div className={`p-3.5 rounded-xl border space-y-1.5 transition-all ${
+            <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
               isDroppingToday 
                 ? 'bg-gradient-to-r from-emerald-950/40 via-black/40 to-amber-950/30 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15)]' 
                 : 'bg-white/[0.03] border-white/[0.06]'
@@ -470,15 +473,65 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-sm sm:text-base font-black text-amber-300 flex items-center gap-2">
-                <span>🗓️ Drops:</span>
-                <span className="text-white">{drama.schedule && drama.schedule.trim() ? drama.schedule : 'Full Series Completed (All Episodes Live)'}</span>
-              </p>
-              <p className="text-[11px] text-zinc-400">
-                {drama.schedule && drama.schedule.trim() 
-                  ? (isDroppingToday ? 'Today is official drop day! Fresh episodes uploaded on AsiaFlix VIP Telegram around 7:00 PM IST.' : `Episodes drop on scheduled days (${drama.schedule}) on AsiaFlix VIP Telegram.`)
-                  : 'All episodes and batches are ready for instant binge-watching in 1080p FHD.'}
-              </p>
+
+              {hasActiveTrackSchedules && drama.activeTrackSchedules ? (
+                <div className="space-y-1.5">
+                  {drama.activeTrackSchedules.map((track) => {
+                    const trackToday = isAiringToday(track.scheduleText);
+                    const themeClass =
+                      track.key === 't1'
+                        ? 'bg-red-500/15 border-red-500/35 text-red-200'
+                        : track.key === 't2'
+                        ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
+                        : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
+                    const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
+                    const progressLabel = track.isComingSoon
+                      ? 'Soon'
+                      : track.totalEp > 0
+                      ? `Ep ${track.currentEp}/${track.totalEp}`
+                      : `Ep ${track.currentEp}`;
+
+                    return (
+                      <div
+                        key={track.key}
+                        className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-bold ${themeClass}`}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span>{icon}</span>
+                          <span className="font-black text-white">{track.shortLabel}</span>
+                          <span className="opacity-80 text-[10px]">({progressLabel})</span>
+                          <span className="text-zinc-200 truncate">🗓️ {track.scheduleText}</span>
+                        </div>
+                        {trackToday && (
+                          <span className="bg-gradient-to-r from-emerald-400 to-teal-400 text-black px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0 animate-pulse">
+                            🔥 TODAY
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : drama.activeTrackSchedules === undefined && drama.schedule && drama.schedule.trim() ? (
+                <>
+                  <p className="text-sm sm:text-base font-black text-amber-300 flex items-center gap-2">
+                    <span>🗓️ Drops:</span>
+                    <span className="text-white">{drama.schedule}</span>
+                  </p>
+                  <p className="text-[11px] text-zinc-400">
+                    {isDroppingToday ? 'Today is official drop day! Fresh episodes uploaded on AsiaFlix VIP Telegram around 7:00 PM IST.' : `Episodes drop on scheduled days (${drama.schedule}) on AsiaFlix VIP Telegram.`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm sm:text-base font-black text-emerald-300 flex items-center gap-2">
+                    <span>✅ Status:</span>
+                    <span className="text-white">Full Series Completed (All Episodes Live)</span>
+                  </p>
+                  <p className="text-[11px] text-zinc-400">
+                    All episodes and batches are ready for instant binge-watching in 1080p FHD.
+                  </p>
+                </>
+              )}
             </div>
           </div>
 

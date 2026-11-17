@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { DramaItem } from '../types/drama';
-import { Calendar, Flame, Send, Play, Settings, Clock, Sparkles } from 'lucide-react';
+import { Calendar, Flame, Send, Play, Settings, Clock, Bookmark, BookmarkCheck } from 'lucide-react';
 import { 
   DayShort, 
   DAYS_ORDER, 
@@ -37,33 +37,32 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   const todayShort = getTodayShortName();
   const todayFull = getTodayFullName();
 
-  const isDramaTrackAiringToday = (d: DramaItem) => {
+  const isDramaAiringTodayActive = (d: DramaItem) => {
     if (d.activeTrackSchedules && d.activeTrackSchedules.length > 0) {
       return d.activeTrackSchedules.some((t) => isAiringToday(t.scheduleText));
     }
     return isAiringToday(d.schedule);
   };
 
-  const isDramaTrackOnDay = (d: DramaItem, day: DayShort) => {
+  const isDramaAiringOnDayActive = (d: DramaItem, day: DayShort) => {
     if (d.activeTrackSchedules && d.activeTrackSchedules.length > 0) {
       return d.activeTrackSchedules.some((t) => isDramaAiringOnDay(t.scheduleText, day));
     }
     return isDramaAiringOnDay(d.schedule, day);
   };
 
-  // Count items airing today
+  // Count items airing today across active tracks
   const todayDroppingCount = useMemo(() => {
-    return weekendDramas.filter((d) => isDramaTrackAiringToday(d)).length;
+    return weekendDramas.filter((d) => isDramaAiringTodayActive(d)).length;
   }, [weekendDramas]);
 
-  // Filter dramas by selected day
+  // Filter dramas by selected day against activeTrackSchedules
   const filteredDramas = useMemo(() => {
     if (selectedDayFilter === 'all') return weekendDramas;
     if (selectedDayFilter === 'today') {
-      const todayList = weekendDramas.filter((d) => isDramaTrackAiringToday(d));
-      return todayList.length > 0 ? todayList : weekendDramas;
+      return weekendDramas.filter((d) => isDramaAiringTodayActive(d));
     }
-    return weekendDramas.filter((d) => isDramaTrackOnDay(d, selectedDayFilter));
+    return weekendDramas.filter((d) => isDramaAiringOnDayActive(d, selectedDayFilter));
   }, [weekendDramas, selectedDayFilter]);
 
   return (
@@ -162,7 +161,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           {DAYS_ORDER.map((day) => {
             const isToday = day === todayShort;
             const isSelected = selectedDayFilter === day;
-            const dayCount = weekendDramas.filter((d) => isDramaTrackOnDay(d, day)).length;
+            const dayCount = weekendDramas.filter((d) => isDramaAiringOnDayActive(d, day)).length;
 
             return (
               <button
@@ -205,7 +204,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           <div className="relative">
             <div className="flex gap-4 overflow-x-auto pb-4 pt-1 scrollbar-thin scrollbar-thumb-red-600/40 scrollbar-track-transparent snap-x">
               {filteredDramas.map((drama, idx) => {
-                const droppingToday = isDramaTrackAiringToday(drama);
+                const droppingToday = isDramaAiringTodayActive(drama);
                 const hasComingSoonAudios = Boolean(drama.comingSoonAudios && drama.comingSoonAudios.length > 0);
                 
                 // Prioritize Coming Soon audio track if it has upcoming audios
@@ -268,15 +267,29 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </span>
                       </div>
 
-                      {/* Top Right of Poster: Compact Crisp Neon Badge ONLY when Airing Today */}
-                      {droppingToday && (
-                        <div className="absolute top-2.5 right-2.5 z-10 pointer-events-none">
-                          <span className="bg-black/85 backdrop-blur-md text-emerald-300 font-black text-[9px] px-2 py-0.5 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.5)] border border-emerald-400/50 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      {/* Top Right of Poster: Clean Glass Watchlist Bookmark + Compact AIRING TODAY badge */}
+                      <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-20">
+                        {droppingToday && (
+                          <span className="bg-emerald-500/90 backdrop-blur-md text-black font-black text-[9px] px-2 py-1 rounded-lg shadow-[0_0_12px_rgba(16,185,129,0.7)] border border-emerald-300 flex items-center gap-1 pointer-events-none">
+                            <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping shrink-0" />
                             <span>⚡ AIRING TODAY</span>
                           </span>
-                        </div>
-                      )}
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleWatchlist(drama);
+                          }}
+                          className={`p-1.5 rounded-lg backdrop-blur-md border transition-all cursor-pointer ${
+                            isWatchlisted(drama.id)
+                              ? 'bg-amber-500/80 border-amber-400 text-black shadow-lg'
+                              : 'bg-black/60 border-white/20 text-white hover:bg-[#e50914] hover:border-[#e50914]'
+                          }`}
+                          title={isWatchlisted(drama.id) ? 'In Watchlist' : 'Add to Watchlist'}
+                        >
+                          {isWatchlisted(drama.id) ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
 
                       {/* Bottom of Poster: Exact StatusText on Left (Never cut off) & Rating on Right */}
                       <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] z-10 pointer-events-none">
@@ -317,17 +330,17 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
 
                         {/* Neon Glass Schedule Pod (Per-Track Active Schedules) */}
                         {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 ? (
-                          <div className="flex flex-col gap-1">
+                          <div className="space-y-1">
                             {drama.activeTrackSchedules.map((track) => {
                               const trackToday = isAiringToday(track.scheduleText);
-                              const colorCls =
+                              const themeClass =
                                 track.key === 't1'
                                   ? 'bg-red-500/15 border-red-500/35 text-red-200'
                                   : track.key === 't2'
                                   ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
                                   : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
                               const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
-                              const epLabel = track.isComingSoon
+                              const progressLabel = track.isComingSoon
                                 ? 'Soon'
                                 : track.totalEp > 0
                                 ? `Ep ${track.currentEp}/${track.totalEp}`
@@ -336,17 +349,18 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                               return (
                                 <div
                                   key={track.key}
-                                  className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-bold border backdrop-blur-sm ${colorCls}`}
+                                  className={`flex items-center justify-between gap-1 px-2 py-1 rounded-lg border backdrop-blur-md text-[9.5px] font-bold transition-all ${themeClass} ${
+                                    trackToday ? 'shadow-[0_0_10px_rgba(16,185,129,0.25)]' : ''
+                                  }`}
                                 >
                                   <div className="flex items-center gap-1 min-w-0">
                                     <span className="shrink-0">{icon}</span>
-                                    <span className="truncate font-extrabold">{track.shortLabel}</span>
-                                    <span className="opacity-80 shrink-0 text-[9px]">({epLabel})</span>
-                                    <span className="opacity-60 shrink-0">•</span>
-                                    <span className="truncate text-white/95">🗓️ {track.scheduleText}</span>
+                                    <span className="font-black text-white shrink-0">{track.shortLabel}</span>
+                                    <span className="opacity-80 shrink-0 text-[8.5px]">({progressLabel})</span>
+                                    <span className="text-zinc-300 truncate ml-0.5">🗓️ {track.scheduleText}</span>
                                   </div>
                                   {trackToday && (
-                                    <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-400/50 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse">
+                                    <span className="bg-gradient-to-r from-emerald-400 to-teal-400 text-black px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.7)]">
                                       🔥 TODAY
                                     </span>
                                   )}
@@ -360,6 +374,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                             <span className="truncate">
                               Drops: <strong className="text-white">{drama.schedule || 'Weekly Drop'}</strong>
                             </span>
+                            {droppingToday && (
+                              <span className="ml-auto bg-emerald-400 text-black px-1 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse">
+                                AIRING
+                              </span>
+                            )}
                           </div>
                         )}
 

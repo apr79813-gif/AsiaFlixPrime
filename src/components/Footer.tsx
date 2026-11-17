@@ -1,5 +1,5 @@
-import React from 'react';
-import { Send, Headphones, Film, ShieldCheck } from 'lucide-react';
+import React, { useState } from 'react';
+import { Send, Headphones, Film, ShieldCheck, Copy, Check, Globe } from 'lucide-react';
 
 interface FooterProps {
   onOpenSupport: () => void;
@@ -9,16 +9,26 @@ interface FooterProps {
 
 export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, onOpenAdmin }) => {
   const currentYear = new Date().getFullYear();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyInvite = () => {
+    navigator.clipboard.writeText('https://asiaflixprime.pages.dev/');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
 
   return (
     <footer className="border-t border-white/[0.08] bg-[#06070a] text-zinc-400 py-12 px-4 sm:px-6 relative z-30 pb-24 sm:pb-12">
       <div className="max-w-7xl mx-auto flex flex-col items-center text-center space-y-6">
         {/* Brand */}
-        <div className="flex items-center gap-2 text-white font-black text-xl tracking-tight">
+        <a
+          href="https://asiaflixprime.pages.dev/"
+          className="flex items-center gap-2 text-white font-black text-xl tracking-tight hover:text-red-400 transition-colors"
+        >
           <span className="text-[#e50914]">▶</span>
           <span>AsiaFlix Prime</span>
           <span className="text-zinc-500 text-xs font-semibold">VIP NETWORK 🐰</span>
-        </div>
+        </a>
 
         <p className="text-xs text-zinc-500 max-w-xl leading-relaxed">
           Non-commercial private community aggregator. All dramas and blockbuster movies are archived on encrypted cloud networks for fair-use streaming in clean Hindi Audio & 1080p FHD.
@@ -26,11 +36,11 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, on
 
         {/* Links */}
         <div className="flex flex-wrap items-center justify-center gap-6 text-xs font-bold text-zinc-300">
-          <button onClick={onOpenSupport} className="hover:text-[#e50914] transition-colors flex items-center gap-1">
+          <button onClick={onOpenSupport} className="hover:text-[#e50914] transition-colors flex items-center gap-1 cursor-pointer">
             <Headphones className="w-3.5 h-3.5" />
             <span>Support & Help Desk</span>
           </button>
-          <button onClick={onOpenRequest} className="hover:text-[#e50914] transition-colors flex items-center gap-1">
+          <button onClick={onOpenRequest} className="hover:text-[#e50914] transition-colors flex items-center gap-1 cursor-pointer">
             <Film className="w-3.5 h-3.5" />
             <span>Request Drama</span>
           </button>
@@ -43,6 +53,21 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, on
             <Send className="w-3.5 h-3.5" />
             <span>Official Telegram VIP</span>
           </a>
+          <button
+            onClick={handleCopyInvite}
+            className="hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer"
+            title="Copy Official Portal Invite Link"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copied ? 'Invite Copied!' : 'Copy Invite Link'}</span>
+          </button>
+          <a
+            href="https://asiaflixprime.pages.dev/"
+            className="hover:text-sky-400 transition-colors flex items-center gap-1 text-zinc-400"
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>asiaflixprime.pages.dev</span>
+          </a>
         </div>
 
         <div className="text-[11px] text-zinc-500 pt-4 border-t border-white/5 w-full flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -52,7 +77,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, on
             <span className="text-zinc-700">·</span>
             <button
               onClick={onOpenAdmin}
-              className="text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1 font-semibold"
+              className="text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1 font-semibold cursor-pointer"
               title="Admin Control Studio (Protected with PIN/Password)"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-zinc-500 hover:text-red-400" />

@@ -72,7 +72,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   }, [activeSlides.length]);
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText("https://asiaflixprimeofficial.netlify.app/");
+    navigator.clipboard.writeText("https://asiaflixprime.pages.dev/");
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };

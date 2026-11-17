@@ -119,7 +119,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const currentAudioLink = audioLinkMap[activeAudio] || audioLinkMap[availableTrackList[0]];
 
   const handleShare = () => {
-    const text = `🌸 Watch "${drama.title}" in Clean Audio on AsiaFlix Prime VIP: ${window.location.origin}`;
+    const text = `🌸 Watch "${drama.title}" in Clean Audio on AsiaFlix Prime VIP: https://asiaflixprime.pages.dev/`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);

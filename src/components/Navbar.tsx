@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   Bell, 
   Bookmark, 
@@ -9,7 +9,9 @@ import {
   Sparkles,
   Flower2,
   Search,
-  Home
+  Home,
+  Share2,
+  Check
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -55,6 +57,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const logoClicksRef = useRef(0);
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const handleCopyPortalLink = () => {
+    navigator.clipboard.writeText('https://asiaflixprime.pages.dev/');
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2500);
+  };
 
   const handleOpenSearchAction = onOpenSearchModal || onOpenSearch;
 
@@ -227,6 +236,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Film className="w-4 h-4 text-emerald-400" />
             <span>Request</span>
+          </button>
+
+          {/* Copy Official Invite Link */}
+          <button
+            onClick={handleCopyPortalLink}
+            className={`p-2 rounded-xl text-xs font-bold transition-all border whitespace-nowrap shrink-0 ${
+              linkCopied
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                : 'bg-white/[0.03] border-white/10 text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+            }`}
+            title={linkCopied ? 'Copied https://asiaflixprime.pages.dev/' : 'Copy Invite Link (https://asiaflixprime.pages.dev/)'}
+          >
+            {linkCopied ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
           </button>
 
           {/* Admin Studio Indicator Button (Visible when unlocked) */}

@@ -36,6 +36,7 @@ import {
   getActiveSupabaseUser 
 } from './services/supabaseService';
 
+export const OFFICIAL_SITE_URL = 'https://asiaflixprime.pages.dev';
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/export?format=csv&gid=0";
 
 export default function App() {

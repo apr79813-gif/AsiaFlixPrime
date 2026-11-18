@@ -9,6 +9,7 @@ import {
   isDramaAiringOnDay, 
   isAiringToday 
 } from '../services/scheduleHelper';
+import { getAgeRatingMeta } from '../services/ageRatingHelper';
 
 interface WeekendMegaLineupSectionProps {
   weekendDramas: DramaItem[];
@@ -20,6 +21,7 @@ interface WeekendMegaLineupSectionProps {
   timingText?: string;
   isActive?: boolean;
   isAdminAuthenticated?: boolean;
+  isPhoneDevice?: boolean;
 }
 
 export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> = ({
@@ -32,6 +34,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   timingText = '7:00 PM IST Daily Upload Window',
   isActive = true,
   isAdminAuthenticated,
+  isPhoneDevice = false,
 }) => {
   const [selectedDayFilter, setSelectedDayFilter] = useState<'all' | 'today' | DayShort>('all');
   const todayShort = getTodayShortName();
@@ -66,8 +69,8 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   }, [weekendDramas, selectedDayFilter]);
 
   return (
-    <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-10">
-      <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-[#1c0f14] via-[#12131a] to-[#0a0a0f] border border-[#e50914]/30 shadow-[0_10px_40px_rgba(229,9,20,0.15)] p-5 sm:p-7">
+    <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-10 w-full">
+      <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-[#1c0f14] via-[#12131a] to-[#0a0a0f] border border-[#e50914]/30 shadow-[0_10px_40px_rgba(229,9,20,0.15)] p-5 sm:p-7 w-full">
         {/* Ambient background glows */}
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#e50914]/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -76,27 +79,27 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-5 border-b border-white/[0.08]">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow-md">
-                <Flame className="w-3.5 h-3.5 animate-pulse text-amber-300" />
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-black uppercase tracking-wider bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow-md ${isPhoneDevice ? 'text-xs' : 'text-[11px]'}`}>
+                <Flame className={`${isPhoneDevice ? 'w-4 h-4' : 'w-3.5 h-3.5'} animate-pulse text-amber-300`} />
                 ⚡ LIVE WEEKLY RELEASE CALENDAR
               </span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                <Clock className="w-3 h-3 text-amber-400" />
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300 ${isPhoneDevice ? 'text-xs' : 'text-[11px]'}`}>
+                <Clock className={`${isPhoneDevice ? 'w-3.5 h-3.5' : 'w-3 h-3'} text-amber-400`} />
                 <span>Today: <strong>{todayFull}</strong></span>
               </span>
-              <span className="text-xs text-zinc-400 hidden lg:inline">
+              <span className={`text-zinc-400 ${isPhoneDevice ? 'text-sm inline' : 'text-xs hidden lg:inline'}`}>
                 • {timingText}
               </span>
             </div>
 
-            <h2 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight flex items-center gap-2.5">
+            <h2 className={`font-black text-white tracking-tight flex items-center gap-2.5 flex-wrap ${isPhoneDevice ? 'text-3xl' : 'text-xl sm:text-2xl lg:text-3xl'}`}>
               <span>🗓️ Weekly Episode Drops & Airing Lineup</span>
-              <span className="text-xs font-bold text-zinc-300 bg-white/10 px-2.5 py-0.5 rounded-md hidden sm:inline">
+              <span className={`font-bold text-zinc-300 bg-white/10 px-2.5 py-0.5 rounded-md ${isPhoneDevice ? 'text-sm inline' : 'text-xs hidden sm:inline'}`}>
                 {weekendDramas.length} Ongoing Titles
               </span>
             </h2>
 
-            <p className="text-xs sm:text-sm text-zinc-300 max-w-3xl leading-relaxed">
+            <p className={`text-zinc-300 max-w-3xl leading-relaxed ${isPhoneDevice ? 'text-base' : 'text-xs sm:text-sm'}`}>
               {announcementText || "Fresh episodes uploaded on their official release days (Mon–Sun) • Track your ongoing dramas below!"}
             </p>
           </div>
@@ -126,16 +129,18 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
         </div>
 
         {/* Day Filter Pills Strip (Mon - Sun + Today) */}
-        <div className="relative z-10 flex items-center gap-2 overflow-x-auto no-scrollbar pb-3 mb-5 border-b border-white/[0.06]">
-          <span className="text-zinc-500 text-xs font-bold uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5 text-red-500" />
+        <div className="relative z-10 flex items-center gap-2.5 overflow-x-auto no-scrollbar pb-3 mb-5 border-b border-white/[0.06]">
+          <span className={`text-zinc-500 font-bold uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1 ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}>
+            <Calendar className={`${isPhoneDevice ? 'w-4 h-4' : 'w-3.5 h-3.5'} text-red-500`} />
             <span>Filter Day:</span>
           </span>
 
           {/* All Drops */}
           <button
             onClick={() => setSelectedDayFilter('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer ${
+            className={`rounded-xl font-black transition-all shrink-0 cursor-pointer ${
+              isPhoneDevice ? 'px-5 py-2.5 text-sm' : 'px-3 py-1.5 text-xs'
+            } ${
               selectedDayFilter === 'all'
                 ? 'bg-[#e50914] text-white shadow-[0_0_12px_rgba(229,9,20,0.6)]'
                 : 'bg-white/[0.05] hover:bg-white/10 text-zinc-300 border border-white/10'
@@ -147,7 +152,9 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           {/* Dropping Today */}
           <button
             onClick={() => setSelectedDayFilter('today')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+            className={`rounded-xl font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+              isPhoneDevice ? 'px-5 py-2.5 text-sm' : 'px-3.5 py-1.5 text-xs'
+            } ${
               selectedDayFilter === 'today'
                 ? 'bg-gradient-to-r from-[#e50914] via-[#ff2b54] to-[#ec4899] text-white shadow-[0_0_20px_rgba(229,9,20,0.5)] border border-red-400/50 scale-105'
                 : 'bg-gradient-to-r from-[#e50914]/15 via-[#ff2b54]/15 to-[#ec4899]/15 hover:from-[#e50914]/25 hover:to-[#ec4899]/25 border border-rose-500/35 text-rose-200'
@@ -167,7 +174,9 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
               <button
                 key={day}
                 onClick={() => setSelectedDayFilter(day)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                className={`rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                  isPhoneDevice ? 'px-5 py-2.5 text-sm font-black' : 'px-3 py-1.5 text-xs font-bold'
+                } ${
                   isSelected
                     ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow-[0_0_14px_rgba(229,9,20,0.55)] border border-red-400/40 scale-105'
                     : isToday
@@ -177,11 +186,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
               >
                 <span>{day}</span>
                 {isToday && (
-                  <span className="text-[9px] bg-[#e50914] text-white px-1.5 py-0.2 rounded font-black shadow-[0_0_8px_rgba(229,9,20,0.5)]">
+                  <span className={`bg-[#e50914] text-white px-1.5 py-0.2 rounded font-black shadow-[0_0_8px_rgba(229,9,20,0.5)] ${isPhoneDevice ? 'text-[10px]' : 'text-[9px]'}`}>
                     Today
                   </span>
                 )}
-                {dayCount > 0 && <span className="text-[10px] opacity-75">({dayCount})</span>}
+                {dayCount > 0 && <span className={`${isPhoneDevice ? 'text-xs' : 'text-[10px]'} opacity-75`}>({dayCount})</span>}
               </button>
             );
           })}
@@ -228,10 +237,16 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                   ? 'bg-gradient-to-r from-[#9333ea] to-[#ec4899] text-white border-purple-400/40'
                   : 'bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white border-sky-400/40';
 
+                const ageInfo = getAgeRatingMeta(drama.ageRating);
+
                 return (
                   <div
                     key={drama.id}
-                    className={`w-[232px] sm:w-[252px] h-[465px] shrink-0 snap-start bg-gradient-to-b from-[#13141c] to-[#0b0c12] rounded-2xl border ott-card-elevate flex flex-col justify-between overflow-hidden group ${
+                    className={`shrink-0 snap-start bg-gradient-to-b from-[#13141c] to-[#0b0c12] rounded-2xl border ott-card-elevate flex flex-col justify-between overflow-hidden group ${
+                      isPhoneDevice
+                        ? 'w-[312px] min-w-[312px] h-[600px]'
+                        : 'w-[232px] sm:w-[252px] h-[465px]'
+                    } ${
                       droppingToday
                         ? 'border-rose-500/45 shadow-[0_0_22px_rgba(229,9,20,0.18)] hover:border-[#ff2b54]/80'
                         : 'border-white/[0.08] hover:border-[#e50914]/70'
@@ -240,7 +255,9 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                     {/* Locked-Height Poster Area */}
                     <div
                       onClick={() => onSelectDrama(drama)}
-                      className="relative w-full h-[240px] shrink-0 overflow-hidden bg-zinc-900 cursor-pointer"
+                      className={`relative w-full shrink-0 overflow-hidden bg-zinc-900 cursor-pointer ${
+                        isPhoneDevice ? 'h-[360px]' : 'h-[240px]'
+                      }`}
                     >
                       <img
                         src={drama.poster}
@@ -257,79 +274,93 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       <div className="absolute inset-0 bg-gradient-to-t from-[#090a10] via-[#090a10]/30 to-transparent" />
 
                       {/* Top Left of Poster: Rank badge + Audio badge */}
-                      <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 items-start z-10 pointer-events-none">
+                      <div className={`absolute top-2.5 left-2.5 flex flex-col items-start z-10 pointer-events-none ${isPhoneDevice ? 'gap-1.5' : 'gap-1'}`}>
                         {idx === 0 ? (
-                          <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black text-[9px] uppercase tracking-wider px-2 py-0.5 rounded shadow-lg">
+                          <span className={`bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black uppercase tracking-wider rounded shadow-lg ${isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'}`}>
                             👑 TOP 1
                           </span>
                         ) : (
-                          <span className="bg-black/80 text-zinc-200 border border-white/15 font-black text-[9px] px-1.5 py-0.5 rounded shadow">
+                          <span className={`bg-black/80 text-zinc-200 border border-white/15 font-black rounded shadow ${isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-1.5 py-0.5'}`}>
                             #{idx + 1}
                           </span>
                         )}
-                        <span className={`${audioBadgeColor} text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow border`}>
+                        <span className={`${audioBadgeColor} font-black uppercase tracking-wider rounded shadow border ${isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-1.5 py-0.5'}`}>
                           {audioLabel}
                         </span>
                       </div>
 
-                      {/* Top Right of Poster: Clean Glass Watchlist Bookmark Only */}
-                      <div className="absolute top-2.5 right-2.5 z-20">
+                      {/* Top Right of Poster: Watchlist Bookmark + Automatic 18+ Seal directly below */}
+                      <div className="absolute top-2.5 right-2.5 z-20 flex flex-col items-end gap-1.5">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onToggleWatchlist(drama);
                           }}
-                          className={`p-1.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
+                          className={`rounded-full backdrop-blur-md border transition-all cursor-pointer flex items-center justify-center ${
+                            isPhoneDevice ? 'w-10 h-10' : 'p-1.5'
+                          } ${
                             isWatchlisted(drama.id)
                               ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg'
                               : 'bg-black/60 border-white/20 text-white hover:bg-[#e50914] hover:border-[#e50914]'
                           }`}
                           title={isWatchlisted(drama.id) ? 'In Watchlist' : 'Add to Watchlist'}
                         >
-                          {isWatchlisted(drama.id) ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                          {isWatchlisted(drama.id) ? (
+                            <BookmarkCheck className={isPhoneDevice ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
+                          ) : (
+                            <Bookmark className={isPhoneDevice ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
+                          )}
                         </button>
+
+                        {ageInfo.is18Plus && (
+                          <span className={`bg-[#e50914] text-white font-black rounded-md border border-white/30 shadow-[0_0_12px_rgba(229,9,20,0.8)] tracking-tighter pointer-events-none ${isPhoneDevice ? 'text-xs px-2 py-1' : 'text-[10px] px-1.5 py-0.5'}`}>
+                            18+
+                          </span>
+                        )}
                       </div>
 
                       {/* Bottom of Poster: Exact StatusText on Left & Rating on Right */}
-                      <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] z-10 pointer-events-none">
-                        <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/15 text-white font-bold max-w-[155px]">
+                      <div className={`absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between z-10 pointer-events-none ${isPhoneDevice ? 'text-xs' : 'text-[10px]'}`}>
+                        <div className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold ${isPhoneDevice ? 'px-3 py-1 max-w-[205px]' : 'px-2.5 py-0.5 max-w-[155px]'}`}>
                           {hasComingSoonAudios ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
-                              <span className="truncate text-[9px] sm:text-[10px] text-amber-300 font-extrabold">
+                              <span className={`truncate text-amber-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[10px] font-extrabold'}`}>
                                 ⏳ Coming Soon
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse shrink-0" />
-                              <span className="truncate text-[9px] sm:text-[10px] text-sky-300 font-extrabold">
+                              <span className={`truncate text-sky-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[10px] font-extrabold'}`}>
                                 {drama.statusText || 'Now Streaming'}
                               </span>
                             </>
                           )}
                         </div>
 
-                        <span className="bg-black/85 backdrop-blur-md text-amber-300 font-black px-1.5 py-0.5 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5">
+                        <span className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5 ${isPhoneDevice ? 'text-xs px-3 py-1 font-bold' : 'px-1.5 py-0.5 font-black'}`}>
                           ★ {drama.rating}
                         </span>
                       </div>
                     </div>
 
                     {/* Locked-Height Info Area */}
-                    <div className="p-3.5 flex-1 min-h-0 flex flex-col justify-between gap-1.5 bg-gradient-to-b from-[#11121a] to-[#0a0b10]">
+                    <div className={`flex-1 min-h-0 flex flex-col justify-between gap-1.5 bg-gradient-to-b from-[#11121a] to-[#0a0b10] ${isPhoneDevice ? 'p-4' : 'p-3.5'}`}>
                       <div className="space-y-1.5 min-w-0">
                         <h3
                           onClick={() => onSelectDrama(drama)}
-                          className="text-[13.5px] font-extrabold text-white hover:text-[#ff2b54] transition-colors truncate cursor-pointer leading-tight"
+                          className={`text-white hover:text-[#ff2b54] transition-colors truncate cursor-pointer leading-tight ${
+                            isPhoneDevice ? 'text-lg font-black' : 'text-[13.5px] font-extrabold'
+                          }`}
                           title={drama.title}
                         >
                           {drama.title}
                         </h3>
 
-                        {/* Fixed-Height 2-Line Cyber-Glass Schedule Pod Container */}
+                        {/* Fixed-Height Cyber-Glass Schedule Pod Container */}
                         <div
-                          className={`h-[96px] overflow-y-auto no-scrollbar flex flex-col ${
+                          className={`${isPhoneDevice ? 'h-[108px]' : 'h-[96px]'} overflow-y-auto no-scrollbar flex flex-col ${
                             (drama.activeTrackSchedules?.length || 0) <= 1 ? 'justify-center' : 'justify-start'
                           } gap-1.5`}
                         >
@@ -383,17 +414,17 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                                 >
                                   {/* Line 1: Audio Track & Episode / TODAY badge */}
                                   <div className="flex items-center justify-between gap-1 flex-wrap">
-                                    <span className={`text-[10px] font-black tracking-wide flex items-center gap-1 ${podTheme.labelColor}`}>
+                                    <span className={`tracking-wide flex items-center gap-1 ${podTheme.labelColor} ${isPhoneDevice ? 'text-xs font-extrabold' : 'text-[10px] font-black'}`}>
                                       <span>{podTheme.icon}</span>
                                       <span>{podTheme.name}</span>
                                     </span>
 
                                     <div className="flex items-center gap-1">
-                                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-black/50 border border-white/10 text-zinc-200">
+                                      <span className={`font-bold px-1.5 py-0.2 rounded bg-black/50 border border-white/10 text-zinc-200 ${isPhoneDevice ? 'text-[11px]' : 'text-[9px]'}`}>
                                         {progressLabel}
                                       </span>
                                       {trackToday && (
-                                        <span className="bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[8.5px] font-black px-1.5 py-0.2 rounded shadow-[0_0_8px_rgba(229,9,20,0.6)] animate-pulse">
+                                        <span className={`bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white font-black px-1.5 py-0.2 rounded shadow-[0_0_8px_rgba(229,9,20,0.6)] animate-pulse ${isPhoneDevice ? 'text-[10px]' : 'text-[8.5px]'}`}>
                                           ⚡ TODAY
                                         </span>
                                       )}
@@ -401,7 +432,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                                   </div>
 
                                   {/* Line 2: Full Untruncated Schedule Text */}
-                                  <div className="text-[10.5px] font-extrabold tracking-wide leading-snug text-white break-words">
+                                  <div className={`tracking-wide leading-snug text-white break-words ${isPhoneDevice ? 'text-xs font-black' : 'text-[10.5px] font-extrabold'}`}>
                                     🗓️ {track.scheduleText}
                                   </div>
 
@@ -420,40 +451,46 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           ) : (
                             <div className="rounded-xl border border-rose-500/30 bg-gradient-to-br from-[#e50914]/15 via-[#15121a]/90 to-[#0e0f17] px-2.5 py-2 space-y-1 shrink-0">
                               <div className="flex items-center justify-between gap-1">
-                                <span className="text-[10px] font-black text-rose-300">📅 Release Schedule</span>
+                                <span className={`text-rose-300 ${isPhoneDevice ? 'text-xs font-extrabold' : 'text-[10px] font-black'}`}>📅 Release Schedule</span>
                                 {droppingToday && (
-                                  <span className="bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(229,9,20,0.6)] animate-pulse">
+                                  <span className={`bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white font-black px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(229,9,20,0.6)] animate-pulse ${isPhoneDevice ? 'text-[10px]' : 'text-[9px]'}`}>
                                     ⚡ TODAY
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] font-extrabold tracking-wide leading-snug text-white break-words">
+                              <div className={`tracking-wide leading-snug text-white break-words ${isPhoneDevice ? 'text-xs font-black' : 'text-[11px] font-extrabold'}`}>
                                 🗓️ {drama.schedule || 'Weekly Drop'}
                               </div>
                             </div>
                           )}
                         </div>
 
-                        {/* Clean Borderless OTT Metadata */}
-                        <div className="space-y-0.5 pt-0.5">
-                          <p className="text-[11px] font-semibold text-zinc-400 truncate">
-                            <span className="text-sky-400 font-bold">{drama.details || '10 Episodes'}</span>
-                            <span> • {drama.ageRating || 'UA 16+'} • </span>
-                            <span className="text-zinc-200">{drama.releaseYear}</span>
-                          </p>
-                          <p className="text-[10.5px] text-zinc-400 truncate">
+                        {/* Clean Borderless OTT Metadata with Color-Coded Age Rating */}
+                        <div className="space-y-1 pt-0.5">
+                          <div className={`flex items-center gap-1.5 text-zinc-400 min-w-0 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[11px] font-semibold'}`}>
+                            <span className="text-sky-400 font-bold truncate">{drama.details || '10 Episodes'}</span>
+                            <span className="shrink-0">•</span>
+                            <span className={`rounded font-black shrink-0 ${ageInfo.pillClass} ${isPhoneDevice ? 'px-2 py-0.5 text-[11px]' : 'px-1.5 py-0.2 text-[9.5px]'}`}>
+                              {ageInfo.label}
+                            </span>
+                            <span className="shrink-0">•</span>
+                            <span className="text-zinc-200 shrink-0">{drama.releaseYear}</span>
+                          </div>
+                          <p className={`text-zinc-400 truncate ${isPhoneDevice ? 'text-xs' : 'text-[10.5px]'}`}>
                             {drama.subCategory ? `✨ ${drama.subCategory}` : `${drama.category} • VIP Release`}
                           </p>
                         </div>
                       </div>
 
                       {/* Pinned Action Buttons */}
-                      <div className="grid grid-cols-2 gap-1.5 pt-1 mt-auto">
+                      <div className={`grid grid-cols-2 pt-1 mt-auto ${isPhoneDevice ? 'gap-2.5' : 'gap-1.5'}`}>
                         <button
                           onClick={() => onSelectDrama(drama)}
-                          className="w-full py-1.5 px-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 text-xs font-bold border border-white/10 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          className={`w-full bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            isPhoneDevice ? 'py-3 px-3 rounded-xl text-sm font-black' : 'py-1.5 px-2 rounded-lg text-xs font-bold'
+                          }`}
                         >
-                          <Play className="w-3 h-3 text-red-400 fill-red-400" />
+                          <Play className={`${isPhoneDevice ? 'w-4 h-4' : 'w-3 h-3'} text-red-400 fill-red-400`} />
                           <span>Episodes</span>
                         </button>
 
@@ -461,9 +498,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           href={drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="w-full py-1.5 px-2 rounded-lg bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-xs font-black text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            isPhoneDevice ? 'py-3 px-3 rounded-xl text-sm font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+                          }`}
                         >
-                          <Send className="w-3 h-3" />
+                          <Send className={isPhoneDevice ? 'w-4 h-4' : 'w-3 h-3'} />
                           <span>Telegram</span>
                         </a>
                       </div>

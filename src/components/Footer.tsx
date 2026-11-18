@@ -18,8 +18,8 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, on
   };
 
   return (
-    <footer className="border-t border-white/[0.08] bg-[#06070a] text-zinc-400 py-12 px-4 sm:px-6 relative z-30 pb-24 sm:pb-12">
-      <div className="max-w-7xl mx-auto flex flex-col items-center text-center space-y-6">
+    <footer className="border-t border-white/[0.08] bg-[#06070a] text-zinc-400 py-12 relative z-30 pb-20 sm:pb-12 w-full">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full flex flex-col items-center text-center space-y-6">
         {/* Brand */}
         <a
           href="https://asiaflixprime.pages.dev/"
@@ -30,47 +30,47 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport, onOpenRequest, on
           <span className="text-zinc-500 text-xs font-semibold">VIP NETWORK 🐰</span>
         </a>
 
-        <p className="text-xs text-zinc-500 max-w-xl leading-relaxed">
+        <p className="text-xs sm:text-sm text-zinc-500 max-w-2xl leading-relaxed">
           Non-commercial private community aggregator. All dramas and blockbuster movies are archived on encrypted cloud networks for fair-use streaming in clean Hindi Audio & 1080p FHD.
         </p>
 
-        {/* Links */}
-        <div className="flex flex-wrap items-center justify-center gap-6 text-xs font-bold text-zinc-300">
-          <button onClick={onOpenSupport} className="hover:text-[#e50914] transition-colors flex items-center gap-1 cursor-pointer">
-            <Headphones className="w-3.5 h-3.5" />
+        {/* Horizontal Links Row */}
+        <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8 text-xs sm:text-sm font-bold text-zinc-300">
+          <button onClick={onOpenSupport} className="hover:text-[#e50914] transition-colors flex items-center gap-1.5 cursor-pointer">
+            <Headphones className="w-4 h-4" />
             <span>Support & Help Desk</span>
           </button>
-          <button onClick={onOpenRequest} className="hover:text-[#e50914] transition-colors flex items-center gap-1 cursor-pointer">
-            <Film className="w-3.5 h-3.5" />
+          <button onClick={onOpenRequest} className="hover:text-[#e50914] transition-colors flex items-center gap-1.5 cursor-pointer">
+            <Film className="w-4 h-4" />
             <span>Request Drama</span>
           </button>
           <a
             href="https://t.me/+yJH68LvfrT9hZDVl"
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-[#e50914] transition-colors flex items-center gap-1"
+            className="hover:text-[#e50914] transition-colors flex items-center gap-1.5"
           >
-            <Send className="w-3.5 h-3.5" />
+            <Send className="w-4 h-4" />
             <span>Official Telegram VIP</span>
           </a>
           <button
             onClick={handleCopyInvite}
-            className="hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer"
+            className="hover:text-emerald-400 transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Copy Official Portal Invite Link"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
             <span>{copied ? 'Invite Copied!' : 'Copy Invite Link'}</span>
           </button>
           <a
             href="https://asiaflixprime.pages.dev/"
-            className="hover:text-sky-400 transition-colors flex items-center gap-1 text-zinc-400"
+            className="hover:text-sky-400 transition-colors flex items-center gap-1.5 text-zinc-400"
           >
-            <Globe className="w-3.5 h-3.5" />
+            <Globe className="w-4 h-4" />
             <span>asiaflixprime.pages.dev</span>
           </a>
         </div>
 
-        <div className="text-[11px] text-zinc-500 pt-4 border-t border-white/5 w-full flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="text-xs text-zinc-500 pt-4 border-t border-white/5 w-full flex flex-row items-center justify-between gap-3">
           <span>© {currentYear} AsiaFlix Prime Network · All Rights Reserved</span>
           <div className="flex items-center gap-3">
             <span>Crafted with Sakura Drift & VIP High-Speed Streams 🌸</span>

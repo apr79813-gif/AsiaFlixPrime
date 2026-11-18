@@ -13,6 +13,7 @@ import {
   Check,
   ImageIcon
 } from 'lucide-react';
+import { getAgeRatingMeta } from '../services/ageRatingHelper';
 
 interface HeroBannerProps {
   featuredDramas: DramaItem[];
@@ -154,11 +155,14 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 {currentSlide.category}
               </span>
             )}
-            {associatedDrama?.ageRating && (
-              <span className="bg-black/70 text-amber-300 border border-amber-500/30 text-[11px] font-black px-2 py-0.5 rounded">
-                {associatedDrama.ageRating}
-              </span>
-            )}
+            {associatedDrama?.ageRating && (() => {
+              const ageInfo = getAgeRatingMeta(associatedDrama.ageRating);
+              return (
+                <span className={`text-[11px] font-black px-2 py-0.5 rounded ${ageInfo.pillClass}`}>
+                  {ageInfo.label}
+                </span>
+              );
+            })()}
             {associatedDrama?.subCategory && (
               <span className="bg-white/10 text-zinc-200 text-[11px] font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
                 {associatedDrama.subCategory}

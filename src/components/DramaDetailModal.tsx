@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
+import { getAgeRatingMeta } from '../services/ageRatingHelper';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
@@ -162,12 +163,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {drama.category}
                 </span>
 
-                {/* Age Rating Badge */}
-                {drama.ageRating && (
-                  <span className="bg-black/80 backdrop-blur-md text-amber-300 text-xs font-black px-2 py-0.5 rounded border border-amber-500/30 shadow">
-                    {drama.ageRating}
-                  </span>
-                )}
+                {/* Color-Coded Age Rating Badge */}
+                {drama.ageRating && (() => {
+                  const ageInfo = getAgeRatingMeta(drama.ageRating);
+                  return (
+                    <span className={`text-xs font-black px-2.5 py-0.5 rounded ${ageInfo.pillClass}`}>
+                      {ageInfo.label}
+                    </span>
+                  );
+                })()}
 
                 {/* Sub-Category / Content Type Badge */}
                 {drama.subCategory && (

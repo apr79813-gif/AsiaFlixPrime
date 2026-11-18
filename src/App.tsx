@@ -1922,9 +1922,10 @@ export default function App() {
   };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
+  const isPhoneDevice = typeof window !== 'undefined' && (window.screen.width < 768 || /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent));
 
   return (
-    <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white">
+    <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white w-full">
       {/* Crisp Falling Particle Ambience Canvas */}
       <SakuraCanvas enabled={particleMode !== 'off'} mode={particleMode} />
 
@@ -2008,6 +2009,7 @@ export default function App() {
         onSelectDrama={(drama) => setSelectedDrama(drama)}
         onOpenAdminSpotlight={() => handleOpenAdminWithTab('trending')}
         isAdminAuthenticated={isAdminAuthenticated}
+        isPhoneDevice={isPhoneDevice}
       />
 
       {/* Weekend Mega Lineup Special Section */}
@@ -2021,6 +2023,7 @@ export default function App() {
         timingText={weekendSettings.timing}
         isActive={weekendSettings.isActive}
         isAdminAuthenticated={isAdminAuthenticated}
+        isPhoneDevice={isPhoneDevice}
       />
 
       {/* Catalog Search & Multi-Track Audio Filter Bar */}
@@ -2036,22 +2039,23 @@ export default function App() {
         selectedStatus={selectedStatus}
         onSelectStatus={setSelectedStatus}
         totalFilteredCount={filteredDramas.length}
+        isPhoneDevice={isPhoneDevice}
       />
 
       {/* MAIN CATALOG CONTENT */}
-      <main className="flex-1 pb-16">
+      <main className="flex-1 pb-16 w-full">
         {/* If search query or specific filter is active: show isolated instant search results */}
         {searchQuery.trim() !== '' || selectedAudio !== 'all' || selectedCategory !== 'all' || selectedYear !== 'all' || selectedStatus !== 'all' ? (
-          <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12">
+          <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12 w-full">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-xl font-black text-white flex items-center gap-2">
+                <h2 className={`font-black text-white flex items-center gap-2 ${isPhoneDevice ? 'text-2xl' : 'text-xl'}`}>
                   <span>Filtered Releases</span>
-                  <span className="text-xs font-bold text-zinc-400 bg-white/10 px-2.5 py-0.5 rounded-full">
+                  <span className={`font-bold text-zinc-400 bg-white/10 px-2.5 py-0.5 rounded-full ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}>
                     {filteredDramas.length} Results
                   </span>
                 </h2>
-                <p className="text-xs text-zinc-400 mt-1">
+                <p className={`text-zinc-400 mt-1 ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}>
                   Matching: {searchQuery ? `"${searchQuery}" · ` : ''}
                   {selectedAudio !== 'all' ? `${selectedAudio} · ` : ''}
                   {selectedCategory !== 'all' ? `${selectedCategory} · ` : ''}
@@ -2068,7 +2072,7 @@ export default function App() {
                   setSelectedYear('all');
                   setSelectedStatus('all');
                 }}
-                className="text-xs font-bold text-red-400 hover:text-red-300 underline"
+                className={`font-bold text-red-400 hover:text-red-300 underline ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}
               >
                 Reset All Filters
               </button>
@@ -2088,7 +2092,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-6 gap-4">
+              <div className={isPhoneDevice ? 'grid grid-cols-4 gap-5' : 'grid grid-cols-6 gap-4'}>
                 {filteredDramas.map((drama, idx) => (
                   <DramaCard
                     key={drama.id}
@@ -2100,6 +2104,8 @@ export default function App() {
                     isTopOne={idx === 0}
                     activeAudioContext={selectedAudio}
                     isComingSoonContext={selectedStatus === 'Coming Soon'}
+                    isPhoneDevice={isPhoneDevice}
+                    isGrid={true}
                   />
                 ))}
               </div>
@@ -2119,6 +2125,7 @@ export default function App() {
                 onSelectDrama={(d) => setSelectedDrama(d)}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
+                isPhoneDevice={isPhoneDevice}
               />
             )}
 
@@ -2132,6 +2139,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 3. Coming Soon & Premieres */}
@@ -2145,6 +2153,7 @@ export default function App() {
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isComingSoonContext={true}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 3. Trending Now (Curated VIP Picks) */}
@@ -2157,6 +2166,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 4. Hindi Dubbed Collection (Clean VIP Audio) */}
@@ -2171,6 +2181,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Dubbed"
+                isPhoneDevice={isPhoneDevice}
               />
             )}
 
@@ -2186,6 +2197,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Fan Dubbed"
+                isPhoneDevice={isPhoneDevice}
               />
             )}
 
@@ -2201,6 +2213,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Original / Eng Sub"
+                isPhoneDevice={isPhoneDevice}
               />
             )}
 
@@ -2214,6 +2227,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 7. K-Dramas (Korean) */}
@@ -2226,6 +2240,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 7. C-Dramas (Chinese) */}
@@ -2238,6 +2253,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 🌐 Other Series (J-Drama, T-Drama & More) */}
@@ -2251,6 +2267,7 @@ export default function App() {
                 onSelectDrama={(d) => setSelectedDrama(d)}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
+                isPhoneDevice={isPhoneDevice}
               />
             )}
 
@@ -2264,6 +2281,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 9. Hollywood & Bollywood in Hindi Dubbed */}
@@ -2276,6 +2294,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
 
             {/* 10. Completed Full Series (Binge Ready) */}
@@ -2288,6 +2307,7 @@ export default function App() {
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
+              isPhoneDevice={isPhoneDevice}
             />
           </div>
         )}
@@ -2400,7 +2420,7 @@ export default function App() {
       {/* 8. ALWAYS-VISIBLE FLOATING QUICK ACTION DOCK (HOME & SEARCH - ALL DEVICES) */}
       <aside 
         aria-label="Quick Navigation Dock" 
-        className="fixed bottom-16 right-6 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
+        className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
       >
         {/* Floating Home Button */}
         <button

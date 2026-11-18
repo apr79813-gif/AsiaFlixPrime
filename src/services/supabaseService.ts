@@ -437,6 +437,7 @@ export interface CloudUserData {
   password?: string;
   watchlist: WatchlistEntry[];
   watchedEpisodesMap: Record<string, (number | string)[]>;
+  readNotifIds?: string[];
 }
 
 // 100% persistent Cloud Account & Watchlist Sync stored in Supabase release_notifications
@@ -445,12 +446,14 @@ export async function syncUserAccountWithSupabase(
   password?: string,
   mode: 'login' | 'signup' | 'fetch' = 'login',
   currentLocalWatchlist: WatchlistEntry[] = [],
-  currentLocalWatchedEpisodes: Record<string, (number | string)[]> = {}
+  currentLocalWatchedEpisodes: Record<string, (number | string)[]> = {},
+  currentLocalReadNotifIds: string[] = []
 ): Promise<{
   success: boolean;
   user?: { id: string; email: string };
   watchlist?: WatchlistEntry[];
   watchedEpisodesMap?: Record<string, (number | string)[]>;
+  readNotifIds?: string[];
   error?: string;
 }> {
   try {
@@ -487,6 +490,7 @@ export async function syncUserAccountWithSupabase(
               user: { id: normalizedEmail, email: normalizedEmail },
               watchlist: accountData.watchlist || currentLocalWatchlist,
               watchedEpisodesMap: accountData.watchedEpisodesMap || currentLocalWatchedEpisodes,
+              readNotifIds: Array.from(new Set([...(accountData.readNotifIds || []), ...currentLocalReadNotifIds])),
             };
           } else {
             return {
@@ -497,12 +501,13 @@ export async function syncUserAccountWithSupabase(
         } catch {}
       }
 
-      // Create new account row with current local watchlist & episodes
+      // Create new account row with current local watchlist, episodes, and read notifications
       const newAccountData: CloudUserData = {
         email: normalizedEmail,
         password,
         watchlist: currentLocalWatchlist,
         watchedEpisodesMap: currentLocalWatchedEpisodes,
+        readNotifIds: currentLocalReadNotifIds,
       };
 
       if (existingRow) {
@@ -530,6 +535,7 @@ export async function syncUserAccountWithSupabase(
         user: { id: normalizedEmail, email: normalizedEmail },
         watchlist: newAccountData.watchlist,
         watchedEpisodesMap: newAccountData.watchedEpisodesMap,
+        readNotifIds: newAccountData.readNotifIds,
       };
     }
 
@@ -552,6 +558,7 @@ export async function syncUserAccountWithSupabase(
           user: { id: normalizedEmail, email: normalizedEmail },
           watchlist: accountData.watchlist || [],
           watchedEpisodesMap: accountData.watchedEpisodesMap || {},
+          readNotifIds: accountData.readNotifIds || [],
         };
       } catch {
         return { success: false, error: 'Failed to read account data' };
@@ -566,6 +573,7 @@ export async function syncUserAccountWithSupabase(
           user: { id: normalizedEmail, email: normalizedEmail },
           watchlist: [],
           watchedEpisodesMap: {},
+          readNotifIds: [],
         };
       }
 
@@ -576,6 +584,7 @@ export async function syncUserAccountWithSupabase(
           user: { id: normalizedEmail, email: normalizedEmail },
           watchlist: accountData.watchlist || [],
           watchedEpisodesMap: accountData.watchedEpisodesMap || {},
+          readNotifIds: accountData.readNotifIds || [],
         };
       } catch {
         return {
@@ -583,6 +592,7 @@ export async function syncUserAccountWithSupabase(
           user: { id: normalizedEmail, email: normalizedEmail },
           watchlist: [],
           watchedEpisodesMap: {},
+          readNotifIds: [],
         };
       }
     }
@@ -593,11 +603,12 @@ export async function syncUserAccountWithSupabase(
   }
 }
 
-// Save updated user watchlist and watched episodes to Supabase
+// Save updated user watchlist, watched episodes, and read notification IDs to Supabase
 export async function saveUserWatchlistToSupabase(
   email: string,
   watchlist: WatchlistEntry[],
-  watchedEpisodesMap: Record<string, (number | string)[]>
+  watchedEpisodesMap: Record<string, (number | string)[]>,
+  readNotifIds?: string[]
 ): Promise<boolean> {
   try {
     const normalizedEmail = email.trim().toLowerCase();
@@ -611,13 +622,16 @@ export async function saveUserWatchlistToSupabase(
       .limit(1);
 
     if (rows && rows.length > 0) {
-      let existingData: CloudUserData = { email: normalizedEmail, watchlist: [], watchedEpisodesMap: {} };
+      let existingData: CloudUserData = { email: normalizedEmail, watchlist: [], watchedEpisodesMap: {}, readNotifIds: [] };
       try {
         existingData = JSON.parse(rows[0].message || '{}');
       } catch {}
 
       existingData.watchlist = watchlist;
       existingData.watchedEpisodesMap = watchedEpisodesMap;
+      if (readNotifIds !== undefined) {
+        existingData.readNotifIds = Array.from(new Set(readNotifIds));
+      }
 
       const { error } = await supabase
         .from('release_notifications')
@@ -634,6 +648,7 @@ export async function saveUserWatchlistToSupabase(
         email: normalizedEmail,
         watchlist,
         watchedEpisodesMap,
+        readNotifIds: readNotifIds || [],
       };
 
       const { error } = await supabase

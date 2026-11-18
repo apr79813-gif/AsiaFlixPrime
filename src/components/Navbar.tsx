@@ -6,18 +6,18 @@ import {
   Headphones, 
   Film, 
   Send, 
-  Sparkles,
-  Flower2,
   Search,
   Home,
   Share2,
   Check
 } from 'lucide-react';
+import { ParticleMode } from './SakuraCanvas';
 
 interface NavbarProps {
   unreadNotifsCount: number;
   watchlistCount: number;
   sakuraEnabled: boolean;
+  particleMode?: ParticleMode;
   onToggleSakura: () => void;
   onOpenNotifications: () => void;
   onOpenWatchlist: () => void;
@@ -39,6 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   unreadNotifsCount,
   watchlistCount,
   sakuraEnabled,
+  particleMode = sakuraEnabled ? 'snow' : 'off',
   onToggleSakura,
   onOpenNotifications,
   onOpenWatchlist,
@@ -166,18 +167,42 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* Sakura Ambient Toggle */}
-          <button
-            onClick={onToggleSakura}
-            className={`p-2 rounded-xl text-xs font-bold transition-all border whitespace-nowrap shrink-0 ${
-              sakuraEnabled 
-                ? 'bg-pink-500/15 border-pink-500/30 text-pink-300 hover:bg-pink-500/25' 
-                : 'bg-white/[0.03] border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.08]'
-            }`}
-            title={sakuraEnabled ? 'Sakura Drift: ON (Click to turn off)' : 'Sakura Drift: OFF (Click to turn on)'}
-          >
-            <Flower2 className={`w-4 h-4 ${sakuraEnabled ? 'animate-spin' : ''}`} style={{ animationDuration: '10s' }} />
-          </button>
+          {/* Falling Ambience Mode Cycler (Snow -> Sakura -> Embers -> Off) */}
+          {(() => {
+            const modeConfig: Record<ParticleMode, { icon: string; label: string; style: string }> = {
+              snow: {
+                icon: '❄️',
+                label: 'First Snow & Red Sparks (Click to switch)',
+                style: 'bg-sky-500/15 border-sky-400/35 text-sky-200 hover:bg-sky-500/25 shadow-[0_0_12px_rgba(56,189,248,0.2)]',
+              },
+              sakura: {
+                icon: '🌸',
+                label: 'Ruby-Pink Petals (Click to switch)',
+                style: 'bg-pink-500/15 border-pink-400/35 text-pink-200 hover:bg-pink-500/25 shadow-[0_0_12px_rgba(244,63,94,0.2)]',
+              },
+              embers: {
+                icon: '🔥',
+                label: 'Crimson & Gold Embers (Click to switch)',
+                style: 'bg-red-500/15 border-red-400/35 text-amber-200 hover:bg-red-500/25 shadow-[0_0_12px_rgba(229,9,20,0.25)]',
+              },
+              off: {
+                icon: '🚫',
+                label: 'Ambience: Off (Click to enable First Snow)',
+                style: 'bg-white/[0.03] border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.08]',
+              },
+            };
+            const activeCfg = modeConfig[particleMode];
+
+            return (
+              <button
+                onClick={onToggleSakura}
+                className={`px-2.5 py-2 rounded-xl text-xs font-bold transition-all border whitespace-nowrap shrink-0 cursor-pointer flex items-center justify-center ${activeCfg.style}`}
+                title={activeCfg.label}
+              >
+                <span className="text-sm leading-none">{activeCfg.icon}</span>
+              </button>
+            );
+          })()}
 
           {/* Notifications Bell */}
           <button

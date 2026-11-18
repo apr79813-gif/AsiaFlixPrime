@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from './types/drama';
 import { INITIAL_DRAMAS, INITIAL_NOTIFICATIONS, INITIAL_TICKETS, INITIAL_HERO_BANNERS } from './data/initialCatalog';
-import { SakuraCanvas } from './components/SakuraCanvas';
+import { SakuraCanvas, ParticleMode } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
 import { AudienceNotificationBanner } from './components/AudienceNotificationBanner';
 import { Navbar } from './components/Navbar';
@@ -132,13 +132,46 @@ export default function App() {
     };
   });
 
+  // --- READ NOTIFICATION IDS STATE (PERSISTED LOCALLY & IN SUPABASE CLOUD) ---
+  const [readNotifIds, setReadNotifIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem('asiaflix_read_notif_ids_v1');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === 'string');
+      } catch {}
+    }
+    return [];
+  });
+  const readNotifIdsRef = useRef<string[]>(readNotifIds);
+  useEffect(() => {
+    readNotifIdsRef.current = readNotifIds;
+  }, [readNotifIds]);
+
+  const applyReadStateToNotifs = (
+    list: ReleaseNotification[],
+    ids: string[] = readNotifIdsRef.current
+  ): ReleaseNotification[] => {
+    const readSet = new Set(ids);
+    return list.map((n) => ({
+      ...n,
+      isRead: Boolean(n.isRead || readSet.has(n.id)),
+    }));
+  };
+
   // --- NOTIFICATIONS STATE ---
   const [notifications, setNotifications] = useState<ReleaseNotification[]>(() => {
     const saved = localStorage.getItem('asiaflix_notifications');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const readSet = new Set(readNotifIdsRef.current);
+          return parsed.map((n: ReleaseNotification) => ({
+            ...n,
+            isRead: Boolean(n.isRead || readSet.has(n.id)),
+          }));
+        }
       } catch (e) {
         console.error('Error parsing notifications:', e);
       }
@@ -162,6 +195,10 @@ export default function App() {
     }
     return [];
   });
+  const watchlistRef = useRef<WatchlistEntry[]>(watchlist);
+  useEffect(() => {
+    watchlistRef.current = watchlist;
+  }, [watchlist]);
 
   // --- WATCHED EPISODES MAPPING (dramaId -> array of episodeNumber) ---
   const [watchedEpisodesMap, setWatchedEpisodesMap] = useState<Record<string, (number | string)[]>>(() => {
@@ -176,6 +213,10 @@ export default function App() {
     }
     return {};
   });
+  const watchedEpisodesRef = useRef<Record<string, (number | string)[]>>(watchedEpisodesMap);
+  useEffect(() => {
+    watchedEpisodesRef.current = watchedEpisodesMap;
+  }, [watchedEpisodesMap]);
 
   // --- SUPABASE & CLOUD USER ACCOUNT STATE ---
   const [supabaseUser, setSupabaseUser] = useState<{ id: string; email: string } | null>(() => {
@@ -188,20 +229,69 @@ export default function App() {
     }
     return null;
   });
+  const supabaseUserRef = useRef<{ id: string; email: string } | null>(supabaseUser);
+  useEffect(() => {
+    supabaseUserRef.current = supabaseUser;
+  }, [supabaseUser]);
+
+  const markNotificationIdsAsRead = (idsToMark: string[], syncCloud = true) => {
+    const validIds = idsToMark.filter(Boolean);
+    if (validIds.length === 0) return;
+
+    const nextSet = new Set([...readNotifIdsRef.current, ...validIds]);
+    const nextIds = Array.from(nextSet);
+
+    if (nextIds.length !== readNotifIdsRef.current.length) {
+      readNotifIdsRef.current = nextIds;
+      setReadNotifIds(nextIds);
+      localStorage.setItem('asiaflix_read_notif_ids_v1', JSON.stringify(nextIds));
+
+      if (syncCloud && supabaseUserRef.current?.email) {
+        saveUserWatchlistToSupabase(
+          supabaseUserRef.current.email,
+          watchlistRef.current,
+          watchedEpisodesRef.current,
+          nextIds
+        );
+      }
+    }
+
+    setNotifications((prev) =>
+      prev.map((n) => (nextSet.has(n.id) ? { ...n, isRead: true } : n))
+    );
+  };
 
   const handleUserChange = (
     user: any | null,
     cloudWatchlist?: WatchlistEntry[],
-    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>
+    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>,
+    cloudReadNotifIds?: string[]
   ) => {
     setSupabaseUser(user);
+    supabaseUserRef.current = user;
     if (user && user.email) {
       localStorage.setItem('asiaflix_logged_in_user_v1', JSON.stringify(user));
+      const nextWatchlist = cloudWatchlist && cloudWatchlist.length > 0 ? cloudWatchlist : watchlistRef.current;
+      const nextWatched =
+        cloudWatchedEpisodesMap && Object.keys(cloudWatchedEpisodesMap).length > 0
+          ? cloudWatchedEpisodesMap
+          : watchedEpisodesRef.current;
+
       if (cloudWatchlist && cloudWatchlist.length > 0) {
         setWatchlist(cloudWatchlist);
       }
       if (cloudWatchedEpisodesMap && Object.keys(cloudWatchedEpisodesMap).length > 0) {
         setWatchedEpisodesMap(cloudWatchedEpisodesMap);
+      }
+
+      const mergedReadIds = Array.from(new Set([...readNotifIdsRef.current, ...(cloudReadNotifIds || [])]));
+      readNotifIdsRef.current = mergedReadIds;
+      setReadNotifIds(mergedReadIds);
+      localStorage.setItem('asiaflix_read_notif_ids_v1', JSON.stringify(mergedReadIds));
+      setNotifications((prev) => applyReadStateToNotifs(prev, mergedReadIds));
+
+      if (mergedReadIds.length > (cloudReadNotifIds?.length || 0)) {
+        saveUserWatchlistToSupabase(user.email, nextWatchlist, nextWatched, mergedReadIds);
       }
     } else {
       localStorage.removeItem('asiaflix_logged_in_user_v1');
@@ -214,8 +304,23 @@ export default function App() {
   // --- MARQUEE NOTICE TEXT ---
   const [marqueeText, setMarqueeText] = useState('Weekend Mega Lineup is Active! New Hindi Dubbed Episodes Dropping Sat & Sun 7:00 PM IST • Zero Ads.');
 
-  // --- SAKURA DRIFT TOGGLE ---
-  const [sakuraEnabled, setSakuraEnabled] = useState(true);
+  // --- FALLING PARTICLE AMBIENCE MODE ('snow' | 'sakura' | 'embers' | 'off') ---
+  const [particleMode, setParticleMode] = useState<ParticleMode>(() => {
+    const saved = localStorage.getItem('asiaflix_particle_mode');
+    if (saved === 'snow' || saved === 'sakura' || saved === 'embers' || saved === 'off') {
+      return saved;
+    }
+    return 'snow';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('asiaflix_particle_mode', particleMode);
+  }, [particleMode]);
+
+  const handleCycleParticleMode = () => {
+    const order: ParticleMode[] = ['snow', 'sakura', 'embers', 'off'];
+    setParticleMode((prev) => order[(order.indexOf(prev) + 1) % order.length]);
+  };
 
   // --- FILTER STATES ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -293,20 +398,27 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('asiaflix_watchlist_v3', JSON.stringify(watchlist));
     if (supabaseUser?.email) {
-      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap);
+      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap, readNotifIdsRef.current);
     }
   }, [watchlist, supabaseUser?.email]);
 
   useEffect(() => {
     localStorage.setItem('asiaflix_watched_episodes_v3', JSON.stringify(watchedEpisodesMap));
     if (supabaseUser?.email) {
-      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap);
+      saveUserWatchlistToSupabase(supabaseUser.email, watchlist, watchedEpisodesMap, readNotifIdsRef.current);
     }
   }, [watchedEpisodesMap, supabaseUser?.email]);
 
   useEffect(() => {
     localStorage.setItem('asiaflix_notifications', JSON.stringify(notifications));
   }, [notifications]);
+
+  // Immediately mark notifications as read & sync to localStorage + Supabase when NotificationDrawer opens
+  useEffect(() => {
+    if (isNotificationsOpen && notifications.some((n) => !n.isRead)) {
+      markNotificationIdsAsRead(notifications.map((n) => n.id));
+    }
+  }, [isNotificationsOpen, notifications]);
 
   useEffect(() => {
     localStorage.setItem('asiaflix_google_sheet_url_v4', googleSheetUrl);
@@ -353,7 +465,7 @@ export default function App() {
     };
   }, []);
 
-  // Initial sync: Restore cloud watchlist if user is logged in, then sync catalog & notifications
+  // Initial sync: Restore cloud watchlist & read notifications if user is logged in, then sync catalog & notifications
   useEffect(() => {
     const savedUserStr = localStorage.getItem('asiaflix_logged_in_user_v1');
     if (savedUserStr) {
@@ -368,6 +480,13 @@ export default function App() {
               if (res.watchedEpisodesMap && Object.keys(res.watchedEpisodesMap).length > 0) {
                 setWatchedEpisodesMap(res.watchedEpisodesMap);
               }
+              if (res.readNotifIds && res.readNotifIds.length > 0) {
+                const mergedReadIds = Array.from(new Set([...readNotifIdsRef.current, ...res.readNotifIds]));
+                readNotifIdsRef.current = mergedReadIds;
+                setReadNotifIds(mergedReadIds);
+                localStorage.setItem('asiaflix_read_notif_ids_v1', JSON.stringify(mergedReadIds));
+                setNotifications((prev) => applyReadStateToNotifs(prev, mergedReadIds));
+              }
             }
           });
         }
@@ -380,7 +499,17 @@ export default function App() {
         if (u && u.email) {
           const userObj = { id: u.id, email: u.email };
           setSupabaseUser(userObj);
+          supabaseUserRef.current = userObj;
           localStorage.setItem('asiaflix_logged_in_user_v1', JSON.stringify(userObj));
+          syncUserAccountWithSupabase(u.email, undefined, 'fetch').then((res) => {
+            if (res.success && res.readNotifIds && res.readNotifIds.length > 0) {
+              const mergedReadIds = Array.from(new Set([...readNotifIdsRef.current, ...res.readNotifIds]));
+              readNotifIdsRef.current = mergedReadIds;
+              setReadNotifIds(mergedReadIds);
+              localStorage.setItem('asiaflix_read_notif_ids_v1', JSON.stringify(mergedReadIds));
+              setNotifications((prev) => applyReadStateToNotifs(prev, mergedReadIds));
+            }
+          });
         }
       });
     }
@@ -388,13 +517,18 @@ export default function App() {
     syncCatalogAndNotifs();
   }, []);
 
-  // Auto-trigger live toast for fresh notification 2.5s after page load
+  // Auto-trigger live toast for fresh unread notification 2.5s after page load
   useEffect(() => {
     const timer = setTimeout(() => {
       if (notifications.length > 0) {
         const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
         const latestNotif = notifications[0];
-        if (latestNotif && latestNotif.id !== lastToastId) {
+        if (
+          latestNotif &&
+          !latestNotif.isRead &&
+          !readNotifIdsRef.current.includes(latestNotif.id) &&
+          latestNotif.id !== lastToastId
+        ) {
           sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
           setActiveToastNotif(latestNotif);
         }
@@ -457,8 +591,9 @@ export default function App() {
 
       const sbNotifs = await fetchNotificationsFromSupabase();
       if (sbNotifs) {
-        setNotifications(sbNotifs);
-        localStorage.setItem('asiaflix_notifications', JSON.stringify(sbNotifs));
+        const mergedNotifs = applyReadStateToNotifs(sbNotifs);
+        setNotifications(mergedNotifs);
+        localStorage.setItem('asiaflix_notifications', JSON.stringify(mergedNotifs));
       }
     } catch {
       // Silent fallback
@@ -1339,16 +1474,22 @@ export default function App() {
             await saveSheetSnapshotToSupabase(currentSnapshot);
           }
 
-          // Refresh notifications from Supabase so every browser gets live cloud updates
+          // Refresh notifications from Supabase so every browser gets live cloud updates (preserving seen/read state)
           const cloudNotifs = await fetchNotificationsFromSupabase();
           if (cloudNotifs && cloudNotifs.length > 0) {
-            setNotifications(cloudNotifs);
-            localStorage.setItem('asiaflix_notifications', JSON.stringify(cloudNotifs));
+            const mergedCloudNotifs = applyReadStateToNotifs(cloudNotifs);
+            setNotifications(mergedCloudNotifs);
+            localStorage.setItem('asiaflix_notifications', JSON.stringify(mergedCloudNotifs));
 
-            // Trigger floating live toast if the top notification is new
+            // Trigger floating live toast ONLY if the top notification is genuinely unread & new
             const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
-            const latestNotif = cloudNotifs[0];
-            if (latestNotif && latestNotif.id !== lastToastId) {
+            const latestNotif = mergedCloudNotifs[0];
+            if (
+              latestNotif &&
+              !latestNotif.isRead &&
+              !readNotifIdsRef.current.includes(latestNotif.id) &&
+              latestNotif.id !== lastToastId
+            ) {
               sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
               setActiveToastNotif(latestNotif);
             }
@@ -1487,7 +1628,7 @@ export default function App() {
 
   // --- NOTIFICATIONS ACTIONS ---
   const handleMarkAllNotifsAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    markNotificationIdsAsRead(notifications.map((n) => n.id));
   };
 
   const handleClearAllNotifications = async () => {
@@ -1510,9 +1651,7 @@ export default function App() {
   };
 
   const handleSelectNotification = (notif: ReleaseNotification) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
-    );
+    markNotificationIdsAsRead([notif.id]);
     if (notif.dramaId) {
       const drama = dramas.find((d) => d.id === notif.dramaId);
       if (drama) setSelectedDrama(drama);
@@ -1786,8 +1925,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white">
-      {/* Sakura Petal Floating Canvas */}
-      <SakuraCanvas enabled={sakuraEnabled} />
+      {/* Crisp Falling Particle Ambience Canvas */}
+      <SakuraCanvas enabled={particleMode !== 'off'} mode={particleMode} />
 
       {/* Top Notice Running Marquee */}
       <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
@@ -1802,8 +1941,9 @@ export default function App() {
       <Navbar
         unreadNotifsCount={unreadCount}
         watchlistCount={watchlist.length}
-        sakuraEnabled={sakuraEnabled}
-        onToggleSakura={() => setSakuraEnabled(!sakuraEnabled)}
+        sakuraEnabled={particleMode !== 'off'}
+        particleMode={particleMode}
+        onToggleSakura={handleCycleParticleMode}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenWatchlist={() => setIsWatchlistOpen(true)}
         onOpenArcade={() => setIsArcadeOpen(true)}
@@ -2194,6 +2334,7 @@ export default function App() {
         supabaseUser={supabaseUser}
         onUserChange={handleUserChange}
         watchedEpisodesMap={watchedEpisodesMap}
+        readNotifIds={readNotifIds}
       />
 
       {/* 3. Notifications Drawer */}

@@ -15,9 +15,11 @@ interface WatchlistDrawerProps {
   onUserChange?: (
     user: any | null,
     cloudWatchlist?: WatchlistEntry[],
-    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>
+    cloudWatchedEpisodesMap?: Record<string, (number | string)[]>,
+    cloudReadNotifIds?: string[]
   ) => void;
   watchedEpisodesMap?: Record<string, (number | string)[]>;
+  readNotifIds?: string[];
 }
 
 export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
@@ -31,6 +33,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
   supabaseUser,
   onUserChange,
   watchedEpisodesMap = {},
+  readNotifIds = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'all' | WatchlistStatus>('all');
   const [showAuthCard, setShowAuthCard] = useState(false);
@@ -53,7 +56,8 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
       password,
       authMode,
       watchlist,
-      watchedEpisodesMap
+      watchedEpisodesMap,
+      readNotifIds
     );
 
     if (!res.success) {
@@ -64,7 +68,7 @@ export const WatchlistDrawer: React.FC<WatchlistDrawerProps> = ({
         isError: false,
       });
       if (onUserChange) {
-        onUserChange(res.user, res.watchlist, res.watchedEpisodesMap);
+        onUserChange(res.user, res.watchlist, res.watchedEpisodesMap, res.readNotifIds);
       }
       setTimeout(() => setShowAuthCard(false), 1500);
     }

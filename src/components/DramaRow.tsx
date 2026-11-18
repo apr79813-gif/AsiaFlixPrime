@@ -56,32 +56,35 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   return (
     <section id={id} className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div>
-          <h2 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center gap-2">
-            {icon && <span>{icon}</span>}
-            <span>{title}</span>
-            <span className="text-xs font-bold text-zinc-500 bg-white/[0.04] px-2 py-0.5 rounded-full ml-1">
-              {uniqueDramas.length}
-            </span>
-          </h2>
-          {subtitle && <p className="text-xs text-zinc-400 mt-0.5">{subtitle}</p>}
+      <div className="flex items-center justify-between gap-4 mb-5">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-1 h-6 rounded-full bg-gradient-to-b from-[#e50914] to-[#ff2b54] shadow-[0_0_12px_#e50914] shrink-0" />
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center gap-2 flex-wrap">
+              {icon && <span className="shrink-0">{icon}</span>}
+              <span className="truncate">{title}</span>
+              <span className="text-[11px] font-bold text-zinc-200 bg-white/[0.06] backdrop-blur-md border border-white/10 px-2.5 py-0.5 rounded-full shrink-0">
+                {uniqueDramas.length} Titles
+              </span>
+            </h2>
+            {subtitle && <p className="text-xs text-zinc-400 mt-0.5 truncate">{subtitle}</p>}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Carousel Arrows (Hidden when expanded) */}
           {!isExpanded && uniqueDramas.length > 3 && (
-            <div className="hidden sm:flex items-center gap-1">
+            <div className="hidden sm:flex items-center gap-1.5">
               <button
                 onClick={() => scroll('left')}
-                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.1] border border-white/10 text-zinc-300 hover:text-white transition-all"
+                className="p-2 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
                 aria-label="Scroll row left"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 onClick={() => scroll('right')}
-                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.1] border border-white/10 text-zinc-300 hover:text-white transition-all"
+                className="p-2 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
                 aria-label="Scroll row right"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -92,11 +95,11 @@ export const DramaRow: React.FC<DramaRowProps> = ({
           {/* View All Toggle */}
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs font-bold text-zinc-300 hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] backdrop-blur-md border border-white/10 text-xs font-bold text-zinc-200 hover:text-white transition-all cursor-pointer whitespace-nowrap"
           >
             {isExpanded ? (
               <>
-                <List className="w-3.5 h-3.5 text-red-400" />
+                <List className="w-3.5 h-3.5 text-[#ff2b54]" />
                 <span>Carousel View</span>
               </>
             ) : (

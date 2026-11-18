@@ -149,8 +149,8 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
             onClick={() => setSelectedDayFilter('today')}
             className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
               selectedDayFilter === 'today'
-                ? 'bg-gradient-to-r from-emerald-500 to-amber-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.5)] scale-105'
-                : 'bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300'
+                ? 'bg-gradient-to-r from-[#e50914] via-[#ff2b54] to-[#ec4899] text-white shadow-[0_0_20px_rgba(229,9,20,0.5)] border border-red-400/50 scale-105'
+                : 'bg-gradient-to-r from-[#e50914]/15 via-[#ff2b54]/15 to-[#ec4899]/15 hover:from-[#e50914]/25 hover:to-[#ec4899]/25 border border-rose-500/35 text-rose-200'
             }`}
           >
             <span className="animate-pulse">🔥</span>
@@ -167,17 +167,21 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
               <button
                 key={day}
                 onClick={() => setSelectedDayFilter(day)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
                   isSelected
-                    ? 'bg-[#e50914] text-white shadow-[0_0_12px_rgba(229,9,20,0.5)] scale-105'
+                    ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow-[0_0_14px_rgba(229,9,20,0.55)] border border-red-400/40 scale-105'
                     : isToday
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-black'
+                    ? 'bg-rose-500/15 text-rose-200 border border-rose-500/40 hover:bg-rose-500/25 font-black'
                     : 'bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08]'
                 }`}
               >
                 <span>{day}</span>
-                {isToday && <span className="text-[9px] bg-amber-400 text-black px-1 rounded font-black">Today</span>}
-                {dayCount > 0 && <span className="text-[10px] opacity-70">({dayCount})</span>}
+                {isToday && (
+                  <span className="text-[9px] bg-[#e50914] text-white px-1.5 py-0.2 rounded font-black shadow-[0_0_8px_rgba(229,9,20,0.5)]">
+                    Today
+                  </span>
+                )}
+                {dayCount > 0 && <span className="text-[10px] opacity-75">({dayCount})</span>}
               </button>
             );
           })}
@@ -227,16 +231,16 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                 return (
                   <div
                     key={drama.id}
-                    className={`w-[210px] sm:w-[230px] shrink-0 snap-start bg-[#14151f] rounded-2xl border transition-all duration-300 flex flex-col overflow-hidden hover:shadow-[0_12px_30px_rgba(0,0,0,0.9)] hover:-translate-y-1 group ${
-                      droppingToday 
-                        ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)] hover:border-emerald-400' 
-                        : 'border-white/[0.08] hover:border-[#e50914]/60'
+                    className={`w-[232px] sm:w-[252px] h-[465px] shrink-0 snap-start bg-gradient-to-b from-[#13141c] to-[#0b0c12] rounded-2xl border ott-card-elevate flex flex-col justify-between overflow-hidden group ${
+                      droppingToday
+                        ? 'border-rose-500/45 shadow-[0_0_22px_rgba(229,9,20,0.18)] hover:border-[#ff2b54]/80'
+                        : 'border-white/[0.08] hover:border-[#e50914]/70'
                     }`}
                   >
-                    {/* Poster Area */}
+                    {/* Locked-Height Poster Area */}
                     <div
                       onClick={() => onSelectDrama(drama)}
-                      className="relative w-full aspect-[2/3] overflow-hidden bg-zinc-900 cursor-pointer"
+                      className="relative w-full h-[240px] shrink-0 overflow-hidden bg-zinc-900 cursor-pointer"
                     >
                       <img
                         src={drama.poster}
@@ -245,20 +249,21 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         loading="lazy"
                         onError={(e) => {
-                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
+                          (e.target as HTMLImageElement).src =
+                            'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
                         }}
                       />
 
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#14151f] via-transparent to-black/50" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#090a10] via-[#090a10]/30 to-transparent" />
 
                       {/* Top Left of Poster: Rank badge + Audio badge */}
                       <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 items-start z-10 pointer-events-none">
                         {idx === 0 ? (
-                          <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black text-[9px] uppercase tracking-wider px-2 py-0.5 rounded shadow-lg animate-pulse">
+                          <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black text-[9px] uppercase tracking-wider px-2 py-0.5 rounded shadow-lg">
                             👑 TOP 1
                           </span>
                         ) : (
-                          <span className="bg-black/80 text-amber-300 border border-amber-500/30 font-black text-[9px] px-1.5 py-0.5 rounded shadow">
+                          <span className="bg-black/80 text-zinc-200 border border-white/15 font-black text-[9px] px-1.5 py-0.5 rounded shadow">
                             #{idx + 1}
                           </span>
                         )}
@@ -267,22 +272,16 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </span>
                       </div>
 
-                      {/* Top Right of Poster: Clean Glass Watchlist Bookmark + Compact AIRING TODAY badge */}
-                      <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-20">
-                        {droppingToday && (
-                          <span className="bg-emerald-500/90 backdrop-blur-md text-black font-black text-[9px] px-2 py-1 rounded-lg shadow-[0_0_12px_rgba(16,185,129,0.7)] border border-emerald-300 flex items-center gap-1 pointer-events-none">
-                            <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping shrink-0" />
-                            <span>⚡ AIRING TODAY</span>
-                          </span>
-                        )}
+                      {/* Top Right of Poster: Clean Glass Watchlist Bookmark Only */}
+                      <div className="absolute top-2.5 right-2.5 z-20">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onToggleWatchlist(drama);
                           }}
-                          className={`p-1.5 rounded-lg backdrop-blur-md border transition-all cursor-pointer ${
+                          className={`p-1.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
                             isWatchlisted(drama.id)
-                              ? 'bg-amber-500/80 border-amber-400 text-black shadow-lg'
+                              ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg'
                               : 'bg-black/60 border-white/20 text-white hover:bg-[#e50914] hover:border-[#e50914]'
                           }`}
                           title={isWatchlisted(drama.id) ? 'In Watchlist' : 'Add to Watchlist'}
@@ -291,9 +290,9 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </button>
                       </div>
 
-                      {/* Bottom of Poster: Exact StatusText on Left (Never cut off) & Rating on Right */}
+                      {/* Bottom of Poster: Exact StatusText on Left & Rating on Right */}
                       <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] z-10 pointer-events-none">
-                        <div className="flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/15 text-white font-bold max-w-[140px]">
+                        <div className="flex items-center gap-1.5 bg-black/85 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-white/15 text-white font-bold max-w-[155px]">
                           {hasComingSoonAudios ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
@@ -303,95 +302,152 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                             </>
                           ) : (
                             <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse shrink-0" />
-                              <span className="truncate text-[9px] sm:text-[10px] text-emerald-300 font-extrabold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse shrink-0" />
+                              <span className="truncate text-[9px] sm:text-[10px] text-sky-300 font-extrabold">
                                 {drama.statusText || 'Now Streaming'}
                               </span>
                             </>
                           )}
                         </div>
 
-                        <span className="bg-black/90 backdrop-blur-md text-amber-300 font-black px-1.5 py-0.5 rounded border border-white/15 shrink-0 flex items-center gap-0.5">
+                        <span className="bg-black/85 backdrop-blur-md text-amber-300 font-black px-1.5 py-0.5 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5">
                           ★ {drama.rating}
                         </span>
                       </div>
                     </div>
 
-                    {/* Info Area */}
-                    <div className="p-3.5 flex flex-col flex-1 justify-between gap-2.5">
-                      <div className="space-y-1.5">
+                    {/* Locked-Height Info Area */}
+                    <div className="p-3.5 flex-1 min-h-0 flex flex-col justify-between gap-1.5 bg-gradient-to-b from-[#11121a] to-[#0a0b10]">
+                      <div className="space-y-1.5 min-w-0">
                         <h3
                           onClick={() => onSelectDrama(drama)}
-                          className="text-xs sm:text-sm font-black text-white hover:text-red-400 transition-colors line-clamp-1 cursor-pointer"
+                          className="text-[13.5px] font-extrabold text-white hover:text-[#ff2b54] transition-colors truncate cursor-pointer leading-tight"
                           title={drama.title}
                         >
                           {drama.title}
                         </h3>
 
-                        {/* Neon Glass Schedule Pod (Per-Track Active Schedules) */}
-                        {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 ? (
-                          <div className="space-y-1">
-                            {drama.activeTrackSchedules.map((track) => {
+                        {/* Fixed-Height 2-Line Cyber-Glass Schedule Pod Container */}
+                        <div
+                          className={`h-[96px] overflow-y-auto no-scrollbar flex flex-col ${
+                            (drama.activeTrackSchedules?.length || 0) <= 1 ? 'justify-center' : 'justify-start'
+                          } gap-1.5`}
+                        >
+                          {drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0 ? (
+                            drama.activeTrackSchedules.map((track) => {
                               const trackToday = isAiringToday(track.scheduleText);
-                              const themeClass =
+                              const podTheme =
                                 track.key === 't1'
-                                  ? 'bg-red-500/15 border-red-500/35 text-red-200'
+                                  ? {
+                                      box: 'bg-gradient-to-br from-[#e50914]/15 via-[#161119]/90 to-[#0e0f17] border-red-500/35',
+                                      labelColor: 'text-rose-300',
+                                      bar: 'bg-gradient-to-r from-[#e50914] to-[#ff2b54]',
+                                      icon: '🔊',
+                                      name: 'Hindi Dub',
+                                    }
                                   : track.key === 't2'
-                                  ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
-                                  : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
-                              const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
+                                  ? {
+                                      box: 'bg-gradient-to-br from-purple-600/15 via-[#15111c]/90 to-[#0e0f17] border-purple-500/35',
+                                      labelColor: 'text-purple-300',
+                                      bar: 'bg-gradient-to-r from-[#9333ea] to-[#ec4899]',
+                                      icon: '🎙️',
+                                      name: 'Fan Dub',
+                                    }
+                                  : {
+                                      box: 'bg-gradient-to-br from-sky-500/15 via-[#101622]/90 to-[#0e0f17] border-sky-500/35',
+                                      labelColor: 'text-sky-300',
+                                      bar: 'bg-gradient-to-r from-[#0284c7] to-[#38bdf8]',
+                                      icon: '💬',
+                                      name: 'Original',
+                                    };
+
                               const progressLabel = track.isComingSoon
-                                ? 'Soon'
+                                ? '⏳ Coming Soon'
                                 : track.totalEp > 0
-                                ? `Ep ${track.currentEp}/${track.totalEp}`
-                                : `Ep ${track.currentEp}`;
+                                ? `Ep ${track.currentEp} / ${track.totalEp}`
+                                : track.currentEp > 0
+                                ? `Ep ${track.currentEp}`
+                                : 'Ongoing';
+
+                              const progressPct =
+                                track.currentEp > 0 && track.totalEp > 0
+                                  ? Math.min(100, Math.round((track.currentEp / track.totalEp) * 100))
+                                  : 0;
 
                               return (
                                 <div
                                   key={track.key}
-                                  className={`flex items-center justify-between gap-1 px-2 py-1 rounded-lg border backdrop-blur-md text-[9.5px] font-bold transition-all ${themeClass} ${
-                                    trackToday ? 'shadow-[0_0_10px_rgba(16,185,129,0.25)]' : ''
+                                  className={`rounded-xl border px-2.5 py-1.5 backdrop-blur-md transition-all space-y-0.5 shrink-0 ${podTheme.box} ${
+                                    trackToday ? 'ring-1 ring-rose-500/40 shadow-[0_0_12px_rgba(229,9,20,0.2)]' : ''
                                   }`}
                                 >
-                                  <div className="flex items-center gap-1 min-w-0">
-                                    <span className="shrink-0">{icon}</span>
-                                    <span className="font-black text-white shrink-0">{track.shortLabel}</span>
-                                    <span className="opacity-80 shrink-0 text-[8.5px]">({progressLabel})</span>
-                                    <span className="text-zinc-300 truncate ml-0.5">🗓️ {track.scheduleText}</span>
-                                  </div>
-                                  {trackToday && (
-                                    <span className="bg-gradient-to-r from-emerald-400 to-teal-400 text-black px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.7)]">
-                                      🔥 TODAY
+                                  {/* Line 1: Audio Track & Episode / TODAY badge */}
+                                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                                    <span className={`text-[10px] font-black tracking-wide flex items-center gap-1 ${podTheme.labelColor}`}>
+                                      <span>{podTheme.icon}</span>
+                                      <span>{podTheme.name}</span>
                                     </span>
+
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-black/50 border border-white/10 text-zinc-200">
+                                        {progressLabel}
+                                      </span>
+                                      {trackToday && (
+                                        <span className="bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[8.5px] font-black px-1.5 py-0.2 rounded shadow-[0_0_8px_rgba(229,9,20,0.6)] animate-pulse">
+                                          ⚡ TODAY
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Line 2: Full Untruncated Schedule Text */}
+                                  <div className="text-[10.5px] font-extrabold tracking-wide leading-snug text-white break-words">
+                                    🗓️ {track.scheduleText}
+                                  </div>
+
+                                  {/* Episode Progress Bar */}
+                                  {progressPct > 0 && (
+                                    <div className="w-full h-[2px] bg-white/10 rounded-full overflow-hidden mt-0.5">
+                                      <div
+                                        className={`h-full rounded-full ${podTheme.bar}`}
+                                        style={{ width: `${progressPct}%` }}
+                                      />
+                                    </div>
                                   )}
                                 </div>
                               );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[10px] font-bold">
-                            <span>🗓️</span>
-                            <span className="truncate">
-                              Drops: <strong className="text-white">{drama.schedule || 'Weekly Drop'}</strong>
-                            </span>
-                            {droppingToday && (
-                              <span className="ml-auto bg-emerald-400 text-black px-1 rounded text-[8px] font-black uppercase tracking-wider shrink-0 animate-pulse">
-                                AIRING
-                              </span>
-                            )}
-                          </div>
-                        )}
+                            })
+                          ) : (
+                            <div className="rounded-xl border border-rose-500/30 bg-gradient-to-br from-[#e50914]/15 via-[#15121a]/90 to-[#0e0f17] px-2.5 py-2 space-y-1 shrink-0">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[10px] font-black text-rose-300">📅 Release Schedule</span>
+                                {droppingToday && (
+                                  <span className="bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(229,9,20,0.6)] animate-pulse">
+                                    ⚡ TODAY
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] font-extrabold tracking-wide leading-snug text-white break-words">
+                                🗓️ {drama.schedule || 'Weekly Drop'}
+                              </div>
+                            </div>
+                          )}
+                        </div>
 
-                        {/* Details & Release Year */}
-                        <div className="flex items-center justify-between gap-1 text-[11px] text-zinc-400 pt-0.5">
-                          <span className="text-sky-400 font-bold truncate max-w-[130px]">
-                            {drama.details || 'Full HD 1080p'}
-                          </span>
-                          <span className="text-zinc-500 font-bold shrink-0">{drama.releaseYear}</span>
+                        {/* Clean Borderless OTT Metadata */}
+                        <div className="space-y-0.5 pt-0.5">
+                          <p className="text-[11px] font-semibold text-zinc-400 truncate">
+                            <span className="text-sky-400 font-bold">{drama.details || '10 Episodes'}</span>
+                            <span> • {drama.ageRating || 'UA 16+'} • </span>
+                            <span className="text-zinc-200">{drama.releaseYear}</span>
+                          </p>
+                          <p className="text-[10.5px] text-zinc-400 truncate">
+                            {drama.subCategory ? `✨ ${drama.subCategory}` : `${drama.category} • VIP Release`}
+                          </p>
                         </div>
                       </div>
 
-                      {/* Action Buttons */}
+                      {/* Pinned Action Buttons */}
                       <div className="grid grid-cols-2 gap-1.5 pt-1 mt-auto">
                         <button
                           onClick={() => onSelectDrama(drama)}
@@ -405,7 +461,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           href={drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="w-full py-1.5 px-2 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black text-center shadow transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          className="w-full py-1.5 px-2 rounded-lg bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-xs font-black text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1 cursor-pointer"
                         >
                           <Send className="w-3 h-3" />
                           <span>Telegram</span>

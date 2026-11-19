@@ -34,6 +34,7 @@ interface DramaDetailModalProps {
   isAdminAuthenticated?: boolean;
   isTopOne?: boolean;
   onSubscribeDubAlert?: (dramaTitle: string, audio: string) => void;
+  onReportIssue?: () => void;
 }
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
@@ -48,6 +49,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   isAdminAuthenticated = false,
   isTopOne = false,
   onSubscribeDubAlert,
+  onReportIssue,
 }) => {
   // Link for each audio track strictly from drama
   const audioLinkMap: Record<string, string | undefined> = {
@@ -279,6 +281,45 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
+          {/* LIVE KNOWN ISSUE / RESOLVED NOTICE BANNERS */}
+          {drama.issueText && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-500/10 border border-amber-400/40 text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.2)] flex items-start justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                    ⚠️ Known Issue Under Fix
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm font-semibold text-amber-50 leading-relaxed pl-4">
+                  {drama.issueText}
+                </p>
+              </div>
+              <span className="shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-amber-400 text-black">
+                🔧 FIXING
+              </span>
+            </div>
+          )}
+
+          {drama.issueFixedText && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 via-teal-500/15 to-emerald-500/10 border border-emerald-400/40 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-start justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)] shrink-0" />
+                  <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
+                    ✅ Issue Resolved
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm font-semibold text-emerald-50 leading-relaxed pl-4">
+                  {drama.issueFixedText}
+                </p>
+              </div>
+              <span className="shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-400 text-black">
+                RESOLVED
+              </span>
+            </div>
+          )}
+
           {/* TELEGRAM DIRECT LINKS (Only render audio tracks that actually have an active link) */}
           <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -440,9 +481,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-bold text-zinc-400">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>100% Free VIP Stream · No Token Needed</span>
+            <div className="flex flex-wrap items-center gap-2.5 text-xs font-bold text-zinc-400">
+              {onReportIssue && (
+                <button
+                  onClick={onReportIssue}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>⚠️ Report Broken Link / Audio Issue</span>
+                </button>
+              )}
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>100% Free VIP Stream · No Token Needed</span>
+              </div>
             </div>
           </div>
 

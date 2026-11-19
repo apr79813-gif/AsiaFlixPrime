@@ -302,6 +302,33 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
         </div>
 
+        {/* Live Issue / Issue Fixed Poster Pill */}
+        {(drama.issueFixedText || drama.issueText) && (
+          <div
+            className={`absolute left-2.5 right-2.5 flex items-center pointer-events-none z-10 ${
+              isPhoneDevice ? 'bottom-11' : 'bottom-9'
+            }`}
+          >
+            {drama.issueFixedText ? (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full bg-emerald-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-emerald-200/70 shadow-[0_0_14px_rgba(16,185,129,0.75)] ${
+                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                }`}
+              >
+                ‚úÖ ISSUE FIXED
+              </span>
+            ) : (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full bg-amber-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-amber-200/70 shadow-[0_0_14px_rgba(245,158,11,0.75)] animate-pulse ${
+                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                }`}
+              >
+                ‚ö†Ô∏è FIXING ISSUE
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Bottom of Poster: Left Status Pill & Right Gold Rating Pill */}
         <div
           className={`absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10 ${
@@ -391,7 +418,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
               <span className="text-sky-400 truncate">{detailsDisplay}</span>
               {inlineScheduleHint && (
                 <span className="text-rose-300 truncate shrink" title={inlineScheduleHint}>
-                  ‚Ä¢ Ì†ΩÌ∑ìÔ∏è {inlineScheduleHint}
+                  ‚Ä¢ üóìÔ∏è {inlineScheduleHint}
                 </span>
               )}
             </div>

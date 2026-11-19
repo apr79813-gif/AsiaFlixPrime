@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ReleaseNotification, DramaItem } from '../types/drama';
-import { X, Bell, CheckCheck, Sparkles, Film, ArrowRight, Send, CheckCircle2 } from 'lucide-react';
+import { ReleaseNotification } from '../types/drama';
+import { X, Bell, CheckCheck, Sparkles, Film, ArrowRight, Send, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getWebPushPermission, requestWebPushPermission } from '../services/notificationService';
 
 interface NotificationDrawerProps {
@@ -62,7 +62,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-zinc-400">Live updates on fresh episode drops</p>
+              <p className="text-xs text-zinc-400">Live updates on drops, issues & fixes</p>
             </div>
           </div>
 
@@ -141,72 +141,108 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
               </p>
             </div>
           ) : (
-            notifications.map((notif) => (
-              <div
-                key={notif.id}
-                onClick={() => {
-                  onSelectNotification(notif);
-                  onClose();
-                }}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden group ${
-                  notif.isRead
-                    ? 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.05]'
-                    : 'bg-gradient-to-r from-[#191114] to-[#12131b] hover:from-[#211419] hover:to-[#171824] border-red-500/30'
-                }`}
-              >
-                {!notif.isRead && (
-                  <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-[#e50914] animate-pulse" />
-                )}
+            notifications.map((notif) => {
+              const isFix = notif.type === 'fix';
+              const isIssue = notif.type === 'issue';
+              const unreadStyle = isFix
+                ? 'bg-gradient-to-r from-[#0e1b18] to-[#11151d] hover:from-[#12241f] hover:to-[#151a24] border-emerald-500/35'
+                : isIssue
+                ? 'bg-gradient-to-r from-[#1c160e] to-[#14131b] hover:from-[#241c11] hover:to-[#1a1822] border-amber-500/35'
+                : 'bg-gradient-to-r from-[#191114] to-[#12131b] hover:from-[#211419] hover:to-[#171824] border-red-500/30';
 
-                <div className="flex items-start gap-3">
-                  <div className="p-2 rounded-lg bg-white/[0.05] text-red-400 shrink-0 mt-0.5">
-                    {notif.type === 'fhd_remaster' ? (
-                      <Sparkles className="w-4 h-4 text-amber-400" />
-                    ) : (
-                      <Film className="w-4 h-4" />
-                    )}
-                  </div>
+              return (
+                <div
+                  key={notif.id}
+                  onClick={() => {
+                    onSelectNotification(notif);
+                    onClose();
+                  }}
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer relative overflow-hidden group ${
+                    notif.isRead
+                      ? 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.05]'
+                      : unreadStyle
+                  }`}
+                >
+                  {!notif.isRead && (
+                    <div
+                      className={`absolute top-3 right-3 w-2 h-2 rounded-full animate-pulse ${
+                        isFix ? 'bg-emerald-400' : isIssue ? 'bg-amber-400' : 'bg-[#e50914]'
+                      }`}
+                    />
+                  )}
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-black text-white group-hover:text-red-400 transition-colors truncate">
-                        {notif.title}
-                      </h4>
-                      {notif.audioType && (
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-red-500/20 text-red-300 px-1.5 py-0.2 rounded shrink-0">
-                          {notif.audioType}
-                        </span>
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`p-2 rounded-lg bg-white/[0.05] shrink-0 mt-0.5 ${
+                        isFix ? 'text-emerald-400' : isIssue ? 'text-amber-400' : 'text-red-400'
+                      }`}
+                    >
+                      {isFix ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ) : isIssue ? (
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      ) : notif.type === 'fhd_remaster' ? (
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <Film className="w-4 h-4" />
                       )}
                     </div>
 
-                    <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
-                      {notif.message}
-                    </p>
-
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5 text-[10px] text-zinc-500">
-                      <span>{notif.timestamp}</span>
-                      <div className="flex items-center gap-2">
-                        {onDeleteNotification && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteNotification(notif.id);
-                            }}
-                            className="text-zinc-500 hover:text-red-400 p-0.5 rounded hover:bg-white/10 transition-colors"
-                            title="Delete notification"
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap pr-4">
+                        <h4 className="text-xs font-black text-white group-hover:text-red-400 transition-colors truncate">
+                          {notif.title}
+                        </h4>
+                        {notif.badge ? (
+                          <span
+                            className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded shrink-0 border ${
+                              isFix
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/35'
+                                : isIssue
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/35'
+                                : 'bg-red-500/20 text-red-300 border-red-500/35'
+                            }`}
                           >
-                            <X className="w-3 h-3" />
-                          </button>
+                            {notif.badge}
+                          </span>
+                        ) : (
+                          notif.audioType && (
+                            <span className="text-[9px] font-black uppercase tracking-wider bg-red-500/20 text-red-300 px-1.5 py-0.2 rounded shrink-0">
+                              {notif.audioType}
+                            </span>
+                          )
                         )}
-                        <span className="text-zinc-400 flex items-center gap-0.5 group-hover:text-white transition-colors font-bold">
-                          View Drama <ArrowRight className="w-2.5 h-2.5" />
-                        </span>
+                      </div>
+
+                      <p className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                        {notif.message}
+                      </p>
+
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5 text-[10px] text-zinc-500">
+                        <span>{notif.timestamp}</span>
+                        <div className="flex items-center gap-2">
+                          {onDeleteNotification && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteNotification(notif.id);
+                              }}
+                              className="text-zinc-500 hover:text-red-400 p-0.5 rounded hover:bg-white/10 transition-colors"
+                              title="Delete notification"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                          <span className="text-zinc-400 flex items-center gap-0.5 group-hover:text-white transition-colors font-bold">
+                            View Drama <ArrowRight className="w-2.5 h-2.5" />
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

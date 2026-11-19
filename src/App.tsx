@@ -8,6 +8,7 @@ import { Navbar } from './components/Navbar';
 import { Home, Search, X, Play, Star, Clock, Film } from 'lucide-react';
 import { HeroBanner } from './components/HeroBanner';
 import { SpotlightBar } from './components/SpotlightBar';
+import { LiveIssueBoard } from './components/LiveIssueBoard';
 import { WeekendMegaLineupSection } from './components/WeekendMegaLineupSection';
 import { FilterBar } from './components/FilterBar';
 import { DramaRow } from './components/DramaRow';
@@ -796,6 +797,16 @@ export default function App() {
       const trendingIdx = header.findIndex((h) => h.includes('top trending') || h.includes('trending now') || h.includes('trending'));
       const logoIdx = header.findIndex((h) => h.includes('logo'));
       const weekendIdx = header.findIndex((h) => h.includes('weekend') || h.includes('lineup') || h.includes('mega'));
+      const issueFixedHeaderIdx = header.findIndex(
+        (h) => h === 'issuefixed' || h === 'issue fixed' || h.includes('issue fixed') || h === 'fixed' || h === 'resolved'
+      );
+      const issueFixedIdx = issueFixedHeaderIdx >= 0 ? issueFixedHeaderIdx : 20;
+      const issueHeaderIdx = header.findIndex(
+        (h, idx) =>
+          idx !== issueFixedIdx &&
+          (h === 'issue' || h === 'reportedissue' || h === 'reported issue' || h === 'active issue' || h.includes('reported issue'))
+      );
+      const issueIdx = issueHeaderIdx >= 0 ? issueHeaderIdx : 19;
 
       // Global sheet settings (Notice, Trending list, Logo URL)
       let foundNotice = '';
@@ -884,6 +895,8 @@ export default function App() {
           rawBannerVal.startsWith('http');
 
         const isWeekendRow = weekendIdx >= 0 && (row[weekendIdx]?.trim().toLowerCase() === 'yes' || row[weekendIdx]?.trim().toLowerCase() === 'true' || row[weekendIdx]?.trim() === '1');
+        const issueVal = issueIdx >= 0 ? row[issueIdx]?.trim() || '' : '';
+        const issueFixedVal = issueFixedIdx >= 0 ? row[issueFixedIdx]?.trim() || '' : '';
 
         // Check if Movie
         const catLower = categoryRaw.toLowerCase();
@@ -1147,6 +1160,8 @@ export default function App() {
           if (statusText && !prev.statusText) prev.statusText = statusText;
           if (ageRating && !prev.ageRating) prev.ageRating = ageRating;
           if (subCategory && !prev.subCategory) prev.subCategory = subCategory;
+          if (issueVal && !prev.issueText) prev.issueText = issueVal;
+          if (issueFixedVal && !prev.issueFixedText) prev.issueFixedText = issueFixedVal;
           if (dramaStatus === 'Now Streaming (Ongoing)') {
             prev.status = 'Now Streaming (Ongoing)';
           }
@@ -1271,6 +1286,8 @@ export default function App() {
           leadCast: parsedCast,
           hashtags: parsedTags,
           isMovie: isFilm,
+          issueText: issueVal || undefined,
+          issueFixedText: issueFixedVal || undefined,
         };
 
         parsedDramasMap.set(dramaId, item);
@@ -1476,22 +1493,82 @@ export default function App() {
 
           // Refresh notifications from Supabase so every browser gets live cloud updates (preserving seen/read state)
           const cloudNotifs = await fetchNotificationsFromSupabase();
-          if (cloudNotifs && cloudNotifs.length > 0) {
-            const mergedCloudNotifs = applyReadStateToNotifs(cloudNotifs);
-            setNotifications(mergedCloudNotifs);
-            localStorage.setItem('asiaflix_notifications', JSON.stringify(mergedCloudNotifs));
 
-            // Trigger floating live toast ONLY if the top notification is genuinely unread & new
+          // Auto-generate deterministic notifications directly from Google Sheet Column T (Issue) & Column U (Issue Fixed)
+          const nowTimeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const sheetIssueNotifs: ReleaseNotification[] = [];
+          uniqueParsed.forEach((d) => {
+            if (d.issueFixedText) {
+              sheetIssueNotifs.push({
+                id: `sheet-fixed-${d.id}-${d.issueFixedText}`,
+                title: `✅ Issue Fixed: ${d.title}`,
+                message: d.issueFixedText,
+                timestamp: `Live Sheet · ${nowTimeLabel}`,
+                isRead: false,
+                type: 'fix',
+                dramaId: d.id,
+                badge: '✅ ISSUE FIXED',
+              });
+            }
+            if (d.issueText) {
+              sheetIssueNotifs.push({
+                id: `sheet-issue-${d.id}-${d.issueText}`,
+                title: `⚠️ Issue Reported: ${d.title}`,
+                message: `${d.issueText} (Our team is fixing this right now)`,
+                timestamp: `Live Sheet · ${nowTimeLabel}`,
+                isRead: false,
+                type: 'issue',
+                dramaId: d.id,
+                badge: '⚠️ UNDER FIX',
+              });
+            }
+          });
+
+          const combinedRaw = [...sheetIssueNotifs, ...(cloudNotifs || [])];
+          const dedupedMap = new Map<string, ReleaseNotification>();
+          combinedRaw.forEach((n) => {
+            if (!dedupedMap.has(n.id)) dedupedMap.set(n.id, n);
+          });
+          const mergedAllNotifs = applyReadStateToNotifs(Array.from(dedupedMap.values()));
+
+          if (mergedAllNotifs.length > 0) {
+            setNotifications(mergedAllNotifs);
+            localStorage.setItem('asiaflix_notifications', JSON.stringify(mergedAllNotifs));
+
+            // Trigger floating live toast for any newly appearing unread issue/fix or latest unread drop
+            let toastedIds: string[] = [];
+            try {
+              const rawToasted = sessionStorage.getItem('asiaflix_toasted_ids_v1');
+              if (rawToasted) toastedIds = JSON.parse(rawToasted);
+            } catch {
+              toastedIds = [];
+            }
             const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
-            const latestNotif = mergedCloudNotifs[0];
-            if (
-              latestNotif &&
-              !latestNotif.isRead &&
-              !readNotifIdsRef.current.includes(latestNotif.id) &&
-              latestNotif.id !== lastToastId
-            ) {
-              sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
-              setActiveToastNotif(latestNotif);
+
+            const unreadSheetAlert = mergedAllNotifs.find(
+              (n) =>
+                (n.type === 'fix' || n.type === 'issue') &&
+                !n.isRead &&
+                !readNotifIdsRef.current.includes(n.id) &&
+                n.id !== lastToastId &&
+                !toastedIds.includes(n.id)
+            );
+            const fallbackTopNotif = mergedAllNotifs[0];
+            const toastCandidate =
+              unreadSheetAlert ||
+              (fallbackTopNotif &&
+              !fallbackTopNotif.isRead &&
+              !readNotifIdsRef.current.includes(fallbackTopNotif.id) &&
+              fallbackTopNotif.id !== lastToastId &&
+              !toastedIds.includes(fallbackTopNotif.id)
+                ? fallbackTopNotif
+                : null);
+
+            if (toastCandidate) {
+              sessionStorage.setItem('asiaflix_last_toast_id', toastCandidate.id);
+              const nextToasted = Array.from(new Set([...toastedIds, toastCandidate.id])).slice(-100);
+              sessionStorage.setItem('asiaflix_toasted_ids_v1', JSON.stringify(nextToasted));
+              setActiveToastNotif(toastCandidate);
             }
           }
         } catch {
@@ -2012,6 +2089,14 @@ export default function App() {
         isPhoneDevice={isPhoneDevice}
       />
 
+      {/* Live Issue & Issue Fixed Notice Board (Directly Powered by Sheet Column T & U) */}
+      <LiveIssueBoard
+        dramas={dramas}
+        onSelectDrama={(drama) => setSelectedDrama(drama)}
+        onOpenSupport={() => setIsSupportOpen(true)}
+        isPhoneDevice={isPhoneDevice}
+      />
+
       {/* Weekend Mega Lineup Special Section */}
       <WeekendMegaLineupSection
         weekendDramas={weekendDramas}
@@ -2339,6 +2424,10 @@ export default function App() {
           isAdminAuthenticated={isAdminAuthenticated}
           isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
           onSubscribeDubAlert={handleSubscribeDubAlert}
+          onReportIssue={() => {
+            setSelectedDrama(null);
+            setIsSupportOpen(true);
+          }}
         />
       )}
 

@@ -65,6 +65,8 @@ export interface DramaItem {
   hashtags?: string[];         // Hashtags parsed from sheet (e.g. ["#Kdrama", "#Romance"])
   isMovie?: boolean;           // true if film/movie without multiple episodic drops
   comingSoonAudios?: AudioType[]; // Audios promised or in dubbing phase but link not yet dropped
+  issueText?: string;          // Column T: Reported / Active Issue
+  issueFixedText?: string;     // Column U: Issue Fixed / Resolved
   activeTrackSchedules?: Array<{
     key: 't1' | 't2' | 't3';
     audio: AudioType;
@@ -101,9 +103,10 @@ export interface ReleaseNotification {
   dramaId?: string;
   message: string;
   audioType?: AudioType;
+  badge?: string;
   timestamp: string;
   isRead: boolean;
-  type: 'new_episode' | 'new_drama' | 'fhd_remaster' | 'announcement';
+  type: 'new_episode' | 'new_drama' | 'fhd_remaster' | 'announcement' | 'issue' | 'fix';
 }
 
 export interface SupportTicket {

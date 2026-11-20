@@ -2,6 +2,7 @@ import React from 'react';
 import { DramaItem, AudioType } from '../types/drama';
 import { Play, Bookmark, BookmarkCheck, Star, Send } from 'lucide-react';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
+import { getTrackEpisodeCounts } from '../services/scheduleHelper';
 
 interface DramaCardProps {
   drama: DramaItem;
@@ -11,6 +12,7 @@ interface DramaCardProps {
   rank?: number;
   isTopOne?: boolean;
   activeAudioContext?: AudioType | string;
+  rowAudioContext?: 'hindi' | 'fandub' | 'orig';
   isComingSoonContext?: boolean;
   isPhoneDevice?: boolean;
   isGrid?: boolean;
@@ -24,6 +26,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   rank,
   isTopOne,
   activeAudioContext,
+  rowAudioContext,
   isComingSoonContext = false,
   isPhoneDevice = false,
   isGrid = false,
@@ -52,77 +55,66 @@ export const DramaCard: React.FC<DramaCardProps> = ({
     drama.category.toLowerCase().includes('holly') ||
     Boolean(drama.details && (drama.details.includes(':') || drama.details.toLowerCase().includes('movie')));
 
-  // Compute ongoing episode progress for bottom-edge neon poster bar
-  let maxEp = 0;
-  if (drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0) {
-    maxEp = Math.max(...drama.activeTrackSchedules.map((t) => t.currentEp || 0), 0);
-  }
-  if (maxEp === 0 && drama.episodes && drama.episodes.length > 0) {
-    for (const ep of drama.episodes) {
-      if (typeof ep.episodeNumber === 'number' && ep.episodeNumber > maxEp) {
-        maxEp = ep.episodeNumber;
-      } else if (typeof ep.episodeNumber === 'string') {
-        const range = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
-        if (range) {
-          const end = parseInt(range[2], 10);
-          if (end > maxEp) maxEp = end;
-        } else {
-          const single = ep.episodeNumber.match(/(\d+)/);
-          if (single) {
-            const num = parseInt(single[1], 10);
-            if (num > maxEp) maxEp = num;
-          }
-        }
-      }
-    }
-  }
-  if (maxEp === 0 && drama.statusText) {
-    const statusEpMatch = drama.statusText.match(/ep\s*(\d+)/i);
-    if (statusEpMatch) maxEp = parseInt(statusEpMatch[1], 10);
-  }
+  const { t1Ep, t2Ep, t3Ep, totalEp, hasHindiLink, hasFanDubLink, hasOrigLink } = getTrackEpisodeCounts(drama);
 
-  let totalEp = drama.totalEpisodes || 0;
-  if (totalEp === 0 && drama.details) {
-    const detEpMatch = drama.details.match(/(\d+)\s*(?:ep|episode)/i);
-    if (detEpMatch) totalEp = parseInt(detEpMatch[1], 10);
-  }
+  // Derive effective row audio context
+  const normCtx = (activeAudioContext || '').toLowerCase();
+  const effectiveRowAudio: 'hindi' | 'fandub' | 'orig' | undefined =
+    rowAudioContext ||
+    (normCtx.includes('fan')
+      ? 'fandub'
+      : normCtx.includes('hindi') && !normCtx.includes('fan')
+      ? 'hindi'
+      : normCtx.includes('orig') || normCtx.includes('eng')
+      ? 'orig'
+      : undefined);
+
+  const hasHindi = hasHindiLink;
+  const hasFanDub = hasFanDubLink;
+  const hasOrig = hasOrigLink;
 
   const isCompletedStatus =
     drama.status.toLowerCase().includes('completed') ||
-    (drama.statusText && drama.statusText.toLowerCase().includes('completed'));
+    Boolean(drama.statusText && drama.statusText.toLowerCase().includes('completed'));
+
+  // Determine active track episode count for ongoing progress bar
+  const maxAnyEp = Math.max(t1Ep, t2Ep, t3Ep);
+  const effectiveMaxEp =
+    effectiveRowAudio === 'fandub' && t2Ep > 0
+      ? t2Ep
+      : effectiveRowAudio === 'hindi' && t1Ep > 0
+      ? t1Ep
+      : effectiveRowAudio === 'orig' && t3Ep > 0
+      ? t3Ep
+      : maxAnyEp;
 
   const showOngoingProgress =
-    !isComingSoonActive && !isCompletedStatus && !isMovie && maxEp > 0 && totalEp > 0 && maxEp < totalEp;
+    !isComingSoonActive && !isCompletedStatus && !isMovie && effectiveMaxEp > 0 && totalEp > 0 && effectiveMaxEp < totalEp;
   const ongoingProgressPct = showOngoingProgress
-    ? Math.min(96, Math.max(8, Math.round((maxEp / totalEp) * 100)))
+    ? Math.min(96, Math.max(8, Math.round((effectiveMaxEp / totalEp) * 100)))
     : 0;
 
-  // Determine active telegram URL based on context or available links
+  // Determine active telegram URL based on row context or available links
   const primaryTelegram =
+    (effectiveRowAudio === 'fandub' && drama.telegramFanDub) ||
+    (effectiveRowAudio === 'hindi' && drama.telegramHindi) ||
+    (effectiveRowAudio === 'orig' && drama.telegramOrig) ||
     drama.telegramHindi ||
     drama.telegramFanDub ||
     drama.telegramOrig ||
     drama.telegramUrl ||
     'https://t.me/+yJH68LvfrT9hZDVl';
 
-  // Context-aware active audio determination
-  const normCtx = (activeAudioContext || '').toLowerCase();
-  const hasHindi = Boolean(
-    (drama.telegramHindi && drama.telegramHindi.toLowerCase().includes('http')) ||
-      drama.availableAudios?.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan'))
-  );
-  const hasFanDub = Boolean(
-    (drama.telegramFanDub && drama.telegramFanDub.toLowerCase().includes('http')) ||
-      drama.availableAudios?.some((a) => a.toLowerCase().includes('fan'))
-  );
-  const hasOrig = Boolean(
-    (drama.telegramOrig && drama.telegramOrig.toLowerCase().includes('http')) ||
-      drama.availableAudios?.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub'))
-  );
-
+  // Top-left audio badge determination
   let displayAudio: 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' = 'Hindi Dubbed';
 
-  if (isComingSoonActive && drama.comingSoonAudios && drama.comingSoonAudios.length > 0) {
+  if (effectiveRowAudio === 'fandub' && hasFanDub) {
+    displayAudio = 'Hindi Fan Dubbed';
+  } else if (effectiveRowAudio === 'hindi' && hasHindi) {
+    displayAudio = 'Hindi Dubbed';
+  } else if (effectiveRowAudio === 'orig' && hasOrig) {
+    displayAudio = 'Original / Eng Sub';
+  } else if (isComingSoonActive && drama.comingSoonAudios && drama.comingSoonAudios.length > 0) {
     const csAudio = drama.comingSoonAudios[0];
     if (csAudio === 'Hindi Fan Dubbed' || csAudio === 'Fan Dubbed') {
       displayAudio = 'Hindi Fan Dubbed';
@@ -131,12 +123,6 @@ export const DramaCard: React.FC<DramaCardProps> = ({
     } else {
       displayAudio = 'Hindi Dubbed';
     }
-  } else if (normCtx.includes('hindi') && !normCtx.includes('fan') && hasHindi) {
-    displayAudio = 'Hindi Dubbed';
-  } else if (normCtx.includes('fan') && hasFanDub) {
-    displayAudio = 'Hindi Fan Dubbed';
-  } else if ((normCtx.includes('orig') || normCtx.includes('eng')) && hasOrig) {
-    displayAudio = 'Original / Eng Sub';
   } else {
     const def = (drama.defaultAudio || '').toLowerCase();
     if (def.includes('fan') && hasFanDub) {
@@ -179,6 +165,52 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border border-red-400/40 shadow-[0_0_12px_rgba(229,9,20,0.45)]',
         };
 
+  // Smart Poster Bottom Status Pill (Zero Multi-Audio Confusion)
+  const smartPosterStatusText = (() => {
+    if (isComingSoonActive) return 'Coming Soon';
+    if (isMovie) return drama.statusText || 'Full Movie';
+
+    const epTotalSuffix = totalEp > 0 ? `/${totalEp}` : '';
+
+    if (effectiveRowAudio === 'fandub') {
+      if (t2Ep > 0) return `🎙️ Fan Dub: Ep ${t2Ep}${epTotalSuffix}`;
+      return isCompletedStatus ? '🎙️ Fan Dub: Completed' : '🎙️ Fan Dub: Streaming';
+    }
+    if (effectiveRowAudio === 'hindi') {
+      if (t1Ep > 0) return `🔊 Hindi: Ep ${t1Ep}${epTotalSuffix}`;
+      return isCompletedStatus ? '🔊 Hindi: Completed' : '🔊 Hindi: Streaming';
+    }
+    if (effectiveRowAudio === 'orig') {
+      if (t3Ep > 0) return `💬 Orig: Ep ${t3Ep}${epTotalSuffix}`;
+      return isCompletedStatus ? '💬 Orig: Completed' : '💬 Orig: Streaming';
+    }
+
+    if (isCompletedStatus) {
+      return drama.statusText || 'Completed';
+    }
+
+    // Ongoing general row: show per-track episode counts cleanly
+    const activeEpTracks: Array<{ shortMulti: string; singleLabel: string }> = [];
+    if (hasHindi && t1Ep > 0) {
+      activeEpTracks.push({ shortMulti: `🔊 Hin Ep ${t1Ep}`, singleLabel: `🔊 Hindi Ep ${t1Ep}` });
+    }
+    if (hasFanDub && t2Ep > 0) {
+      activeEpTracks.push({ shortMulti: `🎙️ Fan Ep ${t2Ep}`, singleLabel: `🎙️ Fan Dub Ep ${t2Ep}` });
+    }
+    if (hasOrig && t3Ep > 0) {
+      activeEpTracks.push({ shortMulti: `💬 Orig Ep ${t3Ep}`, singleLabel: `💬 Orig Ep ${t3Ep}` });
+    }
+
+    if (activeEpTracks.length > 1) {
+      return activeEpTracks.map((t) => t.shortMulti).join(' • ');
+    }
+    if (activeEpTracks.length === 1) {
+      return activeEpTracks[0].singleLabel;
+    }
+
+    return drama.statusText || drama.status.replace(/ \(.*\)/, '');
+  })();
+
   const categoryLabel = drama.category;
   const ageInfo = getAgeRatingMeta(drama.ageRating);
   const detailsDisplay = drama.details
@@ -194,9 +226,11 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       ? drama.activeTrackSchedules[0].scheduleText
       : '';
 
+  const showLiveTrackEpOnPills = !isMovie && !isCompletedStatus && !isComingSoonActive;
+
   const cardSizeClass = isPhoneDevice
-    ? `${isGrid ? 'w-full' : 'w-[312px] min-w-[312px]'} h-[550px]`
-    : 'h-[405px]';
+    ? `${isGrid ? 'w-full' : 'w-[312px] min-w-[312px]'} h-[575px]`
+    : 'h-[420px]';
 
   return (
     <div
@@ -206,7 +240,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       <div
         onClick={() => onSelect(drama)}
         className={`relative w-full shrink-0 overflow-hidden bg-zinc-900 cursor-pointer ${
-          isPhoneDevice ? 'h-[360px]' : 'h-[255px]'
+          isPhoneDevice ? 'h-[360px]' : 'h-[250px]'
         }`}
       >
         <img
@@ -329,30 +363,31 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
         )}
 
-        {/* Bottom of Poster: Left Status Pill & Right Gold Rating Pill */}
+        {/* Bottom of Poster: Smart Audio-Aware Status Pill & Right Gold Rating Pill */}
         <div
-          className={`absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10 ${
+          className={`absolute bottom-2.5 left-2 right-2 flex items-center justify-between gap-1.5 pointer-events-none z-10 ${
             isPhoneDevice ? 'text-xs' : 'text-[10px]'
           }`}
         >
           <div
-            className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold ${
-              isPhoneDevice ? 'px-3 py-1 max-w-[205px]' : 'px-2 py-0.5 max-w-[130px] sm:max-w-[145px]'
+            className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold min-w-0 ${
+              isPhoneDevice ? 'px-3 py-1 max-w-[235px]' : 'px-2 py-0.5 max-w-[calc(100%-46px)]'
             }`}
+            title={smartPosterStatusText}
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor()}`} />
             <span
               className={`truncate text-zinc-100 ${
-                isPhoneDevice ? 'text-xs font-bold' : 'text-[9.5px] font-extrabold'
+                isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] font-extrabold'
               }`}
             >
-              {isComingSoonActive ? 'Coming Soon' : drama.statusText || drama.status.replace(/ \(.*\)/, '')}
+              {smartPosterStatusText}
             </span>
           </div>
 
           <span
             className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 flex items-center gap-1 shrink-0 ${
-              isPhoneDevice ? 'text-xs px-3 py-1 font-bold' : 'font-black text-[9.5px] px-1.5 py-0.5 gap-0.5'
+              isPhoneDevice ? 'text-xs px-2.5 py-1 font-bold' : 'font-black text-[9.5px] px-1.5 py-0.5 gap-0.5'
             }`}
           >
             <Star className={`${isPhoneDevice ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'} fill-amber-400 text-amber-400`} />
@@ -374,7 +409,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       {/* Symmetric Card Body (No Nested Gray Border Boxes) */}
       <div
         className={`flex-1 min-h-0 flex flex-col justify-between bg-gradient-to-b from-[#11121a] to-[#0a0b10] ${
-          isPhoneDevice ? 'p-4' : 'p-3.5'
+          isPhoneDevice ? 'p-4' : 'p-3'
         }`}
       >
         <div className="min-w-0">
@@ -408,84 +443,83 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             </span>
           </div>
 
-          {/* Row 3: Episodes + Inline Schedule Hint + Compact Audio Mini-Badges */}
-          <div className={`flex items-center justify-between gap-1.5 min-w-0 ${isPhoneDevice ? 'mt-2.5' : 'mt-2'}`}>
-            <div
-              className={`flex items-center gap-1.5 min-w-0 flex-1 ${
-                isPhoneDevice ? 'text-sm font-extrabold' : 'text-[10.5px] font-bold'
-              }`}
-            >
-              <span className="text-sky-400 truncate">{detailsDisplay}</span>
-              {inlineScheduleHint && (
-                <span className="text-rose-300 truncate shrink" title={inlineScheduleHint}>
-                  • 🗓️ {inlineScheduleHint}
-                </span>
-              )}
-            </div>
+          {/* Row 3a: Untruncated Episodes Count + Schedule Hint */}
+          <div
+            className={`flex items-center justify-between gap-2 min-w-0 ${
+              isPhoneDevice ? 'mt-2.5 text-sm font-extrabold' : 'mt-1.5 text-[10.5px] font-bold'
+            }`}
+          >
+            <span className="text-sky-400 shrink-0 whitespace-nowrap">{detailsDisplay}</span>
+            {inlineScheduleHint && (
+              <span className="text-rose-300 truncate min-w-0 text-right" title={inlineScheduleHint}>
+                🗓️ {inlineScheduleHint}
+              </span>
+            )}
+          </div>
 
-            <div className="flex items-center gap-1 shrink-0">
-              {isComingSoonActive ? (
-                drama.comingSoonAudios && drama.comingSoonAudios.length > 0 ? (
-                  <span
-                    className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black tracking-wide ${
-                      isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
-                    }`}
-                  >
-                    {drama.comingSoonAudios[0] === 'Hindi Dubbed'
-                      ? '⏳ Hindi'
-                      : drama.comingSoonAudios[0] === 'Hindi Fan Dubbed'
-                      ? '⏳ Fan'
-                      : '⏳ Orig'}
-                  </span>
-                ) : (
-                  <span
-                    className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black ${
-                      isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
-                    }`}
-                  >
-                    ⏳ Soon
-                  </span>
-                )
+          {/* Row 3b: Audio Badges with Live Episode Counts per Language */}
+          <div className={`flex items-center flex-wrap gap-1 ${isPhoneDevice ? 'mt-2' : 'mt-1.5'}`}>
+            {isComingSoonActive ? (
+              drama.comingSoonAudios && drama.comingSoonAudios.length > 0 ? (
+                <span
+                  className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black tracking-wide ${
+                    isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
+                  }`}
+                >
+                  {drama.comingSoonAudios[0] === 'Hindi Dubbed'
+                    ? '⏳ Hindi'
+                    : drama.comingSoonAudios[0] === 'Hindi Fan Dubbed'
+                    ? '⏳ Fan'
+                    : '⏳ Orig'}
+                </span>
               ) : (
-                <>
-                  {drama.telegramHindi && (
-                    <span
-                      className={`bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white rounded font-black tracking-wide shadow-[0_0_8px_rgba(229,9,20,0.35)] ${
-                        isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
-                      }`}
-                      title="Hindi Dubbed Live"
-                    >
-                      Hindi
-                    </span>
-                  )}
-                  {drama.telegramFanDub && (
-                    <span
-                      className={`bg-gradient-to-r from-[#9333ea] to-[#ec4899] text-white rounded font-black tracking-wide shadow-[0_0_8px_rgba(168,85,247,0.35)] ${
-                        isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
-                      }`}
-                      title="Hindi Fan Dubbed Live"
-                    >
-                      Fan Dub
-                    </span>
-                  )}
-                  {drama.telegramOrig && (
-                    <span
-                      className={`bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white rounded font-black tracking-wide shadow-[0_0_8px_rgba(14,165,233,0.35)] ${
-                        isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
-                      }`}
-                      title="Original / Eng Sub Live"
-                    >
-                      Orig
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+                <span
+                  className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black ${
+                    isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
+                  }`}
+                >
+                  ⏳ Soon
+                </span>
+              )
+            ) : (
+              <>
+                {drama.telegramHindi && (
+                  <span
+                    className={`bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(229,9,20,0.35)] ${
+                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                    }`}
+                    title="Hindi Dubbed Live"
+                  >
+                    {showLiveTrackEpOnPills && t1Ep > 0 ? `Hindi Ep ${t1Ep}` : 'Hindi'}
+                  </span>
+                )}
+                {drama.telegramFanDub && (
+                  <span
+                    className={`bg-gradient-to-r from-[#9333ea] to-[#ec4899] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(168,85,247,0.35)] ${
+                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                    }`}
+                    title="Hindi Fan Dubbed Live"
+                  >
+                    {showLiveTrackEpOnPills && t2Ep > 0 ? `Fan Ep ${t2Ep}` : 'Fan Dub'}
+                  </span>
+                )}
+                {drama.telegramOrig && (
+                  <span
+                    className={`bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(14,165,233,0.35)] ${
+                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                    }`}
+                    title="Original / Eng Sub Live"
+                  >
+                    {showLiveTrackEpOnPills && t3Ep > 0 ? `Orig Ep ${t3Ep}` : 'Orig'}
+                  </span>
+                )}
+              </>
+            )}
           </div>
         </div>
 
         {/* Row 4: Bottom Action Buttons */}
-        <div className={`grid grid-cols-2 mt-auto pt-2 ${isPhoneDevice ? 'gap-2.5' : 'gap-2'}`}>
+        <div className={`grid grid-cols-2 mt-auto pt-1.5 ${isPhoneDevice ? 'gap-2.5' : 'gap-2'}`}>
           <button
             onClick={() => onSelect(drama)}
             className={`w-full bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/10 text-center transition-all flex items-center justify-center cursor-pointer ${

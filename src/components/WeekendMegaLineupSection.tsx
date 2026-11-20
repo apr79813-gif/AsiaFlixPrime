@@ -7,7 +7,8 @@ import {
   getTodayShortName, 
   getTodayFullName, 
   isDramaAiringOnDay, 
-  isAiringToday 
+  isAiringToday,
+  getTrackEpisodeCounts
 } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 
@@ -238,6 +239,16 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                   : 'bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white border-sky-400/40';
 
                 const ageInfo = getAgeRatingMeta(drama.ageRating);
+                const { t1Ep, t2Ep, t3Ep, hasHindiLink, hasFanDubLink, hasOrigLink } = getTrackEpisodeCounts(drama);
+                const activeEpTracks: Array<{ shortMulti: string; singleLabel: string }> = [];
+                if (hasHindiLink && t1Ep > 0) activeEpTracks.push({ shortMulti: `🔊 Hin Ep ${t1Ep}`, singleLabel: `🔊 Hindi Ep ${t1Ep}` });
+                if (hasFanDubLink && t2Ep > 0) activeEpTracks.push({ shortMulti: `🎙️ Fan Ep ${t2Ep}`, singleLabel: `🎙️ Fan Dub Ep ${t2Ep}` });
+                if (hasOrigLink && t3Ep > 0) activeEpTracks.push({ shortMulti: `💬 Orig Ep ${t3Ep}`, singleLabel: `💬 Orig Ep ${t3Ep}` });
+                const smartPosterStatus = activeEpTracks.length > 1
+                  ? activeEpTracks.map((t) => t.shortMulti).join(' • ')
+                  : activeEpTracks.length === 1
+                  ? activeEpTracks[0].singleLabel
+                  : drama.statusText || 'Now Streaming';
 
                 return (
                   <div
@@ -346,27 +357,32 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </div>
                       )}
 
-                      {/* Bottom of Poster: Exact StatusText on Left & Rating on Right */}
-                      <div className={`absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between z-10 pointer-events-none ${isPhoneDevice ? 'text-xs' : 'text-[10px]'}`}>
-                        <div className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold ${isPhoneDevice ? 'px-3 py-1 max-w-[205px]' : 'px-2.5 py-0.5 max-w-[155px]'}`}>
+                      {/* Bottom of Poster: Smart Audio-Aware Status Pill on Left & Rating on Right */}
+                      <div className={`absolute bottom-2.5 left-2 right-2 flex items-center justify-between gap-1.5 z-10 pointer-events-none ${isPhoneDevice ? 'text-xs' : 'text-[10px]'}`}>
+                        <div
+                          className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold min-w-0 ${
+                            isPhoneDevice ? 'px-3 py-1 max-w-[235px]' : 'px-2.5 py-0.5 max-w-[calc(100%-50px)]'
+                          }`}
+                          title={hasComingSoonAudios ? 'Coming Soon' : smartPosterStatus}
+                        >
                           {hasComingSoonAudios ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
-                              <span className={`truncate text-amber-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[10px] font-extrabold'}`}>
+                              <span className={`truncate text-amber-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
                                 ⏳ Coming Soon
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse shrink-0" />
-                              <span className={`truncate text-sky-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[10px] font-extrabold'}`}>
-                                {drama.statusText || 'Now Streaming'}
+                              <span className={`truncate text-sky-300 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
+                                {smartPosterStatus}
                               </span>
                             </>
                           )}
                         </div>
 
-                        <span className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5 ${isPhoneDevice ? 'text-xs px-3 py-1 font-bold' : 'px-1.5 py-0.5 font-black'}`}>
+                        <span className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5 ${isPhoneDevice ? 'text-xs px-2.5 py-1 font-bold' : 'px-1.5 py-0.5 font-black'}`}>
                           ★ {drama.rating}
                         </span>
                       </div>
@@ -495,7 +511,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         {/* Clean Borderless OTT Metadata with Color-Coded Age Rating */}
                         <div className="space-y-1 pt-0.5">
                           <div className={`flex items-center gap-1.5 text-zinc-400 min-w-0 ${isPhoneDevice ? 'text-xs font-bold' : 'text-[11px] font-semibold'}`}>
-                            <span className="text-sky-400 font-bold truncate">{drama.details || '10 Episodes'}</span>
+                            <span className="text-sky-400 font-bold shrink-0 whitespace-nowrap">🎬 {drama.details || '10 Episodes'}</span>
                             <span className="shrink-0">•</span>
                             <span className={`rounded font-black shrink-0 ${ageInfo.pillClass} ${isPhoneDevice ? 'px-2 py-0.5 text-[11px]' : 'px-1.5 py-0.2 text-[9.5px]'}`}>
                               {ageInfo.label}

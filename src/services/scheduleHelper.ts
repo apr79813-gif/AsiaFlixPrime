@@ -1,3 +1,5 @@
+import { DramaItem, EpisodeItem } from '../types/drama';
+
 export type DayShort = 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
 
 export const DAYS_ORDER: DayShort[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -93,4 +95,111 @@ export function isDramaAiringOnDay(
  */
 export function isAiringToday(scheduleStr: string | undefined): boolean {
   return isDramaAiringOnDay(scheduleStr, getTodayShortName());
+}
+
+export interface TrackEpisodeCounts {
+  t1Ep: number;
+  t2Ep: number;
+  t3Ep: number;
+  totalEp: number;
+  hasHindiLink: boolean;
+  hasFanDubLink: boolean;
+  hasOrigLink: boolean;
+}
+
+function getHighestEpisodeNumber(eps: EpisodeItem[]): number {
+  let maxEp = 0;
+  for (const ep of eps) {
+    if (!ep.telegramUrl || !ep.telegramUrl.toLowerCase().includes('http')) continue;
+    if (typeof ep.episodeNumber === 'number') {
+      if (ep.episodeNumber > maxEp) maxEp = ep.episodeNumber;
+    } else if (typeof ep.episodeNumber === 'string') {
+      const range = ep.episodeNumber.match(/(\d+)\s*-\s*(\d+)/);
+      if (range) {
+        const end = parseInt(range[2], 10);
+        if (end > maxEp) maxEp = end;
+      } else {
+        const single = ep.episodeNumber.match(/(\d+)/);
+        if (single) {
+          const num = parseInt(single[1], 10);
+          if (num > maxEp) maxEp = num;
+        }
+      }
+    }
+  }
+  return maxEp;
+}
+
+/**
+ * Calculates exact highest uploaded episode number per audio track (Hindi Dub, Fan Dub, Original)
+ * alongside planned total episodes so multi-track ongoing dramas never confuse users.
+ */
+export function getTrackEpisodeCounts(drama: DramaItem): TrackEpisodeCounts {
+  const eps = drama.episodes || [];
+
+  const hindiEps = eps.filter((e) => e.audio === 'Hindi Dubbed');
+  const fanEps = eps.filter((e) => e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed');
+  const origEps = eps.filter((e) => e.audio === 'Original / Eng Sub');
+
+  let t1Ep = getHighestEpisodeNumber(hindiEps);
+  let t2Ep = getHighestEpisodeNumber(fanEps);
+  let t3Ep = getHighestEpisodeNumber(origEps);
+
+  if (drama.activeTrackSchedules && drama.activeTrackSchedules.length > 0) {
+    for (const track of drama.activeTrackSchedules) {
+      if (track.isComingSoon || !track.currentEp) continue;
+      if (track.key === 't1' && t1Ep === 0) t1Ep = track.currentEp;
+      if (track.key === 't2' && t2Ep === 0) t2Ep = track.currentEp;
+      if (track.key === 't3' && t3Ep === 0) t3Ep = track.currentEp;
+    }
+  }
+
+  let totalEp = drama.totalEpisodes || 0;
+  if (totalEp === 0 && drama.details) {
+    const detEpMatch = drama.details.match(/(\d+)\s*(?:ep|episode)/i);
+    if (detEpMatch) totalEp = parseInt(detEpMatch[1], 10);
+  }
+
+  const hasHindiLink = Boolean(
+    (drama.telegramHindi && drama.telegramHindi.toLowerCase().includes('http')) ||
+      hindiEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      drama.availableAudios?.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan'))
+  );
+  const hasFanDubLink = Boolean(
+    (drama.telegramFanDub && drama.telegramFanDub.toLowerCase().includes('http')) ||
+      fanEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      drama.availableAudios?.some((a) => a.toLowerCase().includes('fan'))
+  );
+  const hasOrigLink = Boolean(
+    (drama.telegramOrig && drama.telegramOrig.toLowerCase().includes('http')) ||
+      origEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      drama.availableAudios?.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub'))
+  );
+
+  return {
+    t1Ep,
+    t2Ep,
+    t3Ep,
+    totalEp,
+    hasHindiLink,
+    hasFanDubLink,
+    hasOrigLink,
+  };
+}
+
+/**
+ * Formats a Date/timestamp deterministically as "DD/MM/YYYY • hh:mm AM/PM".
+ */
+export function formatPermanentTimestamp(dateInput: Date | number | string = new Date()): string {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(d.getTime())) return String(dateInput);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const hoursStr = String(hours).padStart(2, '0');
+  return `${day}/${month}/${year} • ${hoursStr}:${minutes} ${ampm}`;
 }

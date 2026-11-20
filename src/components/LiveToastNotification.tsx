@@ -71,7 +71,7 @@ export const LiveToastNotification: React.FC<LiveToastNotificationProps> = ({
     ? 'bg-amber-500/20'
     : 'bg-[#e50914]/20';
 
-  const posterSrc = drama?.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
+  const posterSrc = drama?.poster || notification.posterUrl || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
 
   const handleClick = () => {
     if (drama) {

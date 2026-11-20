@@ -13,6 +13,7 @@ interface DramaRowProps {
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (dramaId: string) => boolean;
   activeAudioContext?: AudioType | string;
+  rowAudioContext?: 'hindi' | 'fandub' | 'orig';
   isComingSoonContext?: boolean;
   isPhoneDevice?: boolean;
 }
@@ -27,11 +28,23 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   onToggleWatchlist,
   isWatchlisted,
   activeAudioContext,
+  rowAudioContext,
   isComingSoonContext = false,
   isPhoneDevice = false,
 }) => {
   const rowRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Derive strict row audio context from explicit prop, title, or activeAudioContext
+  const effectiveRowAudioContext: 'hindi' | 'fandub' | 'orig' | undefined = useMemo(() => {
+    if (rowAudioContext) return rowAudioContext;
+    const tLower = title.toLowerCase();
+    const ctxLower = (activeAudioContext || '').toLowerCase();
+    if (tLower.includes('fan dub') || ctxLower.includes('fan')) return 'fandub';
+    if (tLower.includes('hindi dubbed') || (ctxLower.includes('hindi') && !ctxLower.includes('fan'))) return 'hindi';
+    if (tLower.includes('original audio') || tLower.includes('eng sub') || ctxLower.includes('orig') || ctxLower.includes('eng')) return 'orig';
+    return undefined;
+  }, [rowAudioContext, title, activeAudioContext]);
 
   // Guarantee 100% unique dramas by ID to eliminate duplicate keys
   const uniqueDramas = useMemo(() => {
@@ -151,6 +164,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
               rank={idx + 1}
               isTopOne={idx === 0}
               activeAudioContext={activeAudioContext}
+              rowAudioContext={effectiveRowAudioContext}
               isComingSoonContext={isComingSoonContext}
               isPhoneDevice={isPhoneDevice}
               isGrid={true}
@@ -175,6 +189,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
                 rank={idx + 1}
                 isTopOne={idx === 0}
                 activeAudioContext={activeAudioContext}
+                rowAudioContext={effectiveRowAudioContext}
                 isComingSoonContext={isComingSoonContext}
                 isPhoneDevice={isPhoneDevice}
               />

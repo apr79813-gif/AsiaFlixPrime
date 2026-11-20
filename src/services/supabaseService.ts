@@ -1,5 +1,6 @@
 import { supabase, ADMIN_EMAIL, ADMIN_EMAILS } from '../lib/supabase';
 import { DramaItem, AudioType, DramaCategory, DramaStatus, ReleaseNotification, EpisodeItem, WatchlistEntry } from '../types/drama';
+import { formatPermanentTimestamp } from './scheduleHelper';
 
 export interface SupabaseTitleRow {
   id: string;
@@ -164,14 +165,38 @@ export async function fetchNotificationsFromSupabase(): Promise<ReleaseNotificat
     // Hide any system snapshot or user account rows
     const publicNotifs = data.filter((n) => !n.heading?.startsWith('__'));
 
-    return publicNotifs.map((n) => ({
-      id: n.id,
-      title: n.heading,
-      message: n.message || '',
-      timestamp: new Date(n.created_at || Date.now()).toLocaleDateString(),
-      isRead: false,
-      type: 'announcement',
-    }));
+    return publicNotifs.map((n) => {
+      const heading = n.heading || '';
+      const msg = n.message || '';
+      const headingLower = heading.toLowerCase();
+      const msgLower = msg.toLowerCase();
+      const createdDate = n.created_at ? new Date(n.created_at) : new Date();
+      const createdAtMs = isNaN(createdDate.getTime()) ? Date.now() : createdDate.getTime();
+
+      let type: ReleaseNotification['type'] = 'announcement';
+      let badge: string | undefined = undefined;
+
+      if (headingLower.includes('issue fixed') || heading.includes('✅')) {
+        type = 'fix';
+        badge = '✅ ISSUE FIXED';
+      } else if (headingLower.includes('issue reported') || heading.includes('⚠️')) {
+        type = 'issue';
+        badge = '⚠️ UNDER FIX';
+      } else if (/ep\s*\d+|added|full\s*(?:series|movie)|coming\s*soon/i.test(msgLower)) {
+        type = 'new_episode';
+      }
+
+      return {
+        id: n.id,
+        title: heading,
+        message: msg,
+        timestamp: formatPermanentTimestamp(createdDate),
+        createdAtMs,
+        isRead: false,
+        type,
+        badge,
+      };
+    });
   } catch {
     return null;
   }
@@ -431,6 +456,8 @@ export async function insertNotificationIntoSupabase(
     return { success: false, error: err?.message || 'Database error' };
   }
 }
+
+export const createNotificationInSupabase = insertNotificationIntoSupabase;
 
 export interface CloudUserData {
   email: string;

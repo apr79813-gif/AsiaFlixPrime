@@ -112,3 +112,19 @@ export function sendNativePushNotification(title: string, options?: { body?: str
     console.warn('Native notification trigger failed:', err);
   }
 }
+
+/**
+ * Convenience helper to trigger a native OS/phone display notification with unique tag per alert
+ */
+export function sendNativeBrowserNotification(
+  title: string,
+  message?: string,
+  posterUrl?: string,
+  tag?: string
+) {
+  sendNativePushNotification(title, {
+    body: message,
+    icon: posterUrl,
+    tag: tag || `asiaflix-${Date.now()}`,
+  });
+}

@@ -23,10 +23,13 @@ import { AdminStudioModal } from './components/AdminStudioModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
+import { sendNativeBrowserNotification } from './services/notificationService';
+import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
   insertNotificationIntoSupabase,
+  createNotificationInSupabase,
   fetchSheetSnapshotFromSupabase,
   saveSheetSnapshotToSupabase,
   cleanupOldSpamNotificationsFromSupabase,
@@ -180,8 +183,90 @@ export default function App() {
     return [];
   });
 
-  // --- FLOATING LIVE PUSH NOTIFICATION TOAST POPUP STATE ---
-  const [activeToastNotif, setActiveToastNotif] = useState<ReleaseNotification | null>(null);
+  // --- FLOATING LIVE PUSH NOTIFICATION TOAST QUEUE & PER-DEVICE ALERT TRACKING ---
+  const [toastQueue, setToastQueue] = useState<ReleaseNotification[]>([]);
+  const activeToastNotif = toastQueue[0] || null;
+  const handleDismissToast = React.useCallback(() => {
+    setToastQueue((prev) => prev.slice(1));
+  }, []);
+
+  const deviceAlertedIdsRef = useRef<Set<string>>((() => {
+    try {
+      const saved = localStorage.getItem('asiaflix_device_alerted_ids_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return new Set(parsed.filter((x) => typeof x === 'string'));
+      }
+    } catch {}
+    return new Set<string>();
+  })());
+
+  const dramasRef = useRef<DramaItem[]>(dramas);
+  useEffect(() => {
+    dramasRef.current = dramas;
+  }, [dramas]);
+
+  const enqueueDeviceAlerts = React.useCallback((candidateNotifs: ReleaseNotification[]) => {
+    if (!candidateNotifs || candidateNotifs.length === 0) return;
+
+    const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+    const readSet = new Set(readNotifIdsRef.current);
+
+    const priorityScore = (n: ReleaseNotification) => {
+      if (n.type === 'new_episode' || n.type === 'new_drama') return 0;
+      if (n.type === 'fix') return 1;
+      if (n.type === 'issue') return 2;
+      return 3;
+    };
+
+    const unalerted = candidateNotifs
+      .filter((n) => {
+        if (!n || !n.id) return false;
+        if (n.isRead || readSet.has(n.id)) return false;
+        if (deviceAlertedIdsRef.current.has(n.id)) return false;
+        if (n.createdAtMs && n.createdAtMs < cutoffMs) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const pDiff = priorityScore(a) - priorityScore(b);
+        if (pDiff !== 0) return pDiff;
+        return (b.createdAtMs || 0) - (a.createdAtMs || 0);
+      })
+      .slice(0, 4);
+
+    if (unalerted.length === 0) return;
+
+    unalerted.forEach((n) => deviceAlertedIdsRef.current.add(n.id));
+    const persistedArr = Array.from(deviceAlertedIdsRef.current).slice(-400);
+    deviceAlertedIdsRef.current = new Set(persistedArr);
+    try {
+      localStorage.setItem('asiaflix_device_alerted_ids_v2', JSON.stringify(persistedArr));
+    } catch {}
+
+    const enrichedAlerts = unalerted.map((n) => {
+      const matchedDrama = n.posterUrl
+        ? null
+        : dramasRef.current.find(
+            (d) =>
+              (n.dramaId && d.id === n.dramaId) ||
+              d.title.toLowerCase() === n.title.toLowerCase() ||
+              n.title.toLowerCase().includes(d.title.toLowerCase())
+          );
+      const posterUrl = n.posterUrl || matchedDrama?.poster;
+
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        sendNativeBrowserNotification(n.title, n.message, posterUrl, n.id);
+      }
+
+      return posterUrl && !n.posterUrl ? { ...n, posterUrl } : n;
+    });
+
+    setToastQueue((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id));
+      const toAdd = enrichedAlerts.filter((e) => !existingIds.has(e.id));
+      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+    });
+  }, []);
 
   // --- WATCHLIST STATE (CLEAN & CLOUD-SYNCABLE) ---
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(() => {
@@ -518,25 +603,14 @@ export default function App() {
     syncCatalogAndNotifs();
   }, []);
 
-  // Auto-trigger live toast for fresh unread notification 2.5s after page load
+  // Auto-trigger on-screen toast queue & native phone push notification for un-alerted notifications
   useEffect(() => {
+    if (notifications.length === 0) return;
     const timer = setTimeout(() => {
-      if (notifications.length > 0) {
-        const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
-        const latestNotif = notifications[0];
-        if (
-          latestNotif &&
-          !latestNotif.isRead &&
-          !readNotifIdsRef.current.includes(latestNotif.id) &&
-          latestNotif.id !== lastToastId
-        ) {
-          sessionStorage.setItem('asiaflix_last_toast_id', latestNotif.id);
-          setActiveToastNotif(latestNotif);
-        }
-      }
-    }, 2500);
+      enqueueDeviceAlerts(notifications);
+    }, 900);
     return () => clearTimeout(timer);
-  }, [notifications]);
+  }, [notifications, enqueueDeviceAlerts]);
 
   // Background live sync: silently poll Google Sheet and Supabase notifications every 45 seconds
   useEffect(() => {
@@ -1491,85 +1565,255 @@ export default function App() {
             await saveSheetSnapshotToSupabase(currentSnapshot);
           }
 
+          // Compare local Google Sheet episode counts (t1:X|t2:Y|t3:Z) against asiaflix_sheet_ep_snapshot_v2
+          const currLocalEpSnap: Record<string, string> = {};
+          const localEpNotifs: ReleaseNotification[] = [];
+          let prevLocalEpSnap: Record<string, string> | null = null;
+          try {
+            const rawEpSnap = localStorage.getItem('asiaflix_sheet_ep_snapshot_v2');
+            if (rawEpSnap) {
+              const parsedSnap = JSON.parse(rawEpSnap);
+              if (parsedSnap && typeof parsedSnap === 'object') prevLocalEpSnap = parsedSnap;
+            }
+          } catch {
+            prevLocalEpSnap = null;
+          }
+
+          const nowMs = Date.now();
+          const nowPermTs = formatPermanentTimestamp(new Date(nowMs));
+
+          uniqueParsed.forEach((d) => {
+            const { t1Ep, t2Ep, t3Ep } = getTrackEpisodeCounts(d);
+            currLocalEpSnap[d.id] = `t1:${t1Ep}|t2:${t2Ep}|t3:${t3Ep}`;
+
+            if (prevLocalEpSnap && prevLocalEpSnap[d.id]) {
+              const m = prevLocalEpSnap[d.id].match(/t1:(\d+)\|t2:(\d+)\|t3:(\d+)/);
+              if (m) {
+                const prevT1 = parseInt(m[1], 10) || 0;
+                const prevT2 = parseInt(m[2], 10) || 0;
+                const prevT3 = parseInt(m[3], 10) || 0;
+
+                if (t1Ep > prevT1) {
+                  localEpNotifs.push({
+                    id: `sheet-ep-${d.id}-t1-ep${t1Ep}`,
+                    title: d.title,
+                    message: `Hindi Dubbed Ep ${t1Ep} Added`,
+                    timestamp: nowPermTs,
+                    createdAtMs: nowMs,
+                    isRead: false,
+                    type: 'new_episode',
+                    audioType: 'Hindi Dubbed',
+                    dramaId: d.id,
+                    posterUrl: d.poster,
+                  });
+                }
+                if (t2Ep > prevT2) {
+                  localEpNotifs.push({
+                    id: `sheet-ep-${d.id}-t2-ep${t2Ep}`,
+                    title: d.title,
+                    message: `Hindi Fan Dubbed Ep ${t2Ep} Added`,
+                    timestamp: nowPermTs,
+                    createdAtMs: nowMs,
+                    isRead: false,
+                    type: 'new_episode',
+                    audioType: 'Hindi Fan Dubbed',
+                    dramaId: d.id,
+                    posterUrl: d.poster,
+                  });
+                }
+                if (t3Ep > prevT3) {
+                  localEpNotifs.push({
+                    id: `sheet-ep-${d.id}-t3-ep${t3Ep}`,
+                    title: d.title,
+                    message: `Original / Eng Sub Ep ${t3Ep} Added`,
+                    timestamp: nowPermTs,
+                    createdAtMs: nowMs,
+                    isRead: false,
+                    type: 'new_episode',
+                    audioType: 'Original / Eng Sub',
+                    dramaId: d.id,
+                    posterUrl: d.poster,
+                  });
+                }
+              }
+            }
+          });
+
+          try {
+            localStorage.setItem('asiaflix_sheet_ep_snapshot_v2', JSON.stringify(currLocalEpSnap));
+          } catch {}
+
           // Refresh notifications from Supabase so every browser gets live cloud updates (preserving seen/read state)
           const cloudNotifs = await fetchNotificationsFromSupabase();
 
-          // Auto-generate deterministic notifications directly from Google Sheet Column T (Issue) & Column U (Issue Fixed)
-          const nowTimeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          // Save newly detected local episode drops to Supabase if not already present
+          if (localEpNotifs.length > 0 && localEpNotifs.length <= 5) {
+            for (const epNotif of localEpNotifs) {
+              const alreadyInCloud = (cloudNotifs || []).some(
+                (c) =>
+                  c.title.trim().toLowerCase() === epNotif.title.trim().toLowerCase() &&
+                  c.message.trim().toLowerCase() === epNotif.message.trim().toLowerCase()
+              );
+              if (!alreadyInCloud) {
+                await createNotificationInSupabase(epNotif.title, epNotif.message);
+              }
+            }
+          }
+
+          // Load permanent timestamps store for Column T (Issue) & Column U (Issue Fixed)
+          let issueTimestampsMap: Record<string, { label: string; ms: number } | string> = {};
+          try {
+            const savedTs = localStorage.getItem('asiaflix_issue_timestamps_v2');
+            if (savedTs) {
+              const parsedTs = JSON.parse(savedTs);
+              if (parsedTs && typeof parsedTs === 'object') issueTimestampsMap = parsedTs;
+            }
+          } catch {
+            issueTimestampsMap = {};
+          }
+
+          const parseBracketTs = (raw: string) => {
+            const match = raw.match(/\[([^\]]+)\]/);
+            if (!match) return { cleanText: raw.trim(), customTs: '' };
+            const customTs = match[1].trim();
+            const cleanText = raw.replace(/\s*\[[^\]]+\]\s*/g, ' ').trim();
+            return { cleanText, customTs };
+          };
+
           const sheetIssueNotifs: ReleaseNotification[] = [];
+          const newIssuesToPushSupabase: Array<{ title: string; message: string }> = [];
+
           uniqueParsed.forEach((d) => {
-            if (d.issueFixedText) {
+            if (d.issueFixedText && d.issueFixedText.trim()) {
+              const rawFixed = d.issueFixedText.trim();
+              const { cleanText, customTs } = parseBracketTs(rawFixed);
+              const notifId = `sheet-fixed-${d.id}-${rawFixed}`;
+              const notifTitle = `✅ Issue Fixed: ${d.title}`;
+
+              const cloudMatch = (cloudNotifs || []).find(
+                (c) =>
+                  c.id === notifId ||
+                  (c.title.trim().toLowerCase() === notifTitle.trim().toLowerCase() &&
+                    (c.message.trim().toLowerCase() === cleanText.toLowerCase() ||
+                      c.message.trim().toLowerCase() === rawFixed.toLowerCase()))
+              );
+
+              const storedEntry = issueTimestampsMap[notifId];
+              let resolvedLabel = '';
+              let resolvedMs = nowMs;
+
+              if (customTs) {
+                resolvedLabel = customTs;
+                resolvedMs = typeof storedEntry === 'object' && storedEntry ? storedEntry.ms : nowMs;
+              } else if (cloudMatch) {
+                resolvedLabel = cloudMatch.timestamp;
+                resolvedMs = cloudMatch.createdAtMs || nowMs;
+                issueTimestampsMap[notifId] = { label: resolvedLabel, ms: resolvedMs };
+              } else if (storedEntry) {
+                resolvedLabel = typeof storedEntry === 'string' ? storedEntry : storedEntry.label;
+                resolvedMs = typeof storedEntry === 'string' ? nowMs : storedEntry.ms;
+              } else {
+                resolvedLabel = formatPermanentTimestamp(new Date(nowMs));
+                resolvedMs = nowMs;
+                issueTimestampsMap[notifId] = { label: resolvedLabel, ms: resolvedMs };
+                newIssuesToPushSupabase.push({ title: notifTitle, message: cleanText });
+              }
+
               sheetIssueNotifs.push({
-                id: `sheet-fixed-${d.id}-${d.issueFixedText}`,
-                title: `✅ Issue Fixed: ${d.title}`,
-                message: d.issueFixedText,
-                timestamp: `Live Sheet · ${nowTimeLabel}`,
-                isRead: false,
+                id: notifId,
+                title: notifTitle,
+                message: cleanText,
+                timestamp: resolvedLabel,
+                createdAtMs: resolvedMs,
+                isRead: Boolean(cloudMatch && readNotifIdsRef.current.includes(cloudMatch.id)),
                 type: 'fix',
                 dramaId: d.id,
+                posterUrl: d.poster,
                 badge: '✅ ISSUE FIXED',
               });
             }
-            if (d.issueText) {
+
+            if (d.issueText && d.issueText.trim()) {
+              const rawIssue = d.issueText.trim();
+              const { cleanText, customTs } = parseBracketTs(rawIssue);
+              const notifId = `sheet-issue-${d.id}-${rawIssue}`;
+              const notifTitle = `⚠️ Issue Reported: ${d.title}`;
+              const notifMessage = `${cleanText} (Our team is fixing this right now)`;
+
+              const cloudMatch = (cloudNotifs || []).find(
+                (c) =>
+                  c.id === notifId ||
+                  (c.title.trim().toLowerCase() === notifTitle.trim().toLowerCase() &&
+                    (c.message.trim().toLowerCase() === notifMessage.toLowerCase() ||
+                      c.message.trim().toLowerCase().includes(cleanText.toLowerCase())))
+              );
+
+              const storedEntry = issueTimestampsMap[notifId];
+              let resolvedLabel = '';
+              let resolvedMs = nowMs;
+
+              if (customTs) {
+                resolvedLabel = customTs;
+                resolvedMs = typeof storedEntry === 'object' && storedEntry ? storedEntry.ms : nowMs;
+              } else if (cloudMatch) {
+                resolvedLabel = cloudMatch.timestamp;
+                resolvedMs = cloudMatch.createdAtMs || nowMs;
+                issueTimestampsMap[notifId] = { label: resolvedLabel, ms: resolvedMs };
+              } else if (storedEntry) {
+                resolvedLabel = typeof storedEntry === 'string' ? storedEntry : storedEntry.label;
+                resolvedMs = typeof storedEntry === 'string' ? nowMs : storedEntry.ms;
+              } else {
+                resolvedLabel = formatPermanentTimestamp(new Date(nowMs));
+                resolvedMs = nowMs;
+                issueTimestampsMap[notifId] = { label: resolvedLabel, ms: resolvedMs };
+                newIssuesToPushSupabase.push({ title: notifTitle, message: notifMessage });
+              }
+
               sheetIssueNotifs.push({
-                id: `sheet-issue-${d.id}-${d.issueText}`,
-                title: `⚠️ Issue Reported: ${d.title}`,
-                message: `${d.issueText} (Our team is fixing this right now)`,
-                timestamp: `Live Sheet · ${nowTimeLabel}`,
-                isRead: false,
+                id: notifId,
+                title: notifTitle,
+                message: notifMessage,
+                timestamp: resolvedLabel,
+                createdAtMs: resolvedMs,
+                isRead: Boolean(cloudMatch && readNotifIdsRef.current.includes(cloudMatch.id)),
                 type: 'issue',
                 dramaId: d.id,
+                posterUrl: d.poster,
                 badge: '⚠️ UNDER FIX',
               });
             }
           });
 
-          const combinedRaw = [...sheetIssueNotifs, ...(cloudNotifs || [])];
+          try {
+            localStorage.setItem('asiaflix_issue_timestamps_v2', JSON.stringify(issueTimestampsMap));
+          } catch {}
+
+          // Push newly created first-time sheet issues/fixes once to Supabase
+          if (newIssuesToPushSupabase.length > 0 && newIssuesToPushSupabase.length <= 8) {
+            for (const item of newIssuesToPushSupabase) {
+              await createNotificationInSupabase(item.title, item.message);
+            }
+          }
+
+          // Deduplicate combined notifications (deterministic sheet alerts + Supabase rows) while keeping read state
+          const combinedRaw = [...localEpNotifs, ...sheetIssueNotifs, ...(cloudNotifs || [])];
           const dedupedMap = new Map<string, ReleaseNotification>();
+          const seenTitleMsg = new Set<string>();
+
           combinedRaw.forEach((n) => {
-            if (!dedupedMap.has(n.id)) dedupedMap.set(n.id, n);
+            if (dedupedMap.has(n.id)) return;
+            const sig = `${n.title.trim().toLowerCase()}||${n.message.trim().toLowerCase()}`;
+            if (seenTitleMsg.has(sig)) return;
+            seenTitleMsg.add(sig);
+            dedupedMap.set(n.id, n);
           });
+
           const mergedAllNotifs = applyReadStateToNotifs(Array.from(dedupedMap.values()));
 
           if (mergedAllNotifs.length > 0) {
             setNotifications(mergedAllNotifs);
             localStorage.setItem('asiaflix_notifications', JSON.stringify(mergedAllNotifs));
-
-            // Trigger floating live toast for any newly appearing unread issue/fix or latest unread drop
-            let toastedIds: string[] = [];
-            try {
-              const rawToasted = sessionStorage.getItem('asiaflix_toasted_ids_v1');
-              if (rawToasted) toastedIds = JSON.parse(rawToasted);
-            } catch {
-              toastedIds = [];
-            }
-            const lastToastId = sessionStorage.getItem('asiaflix_last_toast_id');
-
-            const unreadSheetAlert = mergedAllNotifs.find(
-              (n) =>
-                (n.type === 'fix' || n.type === 'issue') &&
-                !n.isRead &&
-                !readNotifIdsRef.current.includes(n.id) &&
-                n.id !== lastToastId &&
-                !toastedIds.includes(n.id)
-            );
-            const fallbackTopNotif = mergedAllNotifs[0];
-            const toastCandidate =
-              unreadSheetAlert ||
-              (fallbackTopNotif &&
-              !fallbackTopNotif.isRead &&
-              !readNotifIdsRef.current.includes(fallbackTopNotif.id) &&
-              fallbackTopNotif.id !== lastToastId &&
-              !toastedIds.includes(fallbackTopNotif.id)
-                ? fallbackTopNotif
-                : null);
-
-            if (toastCandidate) {
-              sessionStorage.setItem('asiaflix_last_toast_id', toastCandidate.id);
-              const nextToasted = Array.from(new Set([...toastedIds, toastCandidate.id])).slice(-100);
-              sessionStorage.setItem('asiaflix_toasted_ids_v1', JSON.stringify(nextToasted));
-              setActiveToastNotif(toastCandidate);
-            }
+            enqueueDeviceAlerts(mergedAllNotifs);
           }
         } catch {
           // Silent cloud notification sync catch
@@ -2188,6 +2432,15 @@ export default function App() {
                     rank={idx + 1}
                     isTopOne={idx === 0}
                     activeAudioContext={selectedAudio}
+                    rowAudioContext={
+                      selectedAudio === 'Hindi Dubbed'
+                        ? 'hindi'
+                        : selectedAudio === 'Fan Dubbed'
+                        ? 'fandub'
+                        : selectedAudio === 'Original / Eng Sub'
+                        ? 'orig'
+                        : undefined
+                    }
                     isComingSoonContext={selectedStatus === 'Coming Soon'}
                     isPhoneDevice={isPhoneDevice}
                     isGrid={true}
@@ -2266,6 +2519,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Dubbed"
+                rowAudioContext="hindi"
                 isPhoneDevice={isPhoneDevice}
               />
             )}
@@ -2282,6 +2536,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Fan Dubbed"
+                rowAudioContext="fandub"
                 isPhoneDevice={isPhoneDevice}
               />
             )}
@@ -2298,6 +2553,7 @@ export default function App() {
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Original / Eng Sub"
+                rowAudioContext="orig"
                 isPhoneDevice={isPhoneDevice}
               />
             )}
@@ -2758,7 +3014,7 @@ export default function App() {
             : null
         }
         onOpenDrama={(drama) => setSelectedDrama(drama)}
-        onDismiss={() => setActiveToastNotif(null)}
+        onDismiss={handleDismissToast}
       />
     </div>
   );

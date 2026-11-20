@@ -104,7 +104,9 @@ export interface ReleaseNotification {
   message: string;
   audioType?: AudioType;
   badge?: string;
+  posterUrl?: string;
   timestamp: string;
+  createdAtMs?: number;
   isRead: boolean;
   type: 'new_episode' | 'new_drama' | 'fhd_remaster' | 'announcement' | 'issue' | 'fix';
 }

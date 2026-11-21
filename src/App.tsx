@@ -23,7 +23,12 @@ import { AdminStudioModal } from './components/AdminStudioModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
-import { sendNativeBrowserNotification } from './services/notificationService';
+import {
+  sendNativeBrowserNotification,
+  registerServiceWorker,
+  requestBrowserNotificationPermission,
+  syncShownIdsToServiceWorker,
+} from './services/notificationService';
 import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
 import { 
   fetchDramasFromSupabase, 
@@ -266,6 +271,8 @@ export default function App() {
       const toAdd = enrichedAlerts.filter((e) => !existingIds.has(e.id));
       return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
     });
+
+    syncShownIdsToServiceWorker([...persistedArr, ...readNotifIdsRef.current]);
   }, []);
 
   // --- WATCHLIST STATE (CLEAN & CLOUD-SYNCABLE) ---
@@ -379,6 +386,10 @@ export default function App() {
       if (mergedReadIds.length > (cloudReadNotifIds?.length || 0)) {
         saveUserWatchlistToSupabase(user.email, nextWatchlist, nextWatched, mergedReadIds);
       }
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        requestBrowserNotificationPermission();
+      }
+      syncShownIdsToServiceWorker(mergedReadIds);
     } else {
       localStorage.removeItem('asiaflix_logged_in_user_v1');
     }
@@ -601,6 +612,30 @@ export default function App() {
     }
 
     syncCatalogAndNotifs();
+  }, []);
+
+  // Register background Service Worker & auto-request OS notification permission on first interaction
+  useEffect(() => {
+    registerServiceWorker();
+
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'default') return;
+
+    const handleFirstInteraction = () => {
+      window.removeEventListener('click', handleFirstInteraction, true);
+      window.removeEventListener('touchstart', handleFirstInteraction, true);
+      if ('Notification' in window && Notification.permission === 'default') {
+        requestBrowserNotificationPermission();
+      }
+    };
+
+    window.addEventListener('click', handleFirstInteraction, { capture: true, once: true });
+    window.addEventListener('touchstart', handleFirstInteraction, { capture: true, once: true });
+
+    return () => {
+      window.removeEventListener('click', handleFirstInteraction, true);
+      window.removeEventListener('touchstart', handleFirstInteraction, true);
+    };
   }, []);
 
   // Auto-trigger on-screen toast queue & native phone push notification for un-alerted notifications

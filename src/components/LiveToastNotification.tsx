@@ -1,6 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DramaItem, ReleaseNotification } from '../types/drama';
-import { X, Play, Flame, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, Play, Flame, AlertTriangle, CheckCircle2, Volume2, VolumeX } from 'lucide-react';
+import {
+  playNotificationSound,
+  isNotificationSoundMuted,
+  setNotificationSoundMuted,
+} from '../services/notificationService';
 
 interface LiveToastNotificationProps {
   notification: ReleaseNotification | null;
@@ -15,6 +20,13 @@ export const LiveToastNotification: React.FC<LiveToastNotificationProps> = ({
   onOpenDrama,
   onDismiss,
 }) => {
+  const [isMuted, setIsMuted] = useState<boolean>(() => isNotificationSoundMuted());
+
+  useEffect(() => {
+    if (!notification?.id) return;
+    playNotificationSound();
+  }, [notification?.id]);
+
   useEffect(() => {
     if (!notification) return;
     const timer = setTimeout(() => {
@@ -22,6 +34,16 @@ export const LiveToastNotification: React.FC<LiveToastNotificationProps> = ({
     }, 8000);
     return () => clearTimeout(timer);
   }, [notification, onDismiss]);
+
+  const handleToggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    setNotificationSoundMuted(nextMuted);
+    if (!nextMuted) {
+      playNotificationSound();
+    }
+  };
 
   if (!notification) return null;
 
@@ -104,7 +126,7 @@ export const LiveToastNotification: React.FC<LiveToastNotificationProps> = ({
         </div>
 
         {/* Notification Content */}
-        <div className="flex-1 min-w-0 pr-6">
+        <div className="flex-1 min-w-0 pr-12">
           {/* Header strip */}
           <div className="flex items-center gap-1.5 mb-1 flex-wrap">
             {isFixToast ? (
@@ -161,15 +183,25 @@ export const LiveToastNotification: React.FC<LiveToastNotificationProps> = ({
           </div>
         </div>
 
-        {/* Close Button */}
-        <button
-          onClick={onDismiss}
-          className="absolute top-2.5 right-2.5 p-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-zinc-400 hover:text-white transition-colors cursor-pointer border border-white/5"
-          title="Dismiss notification"
-          aria-label="Dismiss notification"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {/* Sound Mute Toggle + Close Button */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
+          <button
+            onClick={handleToggleMute}
+            className="p-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-zinc-400 hover:text-white transition-colors cursor-pointer border border-white/5"
+            title={isMuted ? 'Unmute notification sound' : 'Mute notification sound'}
+            aria-label={isMuted ? 'Unmute notification sound' : 'Mute notification sound'}
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+          </button>
+          <button
+            onClick={onDismiss}
+            className="p-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.15] text-zinc-400 hover:text-white transition-colors cursor-pointer border border-white/5"
+            title="Dismiss notification"
+            aria-label="Dismiss notification"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </div>
   );

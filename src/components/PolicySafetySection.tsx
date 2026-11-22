@@ -1,7 +1,11 @@
 import React from 'react';
 import { ShieldCheck, Zap, MessageSquare, Lock, HeartHandshake } from 'lucide-react';
 
-export const PolicySafetySection: React.FC = () => {
+interface PolicySafetySectionProps {
+  adsEnabled?: boolean;
+}
+
+export const PolicySafetySection: React.FC<PolicySafetySectionProps> = ({ adsEnabled = false }) => {
   return (
     <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-16 w-full">
       <div className="p-6 sm:p-10 rounded-3xl bg-[#0d0e14] border border-white/[0.08] relative overflow-hidden shadow-2xl w-full">
@@ -36,9 +40,11 @@ export const PolicySafetySection: React.FC = () => {
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center mb-3.5 group-hover:scale-110 transition-transform">
               <Zap className="w-5 h-5" />
             </div>
-            <h4 className="text-sm sm:text-base font-black text-white mb-1.5">Zero Pop-ups or Link Tokens</h4>
+            <h4 className="text-sm sm:text-base font-black text-white mb-1.5">
+              {adsEnabled ? 'Direct Cloud Links · No Tokens' : 'Zero Pop-ups or Link Tokens'}
+            </h4>
             <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-              We never use spammy url-shorteners, captchas, or adult ad tokens. Direct Telegram download links open in 1 click.
+              We never use spammy url-shorteners, captchas, or forced link tokens. Direct Telegram download links open in 1 click.
             </p>
           </div>
 

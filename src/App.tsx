@@ -23,6 +23,7 @@ import { AdminStudioModal } from './components/AdminStudioModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
+import { AdBannerSlot } from './components/AdBannerSlot';
 import {
   sendNativeBrowserNotification,
   registerServiceWorker,
@@ -42,7 +43,11 @@ import {
   clearAllNotificationsFromSupabase,
   syncUserAccountWithSupabase,
   saveUserWatchlistToSupabase,
-  getActiveSupabaseUser 
+  getActiveSupabaseUser,
+  AdConfig,
+  getLocalAdConfig,
+  fetchAdConfigFromSupabase,
+  saveAdConfigToSupabase
 } from './services/supabaseService';
 
 export const OFFICIAL_SITE_URL = 'https://asiaflixprime.pages.dev';
@@ -437,7 +442,15 @@ export default function App() {
   const [isInstantSearchOpen, setIsInstantSearchOpen] = useState(false);
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
   const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies' | 'Other Series'>('All');
-  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security'>('trending');
+  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>('trending');
+
+  // --- CLOUD-SYNCED AD CONFIGURATION STATE ---
+  const [adConfig, setAdConfig] = useState<AdConfig>(() => getLocalAdConfig());
+
+  const handleUpdateAdConfig = async (nextConfig: AdConfig) => {
+    setAdConfig(nextConfig);
+    return await saveAdConfigToSupabase(nextConfig);
+  };
 
   // --- HOMEPAGE HERO BANNERS / BACKGROUND POSTERS STATE ---
   const [heroBanners, setHeroBanners] = useState<HeroBannerSlide[]>(() => {
@@ -470,7 +483,7 @@ export default function App() {
     sessionStorage.removeItem('asiaflix_admin_session');
   };
 
-  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'supabase' | 'security') => {
+  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
     setAdminInitialTab(tab);
     setIsAdminOpen(true);
   };
@@ -647,10 +660,11 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [notifications, enqueueDeviceAlerts]);
 
-  // Background live sync: silently poll Google Sheet and Supabase notifications every 45 seconds
+  // Background live sync: silently poll Google Sheet and Supabase ad/notifications every 45 seconds
   useEffect(() => {
     const pollInterval = setInterval(() => {
       fetchGoogleSheetData();
+      fetchAdConfigFromSupabase().then((cfg) => setAdConfig(cfg)).catch(() => {});
     }, 45000);
     return () => clearInterval(pollInterval);
   }, []);
@@ -696,6 +710,10 @@ export default function App() {
 
   const syncCatalogAndNotifs = async () => {
     try {
+      // Fetch live Ad Configuration from Supabase (__AD_CONFIG__)
+      const sbAdConfig = await fetchAdConfigFromSupabase();
+      setAdConfig(sbAdConfig);
+
       // Purge any old spam notifications from Supabase
       await cleanupOldSpamNotificationsFromSupabase();
 
@@ -2333,10 +2351,12 @@ export default function App() {
               <span className="text-xs font-black text-white tracking-wide whitespace-nowrap">Fast Cloud Stream</span>
             </div>
 
-            {/* Perk 3: Zero Ads / No Token */}
+            {/* Perk 3: Zero Ads / Direct Cloud Links */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-red-500/10 to-pink-500/10 hover:from-red-500/20 hover:to-pink-500/20 border border-red-500/25 backdrop-blur-md shadow-[0_2px_10px_rgba(229,9,20,0.2)] transition-all shrink-0">
-              <span className="text-xs">🛡️</span>
-              <span className="text-xs font-black text-red-200 tracking-wide whitespace-nowrap">Zero Ads / No Token</span>
+              <span className="text-xs">{adConfig.enabled ? '⚡' : '🛡️'}</span>
+              <span className="text-xs font-black text-red-200 tracking-wide whitespace-nowrap">
+                {adConfig.enabled ? 'Direct Cloud Links' : 'Zero Ads / No Token'}
+              </span>
             </div>
 
             {/* Perk 4: Weekend Drops */}
@@ -2389,6 +2409,11 @@ export default function App() {
         isAdminAuthenticated={isAdminAuthenticated}
         isPhoneDevice={isPhoneDevice}
       />
+
+      {/* AD SLOT 1: HOME BANNER (Between Weekend Lineup & Filter Bar) */}
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        <AdBannerSlot slot="home" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
+      </div>
 
       {/* Catalog Search & Multi-Track Audio Filter Bar */}
       <FilterBar
@@ -2688,8 +2713,13 @@ export default function App() {
           </div>
         )}
 
+        {/* AD SLOT 3: FOOTER BANNER (Above Safety Policy Section) */}
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
+          <AdBannerSlot slot="footer" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
+        </div>
+
         {/* Channel Policy & Safety Section */}
-        <PolicySafetySection />
+        <PolicySafetySection adsEnabled={adConfig.enabled} />
       </main>
 
       {/* Footer */}
@@ -2719,6 +2749,7 @@ export default function App() {
             setSelectedDrama(null);
             setIsSupportOpen(true);
           }}
+          adConfig={adConfig}
         />
       )}
 
@@ -2794,6 +2825,8 @@ export default function App() {
           onUpdateGoogleSheetUrl={handleUpdateGoogleSheetUrl}
           telegramBotSettings={telegramBotSettings}
           onUpdateTelegramBotSettings={setTelegramBotSettings}
+          adConfig={adConfig}
+          onUpdateAdConfig={handleUpdateAdConfig}
         />
       )}
 

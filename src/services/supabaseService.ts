@@ -263,6 +263,134 @@ export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, an
   }
 }
 
+export interface AdConfig {
+  enabled: boolean;
+  mode: 'custom' | 'script';
+  scriptHtml: string;
+  customImageUrl: string;
+  customTargetUrl: string;
+  customHeadline: string;
+  customBadgeText: string;
+  showHomeBanner: boolean;
+  showModalBanner: boolean;
+  showFooterBanner: boolean;
+}
+
+export const AD_CONFIG_KEY = '__AD_CONFIG__';
+export const AD_CONFIG_STORAGE_KEY = 'asiaflix_ad_config_v1';
+
+export const DEFAULT_AD_CONFIG: AdConfig = {
+  enabled: false,
+  mode: 'custom',
+  scriptHtml: '',
+  customImageUrl: '',
+  customTargetUrl: '',
+  customHeadline: '',
+  customBadgeText: 'SPONSORED PARTNER',
+  showHomeBanner: true,
+  showModalBanner: true,
+  showFooterBanner: true,
+};
+
+function normalizeAdConfig(raw: any): AdConfig {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_AD_CONFIG };
+  return {
+    enabled: Boolean(raw.enabled),
+    mode: raw.mode === 'script' ? 'script' : 'custom',
+    scriptHtml: typeof raw.scriptHtml === 'string' ? raw.scriptHtml : '',
+    customImageUrl: typeof raw.customImageUrl === 'string' ? raw.customImageUrl : '',
+    customTargetUrl: typeof raw.customTargetUrl === 'string' ? raw.customTargetUrl : '',
+    customHeadline: typeof raw.customHeadline === 'string' ? raw.customHeadline : '',
+    customBadgeText:
+      typeof raw.customBadgeText === 'string' && raw.customBadgeText.trim()
+        ? raw.customBadgeText
+        : 'SPONSORED PARTNER',
+    showHomeBanner: raw.showHomeBanner !== undefined ? Boolean(raw.showHomeBanner) : true,
+    showModalBanner: raw.showModalBanner !== undefined ? Boolean(raw.showModalBanner) : true,
+    showFooterBanner: raw.showFooterBanner !== undefined ? Boolean(raw.showFooterBanner) : true,
+  };
+}
+
+export function getLocalAdConfig(): AdConfig {
+  try {
+    const saved = localStorage.getItem(AD_CONFIG_STORAGE_KEY);
+    if (saved) {
+      return normalizeAdConfig(JSON.parse(saved));
+    }
+  } catch {
+    // Fallback to defaults
+  }
+  return { ...DEFAULT_AD_CONFIG };
+}
+
+// Fetch live Ad configuration from Supabase (__AD_CONFIG__) with instant localStorage fallback
+export async function fetchAdConfigFromSupabase(): Promise<AdConfig> {
+  try {
+    const { data, error } = await supabase
+      .from('release_notifications')
+      .select('id, heading, message')
+      .eq('heading', AD_CONFIG_KEY)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!error && data && data.length > 0 && data[0].message) {
+      const parsed = normalizeAdConfig(JSON.parse(data[0].message));
+      try {
+        localStorage.setItem(AD_CONFIG_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {}
+      return parsed;
+    }
+  } catch {
+    // Fallback to local cache
+  }
+  return getLocalAdConfig();
+}
+
+// Save and publish Ad configuration into Supabase (__AD_CONFIG__) and localStorage
+export async function saveAdConfigToSupabase(config: AdConfig): Promise<{ success: boolean; error?: string }> {
+  const normalized = normalizeAdConfig(config);
+  try {
+    localStorage.setItem(AD_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {}
+
+  try {
+    const messageJson = JSON.stringify(normalized);
+    const { data: existing } = await supabase
+      .from('release_notifications')
+      .select('id')
+      .eq('heading', AD_CONFIG_KEY)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      const { error } = await supabase
+        .from('release_notifications')
+        .update({
+          message: messageJson,
+          is_published: true,
+          published_at: new Date().toISOString(),
+        })
+        .eq('id', existing[0].id);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } else {
+      const { error } = await supabase
+        .from('release_notifications')
+        .insert({
+          heading: AD_CONFIG_KEY,
+          message: messageJson,
+          is_published: true,
+          published_at: new Date().toISOString(),
+        });
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    }
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to sync ad configuration to Supabase.' };
+  }
+}
+
 // Purge old spam notifications and historical completed catalog blasts from Supabase
 export async function cleanupOldSpamNotificationsFromSupabase(): Promise<boolean> {
   try {

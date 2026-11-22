@@ -30,7 +30,9 @@ import {
   Table,
   Bell,
   FileText,
-  Copy
+  Copy,
+  Code,
+  DollarSign
 } from 'lucide-react';
 import { DramaItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
 import { 
@@ -39,7 +41,9 @@ import {
   loginWithSupabaseAuth, 
   fetchDramasFromSupabase,
   fetchSupabaseStats,
-  seedCatalogToSupabase
+  seedCatalogToSupabase,
+  AdConfig,
+  DEFAULT_AD_CONFIG
 } from '../services/supabaseService';
 import { sendTelegramBroadcast, sendNativePushNotification } from '../services/notificationService';
 import { INITIAL_DRAMAS } from '../data/initialCatalog';
@@ -66,7 +70,7 @@ interface AdminStudioModalProps {
   onUpdateWeekendSettings: (settings: WeekendSettings) => void;
   heroBanners: HeroBannerSlide[];
   onUpdateHeroBanners: (banners: HeroBannerSlide[]) => void;
-  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'security';
+  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security';
   onAuthSuccess?: () => void;
   onAuthLogout?: () => void;
   isAuthenticatedParent?: boolean;
@@ -74,6 +78,8 @@ interface AdminStudioModalProps {
   onUpdateGoogleSheetUrl?: (url: string) => Promise<{ success: boolean; count?: number; error?: string }>;
   telegramBotSettings?: TelegramBotSettings;
   onUpdateTelegramBotSettings?: (settings: TelegramBotSettings) => void;
+  adConfig?: AdConfig;
+  onUpdateAdConfig?: (config: AdConfig) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
@@ -98,6 +104,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   onUpdateGoogleSheetUrl,
   telegramBotSettings,
   onUpdateTelegramBotSettings,
+  adConfig,
+  onUpdateAdConfig,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(isAuthenticatedParent);
   const [authMethod, setAuthMethod] = useState<'pin' | 'password'>('pin');
@@ -107,7 +115,18 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'security'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>(initialTab);
+
+  // Ads Manager Local Draft State
+  const [adDraft, setAdDraft] = useState<AdConfig>(() => adConfig || { ...DEFAULT_AD_CONFIG });
+  const [isSavingAds, setIsSavingAds] = useState(false);
+  const [adsSaveFeedback, setAdsSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (adConfig) {
+      setAdDraft(adConfig);
+    }
+  }, [adConfig]);
 
   // Google Sheets Local State
   const [sheetUrlDraft, setSheetUrlDraft] = useState(googleSheetUrl);
@@ -1246,6 +1265,21 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
               >
                 <Database className="w-3.5 h-3.5" />
                 <span>Database Sync</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('ads')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                  activeTab === 'ads' ? 'bg-[#e50914] text-white shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <DollarSign className="w-3.5 h-3.5 text-amber-300" />
+                <span>💰 Ads Manager</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    adDraft.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'
+                  }`}
+                />
               </button>
 
               <button
@@ -2824,6 +2858,286 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;`}
                   </pre>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: MONETIZATION & ADS MANAGER */}
+            {activeTab === 'ads' && (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/15 via-[#181924] to-emerald-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                      <span>💰 VIP Monetization & Ad Slot System</span>
+                    </h4>
+                    <p className="text-[11px] text-zinc-300 mt-0.5">
+                      Control non-intrusive Cyber-Glass sponsor banners or Adsterra / Monetag tags across the portal and sync live to all visitors via Supabase.
+                    </p>
+                  </div>
+
+                  {/* Master 1-Click ON/OFF Switch */}
+                  <button
+                    type="button"
+                    onClick={() => setAdDraft((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                    className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all shrink-0 cursor-pointer ${
+                      adDraft.enabled
+                        ? 'bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.5)]'
+                        : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                    }`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${adDraft.enabled ? 'bg-white animate-pulse' : 'bg-zinc-400'}`} />
+                    <span>{adDraft.enabled ? 'Ads Status: ON (Live)' : 'Ads Status: OFF'}</span>
+                  </button>
+                </div>
+
+                {/* Ad Type / Mode Selector */}
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-black text-zinc-300 uppercase tracking-wider mb-2">
+                      Select Ad Format
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setAdDraft((prev) => ({ ...prev, mode: 'script' }))}
+                        className={`p-3 rounded-xl border text-left transition-all flex items-start gap-2.5 cursor-pointer ${
+                          adDraft.mode === 'script'
+                            ? 'bg-[#e50914]/15 border-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.2)]'
+                            : 'bg-black/30 border-white/10 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <Code className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="text-xs font-black">Ad Network Script (Adsterra / Monetag HTML)</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">
+                            Paste JS banner tags or native widget HTML snippets
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setAdDraft((prev) => ({ ...prev, mode: 'custom' }))}
+                        className={`p-3 rounded-xl border text-left transition-all flex items-start gap-2.5 cursor-pointer ${
+                          adDraft.mode === 'custom'
+                            ? 'bg-amber-500/15 border-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                            : 'bg-black/30 border-white/10 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <ImageIcon className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="text-xs font-black">Custom Sponsor Banner (Image + Link)</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">
+                            Direct sponsor card with custom image, headline, badge & link
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mode Form */}
+                  {adDraft.mode === 'script' ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-bold text-zinc-300">
+                          Adsterra / Monetag / Custom HTML &amp; &lt;script&gt; Code
+                        </label>
+                        {adDraft.scriptHtml && (
+                          <button
+                            type="button"
+                            onClick={() => setAdDraft((prev) => ({ ...prev, scriptHtml: '' }))}
+                            className="text-[11px] text-red-400 hover:text-red-300 underline cursor-pointer"
+                          >
+                            Clear Code
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        rows={5}
+                        value={adDraft.scriptHtml}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, scriptHtml: e.target.value }))}
+                        placeholder={`Paste your Adsterra, Monetag, or HTML banner code here...\nExample:\n<script type="text/javascript">\n  atOptions = { 'key': '...', 'format': 'iframe', 'height': 90, 'width': 728 };\n</script>\n<script src="https://...invoke.js"></script>`}
+                        className="w-full p-3 rounded-xl bg-black/60 border border-white/15 text-emerald-300 font-mono text-[11px] outline-none focus:border-[#e50914]"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                            Sponsor Headline *
+                          </label>
+                          <input
+                            type="text"
+                            value={adDraft.customHeadline}
+                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customHeadline: e.target.value }))}
+                            placeholder="e.g. Get Fast VIP Cloud Storage — 50% Off First Year!"
+                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                            Badge Text (Default: SPONSORED PARTNER)
+                          </label>
+                          <input
+                            type="text"
+                            value={adDraft.customBadgeText}
+                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customBadgeText: e.target.value }))}
+                            placeholder="SPONSORED PARTNER"
+                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                            Target Destination URL (https://...) *
+                          </label>
+                          <input
+                            type="url"
+                            value={adDraft.customTargetUrl}
+                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customTargetUrl: e.target.value }))}
+                            placeholder="https://sponsor-link.com/offer"
+                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                            Banner Image URL (Optional)
+                          </label>
+                          <input
+                            type="url"
+                            value={adDraft.customImageUrl}
+                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customImageUrl: e.target.value }))}
+                            placeholder="https://... (uses sleek gradient card if blank)"
+                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
+
+                      {adDraft.customImageUrl.trim() && (
+                        <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 flex items-center gap-3">
+                          <img
+                            src={adDraft.customImageUrl}
+                            alt="Sponsor Preview"
+                            className="w-28 h-14 object-cover rounded-lg border border-white/10 shrink-0"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                          <div className="text-[11px] text-zinc-300 min-w-0">
+                            <div className="font-bold text-white truncate">
+                              {adDraft.customHeadline || 'Sponsor Banner Image Preview'}
+                            </div>
+                            <div className="text-[10px] text-emerald-400 truncate">
+                              {adDraft.customTargetUrl || 'Add a target URL above'}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Individual Slot Visibility Toggles */}
+                  <div className="pt-2 border-t border-white/10">
+                    <label className="block text-[11px] font-black text-zinc-300 uppercase tracking-wider mb-2">
+                      Active Ad Placement Slots
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-bold">
+                      <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
+                        <div>
+                          <div className="text-white">Home Banner</div>
+                          <div className="text-[10px] text-zinc-400 font-normal">Below Weekend Lineup</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={adDraft.showHomeBanner}
+                          onChange={(e) =>
+                            setAdDraft((prev) => ({ ...prev, showHomeBanner: e.target.checked }))
+                          }
+                          className="w-4 h-4 accent-[#e50914] cursor-pointer"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
+                        <div>
+                          <div className="text-white">Episode Modal Banner</div>
+                          <div className="text-[10px] text-zinc-400 font-normal">Inside Drama Popup</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={adDraft.showModalBanner}
+                          onChange={(e) =>
+                            setAdDraft((prev) => ({ ...prev, showModalBanner: e.target.checked }))
+                          }
+                          className="w-4 h-4 accent-[#e50914] cursor-pointer"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
+                        <div>
+                          <div className="text-white">Footer Banner</div>
+                          <div className="text-[10px] text-zinc-400 font-normal">Above Safety Policy</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={adDraft.showFooterBanner}
+                          onChange={(e) =>
+                            setAdDraft((prev) => ({ ...prev, showFooterBanner: e.target.checked }))
+                          }
+                          className="w-4 h-4 accent-[#e50914] cursor-pointer"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {adsSaveFeedback && (
+                    <div
+                      className={`p-3 rounded-xl border text-xs font-bold ${
+                        adsSaveFeedback.type === 'success'
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          : 'bg-red-500/20 border-red-500/40 text-red-300'
+                      }`}
+                    >
+                      {adsSaveFeedback.message}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={isSavingAds}
+                    onClick={async () => {
+                      setIsSavingAds(true);
+                      setAdsSaveFeedback(null);
+                      if (onUpdateAdConfig) {
+                        const res = await onUpdateAdConfig(adDraft);
+                        setIsSavingAds(false);
+                        if (res.success) {
+                          setAdsSaveFeedback({
+                            type: 'success',
+                            message:
+                              '✅ Ads configuration saved & published live to Supabase Cloud + all visitors!',
+                          });
+                          setSuccessMessage('💰 Monetization & Ad Slots published live!');
+                          setTimeout(() => setSuccessMessage(null), 3500);
+                        } else {
+                          setAdsSaveFeedback({
+                            type: 'error',
+                            message: `Saved locally, Supabase notice: ${res.error || 'Check database permissions'}`,
+                          });
+                        }
+                      } else {
+                        setIsSavingAds(false);
+                      }
+                    }}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.4)] hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>{isSavingAds ? 'Publishing to Cloud...' : '💾 Save & Publish Ads Live'}</span>
+                  </button>
                 </div>
               </div>
             )}

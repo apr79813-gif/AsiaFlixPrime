@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
+import { AdBannerSlot } from './AdBannerSlot';
+import { AdConfig } from '../services/supabaseService';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
@@ -35,6 +37,7 @@ interface DramaDetailModalProps {
   isTopOne?: boolean;
   onSubscribeDubAlert?: (dramaTitle: string, audio: string) => void;
   onReportIssue?: () => void;
+  adConfig?: AdConfig;
 }
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
@@ -50,6 +53,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   isTopOne = false,
   onSubscribeDubAlert,
   onReportIssue,
+  adConfig,
 }) => {
   // Link for each audio track strictly from drama
   const audioLinkMap: Record<string, string | undefined> = {
@@ -319,6 +323,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </span>
             </div>
           )}
+
+          {/* AD SLOT 2: EPISODE MODAL BANNER */}
+          {adConfig && <AdBannerSlot slot="modal" adConfig={adConfig} />}
 
           {/* TELEGRAM DIRECT LINKS (Only render audio tracks that actually have an active link) */}
           <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">

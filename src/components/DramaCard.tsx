@@ -1,8 +1,22 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { DramaItem, AudioType } from '../types/drama';
 import { Play, Bookmark, BookmarkCheck, Star, Send } from 'lucide-react';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { getTrackEpisodeCounts } from '../services/scheduleHelper';
+
+const detectPhoneOrPortrait = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const isPortrait =
+    window.innerHeight > window.innerWidth ||
+    (window.screen && window.screen.height > window.screen.width);
+  const isTouch =
+    navigator.maxTouchPoints > 0 ||
+    'ontouchstart' in window ||
+    window.matchMedia('(pointer: coarse)').matches;
+  const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const isNarrow = window.outerWidth <= 1024 || window.innerWidth <= 1024;
+  return isPortrait || isTouch || isMobileUA || isNarrow;
+};
 
 interface DramaCardProps {
   drama: DramaItem;
@@ -31,6 +45,20 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   isPhoneDevice = false,
   isGrid = false,
 }) => {
+  const [detectedPhone, setDetectedPhone] = useState<boolean>(() => detectPhoneOrPortrait());
+
+  useEffect(() => {
+    const update = () => setDetectedPhone(detectPhoneOrPortrait());
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  const effectiveIsPhone = Boolean(isPhoneDevice || detectedPhone);
   const isRankOne = isTopOne || rank === 1 || drama.spotlightTag === 'TOP #1';
   const showRankBadge = isRankOne || (typeof rank === 'number' && rank >= 2 && rank <= 10);
 
@@ -228,19 +256,34 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 
   const showLiveTrackEpOnPills = !isMovie && !isCompletedStatus && !isComingSoonActive;
 
-  const cardSizeClass = isPhoneDevice
-    ? `${isGrid ? 'w-full' : 'w-[312px] min-w-[312px]'} h-[575px]`
-    : 'h-[420px]';
-
   return (
-    <div
-      className={`group relative ${cardSizeClass} bg-gradient-to-b from-[#11121a] to-[#0a0b10] rounded-2xl border border-white/[0.08] hover:border-[#e50914]/70 ott-card-elevate flex flex-col overflow-hidden`}
+    <article
+      style={
+        effectiveIsPhone
+          ? !isGrid
+            ? {
+                width: 'calc((100% - 54px) / 3.75)',
+                minWidth: '336px',
+                maxWidth: '370px',
+                height: '610px',
+                flexShrink: 0,
+              }
+            : {
+                width: '100%',
+                height: '610px',
+              }
+          : undefined
+      }
+      className={`group relative ${
+        effectiveIsPhone ? '' : 'h-[420px]'
+      } bg-gradient-to-b from-[#11121a] to-[#0a0b10] rounded-2xl border border-white/[0.08] hover:border-[#e50914]/70 ott-card-elevate flex flex-col overflow-hidden`}
     >
       {/* Locked-Height Poster Area */}
       <div
         onClick={() => onSelect(drama)}
+        style={effectiveIsPhone ? { height: '410px', minHeight: '410px' } : undefined}
         className={`relative w-full shrink-0 overflow-hidden bg-zinc-900 cursor-pointer ${
-          isPhoneDevice ? 'h-[360px]' : 'h-[250px]'
+          effectiveIsPhone ? '' : 'h-[250px]'
         }`}
       >
         <img
@@ -261,14 +304,14 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         {/* Top-Left: Rank Badge (#1 Gold or #2-#10 Glass) + Single Audio Badge */}
         <div
           className={`absolute top-2.5 left-2.5 flex flex-col items-start pointer-events-none z-10 ${
-            isPhoneDevice ? 'gap-1.5' : 'gap-1'
+            effectiveIsPhone ? 'gap-1.5' : 'gap-1'
           }`}
         >
           {showRankBadge &&
             (isRankOne ? (
               <span
                 className={`bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black uppercase tracking-wider rounded shadow-lg shadow-amber-500/40 ${
-                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                  effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
                 }`}
               >
                 👑 TOP 1
@@ -276,7 +319,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             ) : (
               <span
                 className={`bg-black/75 backdrop-blur-md text-zinc-200 border border-white/15 font-black rounded shadow ${
-                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-1.5 py-0.5'
+                  effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-1.5 py-0.5'
                 }`}
               >
                 #{rank}
@@ -284,7 +327,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             ))}
           <span
             className={`${audioBadgeConfig.className} font-black uppercase tracking-wider rounded shadow-md flex items-center gap-1 ${
-              isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+              effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
             }`}
           >
             {audioBadgeConfig.label}
@@ -299,7 +342,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
               onToggleWatchlist(drama);
             }}
             className={`rounded-full backdrop-blur-md border transition-all cursor-pointer flex items-center justify-center ${
-              isPhoneDevice ? 'w-10 h-10' : 'p-1.5'
+              effectiveIsPhone ? 'w-10 h-10' : 'p-1.5'
             } ${
               isWatchlisted
                 ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg opacity-100'
@@ -308,16 +351,16 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             title={isWatchlisted ? 'In Watchlist' : 'Add to Watchlist'}
           >
             {isWatchlisted ? (
-              <BookmarkCheck className={isPhoneDevice ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
+              <BookmarkCheck className={effectiveIsPhone ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
             ) : (
-              <Bookmark className={isPhoneDevice ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
+              <Bookmark className={effectiveIsPhone ? 'w-5 h-5' : 'w-3.5 h-3.5'} />
             )}
           </button>
 
           {ageInfo.is18Plus && (
             <span
               className={`bg-[#e50914] text-white font-black rounded-md border border-white/30 shadow-[0_0_12px_rgba(229,9,20,0.8)] tracking-tighter pointer-events-none ${
-                isPhoneDevice ? 'text-xs px-2 py-1' : 'text-[10px] px-1.5 py-0.5'
+                effectiveIsPhone ? 'text-[12px] px-2 py-0.5' : 'text-[10px] px-1.5 py-0.5'
               }`}
             >
               18+
@@ -329,10 +372,10 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
           <div
             className={`rounded-full bg-[#e50914] text-white flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform ${
-              isPhoneDevice ? 'w-14 h-14' : 'w-10 h-10'
+              effectiveIsPhone ? 'w-14 h-14' : 'w-10 h-10'
             }`}
           >
-            <Play className={`${isPhoneDevice ? 'w-7 h-7' : 'w-5 h-5'} fill-white ml-0.5`} />
+            <Play className={`${effectiveIsPhone ? 'w-7 h-7' : 'w-5 h-5'} fill-white ml-0.5`} />
           </div>
         </div>
 
@@ -340,13 +383,13 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         {(drama.issueFixedText || drama.issueText) && (
           <div
             className={`absolute left-2.5 right-2.5 flex items-center pointer-events-none z-10 ${
-              isPhoneDevice ? 'bottom-11' : 'bottom-9'
+              effectiveIsPhone ? 'bottom-12' : 'bottom-9'
             }`}
           >
             {drama.issueFixedText ? (
               <span
                 className={`inline-flex items-center gap-1 rounded-full bg-emerald-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-emerald-200/70 shadow-[0_0_14px_rgba(16,185,129,0.75)] ${
-                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                  effectiveIsPhone ? 'text-[12px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
                 }`}
               >
                 ✅ ISSUE FIXED
@@ -354,7 +397,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             ) : (
               <span
                 className={`inline-flex items-center gap-1 rounded-full bg-amber-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-amber-200/70 shadow-[0_0_14px_rgba(245,158,11,0.75)] animate-pulse ${
-                  isPhoneDevice ? 'text-xs px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                  effectiveIsPhone ? 'text-[12px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
                 }`}
               >
                 ⚠️ FIXING ISSUE
@@ -366,19 +409,19 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         {/* Bottom of Poster: Smart Audio-Aware Status Pill & Right Gold Rating Pill */}
         <div
           className={`absolute bottom-2.5 left-2 right-2 flex items-center justify-between gap-1.5 pointer-events-none z-10 ${
-            isPhoneDevice ? 'text-xs' : 'text-[10px]'
+            effectiveIsPhone ? 'text-[13px]' : 'text-[10px]'
           }`}
         >
           <div
-            className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white font-bold min-w-0 ${
-              isPhoneDevice ? 'px-3 py-1 max-w-[235px]' : 'px-2 py-0.5 max-w-[calc(100%-46px)]'
+            className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white min-w-0 ${
+              effectiveIsPhone ? 'px-3 py-1 max-w-[235px] font-extrabold' : 'px-2 py-0.5 max-w-[calc(100%-46px)] font-bold'
             }`}
             title={smartPosterStatusText}
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor()}`} />
             <span
               className={`truncate text-zinc-100 ${
-                isPhoneDevice ? 'text-xs font-bold' : 'text-[9px] font-extrabold'
+                effectiveIsPhone ? 'text-[13px] font-extrabold' : 'text-[9px] font-extrabold'
               }`}
             >
               {smartPosterStatusText}
@@ -387,10 +430,10 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 
           <span
             className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 flex items-center gap-1 shrink-0 ${
-              isPhoneDevice ? 'text-xs px-2.5 py-1 font-bold' : 'font-black text-[9.5px] px-1.5 py-0.5 gap-0.5'
+              effectiveIsPhone ? 'text-[13px] px-3 py-1 font-extrabold' : 'font-black text-[9.5px] px-1.5 py-0.5 gap-0.5'
             }`}
           >
-            <Star className={`${isPhoneDevice ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'} fill-amber-400 text-amber-400`} />
+            <Star className={`${effectiveIsPhone ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'} fill-amber-400 text-amber-400`} />
             <span>{drama.rating}</span>
           </span>
         </div>
@@ -409,15 +452,15 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       {/* Symmetric Card Body (No Nested Gray Border Boxes) */}
       <div
         className={`flex-1 min-h-0 flex flex-col justify-between bg-gradient-to-b from-[#11121a] to-[#0a0b10] ${
-          isPhoneDevice ? 'p-4' : 'p-3'
+          effectiveIsPhone ? 'p-4' : 'p-3'
         }`}
       >
         <div className="min-w-0">
           {/* Row 1: Crisp Title */}
           <h3
             onClick={() => onSelect(drama)}
-            className={`text-white truncate group-hover:text-[#ff2b54] transition-colors cursor-pointer leading-tight ${
-              isPhoneDevice ? 'text-lg font-black' : 'text-[13.5px] font-extrabold'
+            className={`text-white truncate group-hover:text-[#ff2b54] transition-colors cursor-pointer ${
+              effectiveIsPhone ? 'text-[19px] font-black leading-snug' : 'text-[13.5px] font-extrabold leading-tight'
             }`}
             title={drama.title}
           >
@@ -427,7 +470,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           {/* Row 2: Clean Dot-Separated OTT Metadata Line with Color-Coded Age Rating */}
           <div
             className={`flex items-center gap-1.5 min-w-0 ${
-              isPhoneDevice ? 'text-sm font-bold text-zinc-300 mt-1.5' : 'text-[11px] font-semibold text-zinc-400 mt-1'
+              effectiveIsPhone ? 'text-[14px] font-bold text-zinc-200 mt-1' : 'text-[11px] font-semibold text-zinc-400 mt-1'
             }`}
           >
             <span className="text-zinc-200 truncate">{categoryLabel}</span>
@@ -436,7 +479,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             <span className="shrink-0">•</span>
             <span
               className={`rounded font-black shrink-0 ${ageInfo.pillClass} ${
-                isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[9.5px] px-1.5 py-0.2'
+                effectiveIsPhone ? 'text-[12px] px-2.5 py-0.5' : 'text-[9.5px] px-1.5 py-0.2'
               }`}
             >
               {ageInfo.label}
@@ -446,7 +489,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           {/* Row 3a: Untruncated Episodes Count + Schedule Hint */}
           <div
             className={`flex items-center justify-between gap-2 min-w-0 ${
-              isPhoneDevice ? 'mt-2.5 text-sm font-extrabold' : 'mt-1.5 text-[10.5px] font-bold'
+              effectiveIsPhone ? 'mt-1.5 text-[14px] font-black' : 'mt-1.5 text-[10.5px] font-bold'
             }`}
           >
             <span className="text-sky-400 shrink-0 whitespace-nowrap">{detailsDisplay}</span>
@@ -458,12 +501,12 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
 
           {/* Row 3b: Audio Badges with Live Episode Counts per Language */}
-          <div className={`flex items-center flex-wrap gap-1 ${isPhoneDevice ? 'mt-2' : 'mt-1.5'}`}>
+          <div className={`flex items-center flex-wrap gap-1.5 ${effectiveIsPhone ? 'mt-2' : 'mt-1.5'}`}>
             {isComingSoonActive ? (
               drama.comingSoonAudios && drama.comingSoonAudios.length > 0 ? (
                 <span
                   className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black tracking-wide ${
-                    isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
+                    effectiveIsPhone ? 'text-[12px] px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
                   }`}
                 >
                   {drama.comingSoonAudios[0] === 'Hindi Dubbed'
@@ -475,7 +518,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
               ) : (
                 <span
                   className={`bg-amber-500/20 text-amber-200 border border-amber-500/40 rounded font-black ${
-                    isPhoneDevice ? 'text-xs px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
+                    effectiveIsPhone ? 'text-[12px] px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
                   }`}
                 >
                   ⏳ Soon
@@ -486,7 +529,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 {drama.telegramHindi && (
                   <span
                     className={`bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(229,9,20,0.35)] ${
-                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                      effectiveIsPhone ? 'text-[12px] px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
                     }`}
                     title="Hindi Dubbed Live"
                   >
@@ -496,7 +539,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 {drama.telegramFanDub && (
                   <span
                     className={`bg-gradient-to-r from-[#9333ea] to-[#ec4899] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(168,85,247,0.35)] ${
-                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                      effectiveIsPhone ? 'text-[12px] px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
                     }`}
                     title="Hindi Fan Dubbed Live"
                   >
@@ -506,7 +549,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 {drama.telegramOrig && (
                   <span
                     className={`bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white rounded font-black tracking-wide whitespace-nowrap shadow-[0_0_8px_rgba(14,165,233,0.35)] ${
-                      isPhoneDevice ? 'text-xs px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+                      effectiveIsPhone ? 'text-[12px] px-2.5 py-1' : 'text-[8.5px] px-1.5 py-0.5'
                     }`}
                     title="Original / Eng Sub Live"
                   >
@@ -519,11 +562,11 @@ export const DramaCard: React.FC<DramaCardProps> = ({
         </div>
 
         {/* Row 4: Bottom Action Buttons */}
-        <div className={`grid grid-cols-2 mt-auto pt-1.5 ${isPhoneDevice ? 'gap-2.5' : 'gap-2'}`}>
+        <div className={`grid grid-cols-2 mt-auto pt-1.5 ${effectiveIsPhone ? 'gap-2.5' : 'gap-2'}`}>
           <button
             onClick={() => onSelect(drama)}
             className={`w-full bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/10 text-center transition-all flex items-center justify-center cursor-pointer ${
-              isPhoneDevice ? 'py-3 px-3 rounded-xl text-sm font-black' : 'py-1.5 px-2 rounded-lg text-xs font-bold'
+              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-bold'
             }`}
           >
             <span>{isMovie ? 'Details' : 'Episodes'}</span>
@@ -535,15 +578,15 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 truncate cursor-pointer ${
-              isPhoneDevice ? 'py-3 px-3 rounded-xl text-sm font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
             }`}
             title="Stream / Open Telegram Link"
           >
-            <Send className={`${isPhoneDevice ? 'w-4 h-4' : 'w-3 h-3'} shrink-0`} />
+            <Send className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} shrink-0`} />
             <span className="truncate">{isMovie ? 'Movie' : 'Stream'}</span>
           </a>
         </div>
       </div>
-    </div>
+    </article>
   );
 };

@@ -20,16 +20,11 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
   if (!spotlightDramas || spotlightDramas.length === 0) return null;
 
   const uniqueSpotlights = Array.from(new Map(spotlightDramas.map((d) => [d.id, d])).values());
-  const visibleSpotlights = uniqueSpotlights.slice(0, isPhoneDevice ? 5 : 6);
-  const gridColsClass = isPhoneDevice
-    ? visibleSpotlights.length === 4
-      ? 'grid grid-cols-4 gap-4 w-full'
-      : 'grid grid-cols-5 gap-4 w-full'
-    : visibleSpotlights.length >= 6
-    ? 'grid grid-cols-6 gap-3 w-full'
-    : visibleSpotlights.length === 5
-    ? 'grid grid-cols-5 gap-4 w-full'
-    : 'grid grid-cols-4 gap-4 w-full';
+  const visibleSpotlights = uniqueSpotlights.slice(0, 5);
+  const gridColsClass =
+    visibleSpotlights.length >= 5
+      ? 'grid grid-cols-5 gap-4 w-full'
+      : 'grid grid-cols-4 gap-4 w-full';
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-6 sm:my-8 w-full">
@@ -79,15 +74,9 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
             <div
               key={drama.id}
               onClick={() => onSelectDrama(drama)}
-              className={`group cursor-pointer flex items-center bg-black/40 hover:bg-white/[0.06] border border-white/[0.06] hover:border-[#e50914]/40 transition-all hover:translate-y-[-2px] relative overflow-hidden ${
-                isPhoneDevice ? 'gap-3 p-3.5 rounded-2xl' : 'gap-2.5 p-2 sm:p-2.5 rounded-xl'
-              }`}
+              className="group cursor-pointer flex items-center gap-3.5 min-h-[135px] p-3.5 rounded-2xl bg-black/45 hover:bg-white/[0.06] border border-white/[0.08] hover:border-[#e50914]/50 transition-all hover:translate-y-[-2px] relative overflow-hidden"
             >
-              <div
-                className={`relative overflow-hidden shrink-0 bg-zinc-900 border border-white/10 ${
-                  isPhoneDevice ? 'w-20 h-28 rounded-xl' : 'w-11 h-15 sm:w-12 sm:h-16 rounded-lg'
-                }`}
-              >
+              <div className="relative overflow-hidden shrink-0 bg-zinc-900 border border-white/10 w-24 h-32 rounded-xl">
                 <img
                   src={drama.poster}
                   alt={drama.title}
@@ -96,9 +85,7 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
                   loading="lazy"
                 />
                 <span
-                  className={`absolute top-1 left-1 font-black rounded shadow-md flex items-center gap-0.5 ${
-                    isPhoneDevice ? 'text-xs px-2 py-0.5' : 'text-[8px] sm:text-[9px] px-1 sm:px-1.5 py-0.2'
-                  } ${
+                  className={`absolute top-1.5 left-1.5 font-black rounded shadow-md flex items-center gap-0.5 text-[11px] px-2 py-0.5 ${
                     idx === 0
                       ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-black shadow-amber-500/50 animate-pulse'
                       : 'bg-[#e50914] text-white'
@@ -108,38 +95,26 @@ export const SpotlightBar: React.FC<SpotlightBarProps> = ({
                 </span>
               </div>
 
-              <div className="min-w-0 flex-1">
-                <h4
-                  className={`font-black text-white group-hover:text-red-400 transition-colors ${
-                    isPhoneDevice ? 'text-base line-clamp-2 leading-snug' : 'text-[11px] sm:text-xs truncate'
-                  }`}
-                >
+              <div className="min-w-0 flex-1 flex flex-col justify-between gap-1.5">
+                <h4 className="text-[16px] font-black text-white group-hover:text-red-400 transition-colors line-clamp-2 leading-snug">
                   {drama.title}
                 </h4>
-                <div
-                  className={`flex items-center gap-1.5 text-zinc-400 ${
-                    isPhoneDevice ? 'mt-1.5 text-xs font-extrabold flex-wrap' : 'mt-0.5 text-[10px]'
-                  }`}
-                >
-                  <span className={`text-red-400 font-extrabold truncate ${isPhoneDevice ? 'max-w-[95px]' : 'max-w-[65px] font-bold'}`}>
+                <div className="flex items-center gap-1.5 text-[13px] font-bold text-zinc-300 flex-wrap">
+                  <span className="text-red-400 font-bold truncate max-w-[95px]">
                     {drama.defaultAudio}
                   </span>
                   <span>·</span>
-                  <span className="flex items-center gap-0.5 text-amber-400 font-extrabold shrink-0">
-                    <Star className={`${isPhoneDevice ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'} fill-amber-400`} />
+                  <span className="flex items-center gap-0.5 text-amber-400 font-bold shrink-0">
+                    <Star className="w-3.5 h-3.5 fill-amber-400" />
                     <span>{drama.rating}</span>
                   </span>
                 </div>
-                <div
-                  className={`flex items-center justify-between text-zinc-500 ${
-                    isPhoneDevice ? 'mt-1.5 text-xs' : 'mt-1 text-[9px]'
-                  }`}
-                >
-                  <span className={`text-sky-400 truncate ${isPhoneDevice ? 'font-black max-w-[130px]' : 'font-bold max-w-[85px]'}`}>
+                <div className="flex items-center justify-between text-[13px] font-bold text-zinc-400">
+                  <span className="text-sky-400 truncate max-w-[125px]">
                     {drama.details || drama.scheduleInfo}
                   </span>
-                  <span className="text-zinc-400 hidden xs:flex items-center gap-0.5 group-hover:text-white transition-colors shrink-0">
-                    <ArrowRight className={`${isPhoneDevice ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'}`} />
+                  <span className="text-zinc-400 flex items-center gap-0.5 group-hover:text-white transition-colors shrink-0">
+                    <ArrowRight className="w-4 h-4" />
                   </span>
                 </div>
               </div>

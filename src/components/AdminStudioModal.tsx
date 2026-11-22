@@ -2905,7 +2905,7 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                         Reset to Default Adsterra Codes
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-bold">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs font-bold">
                       <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
                         <div>
                           <div className="text-white">Home 728x90 Banner</div>
@@ -2950,6 +2950,43 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                           className="w-4 h-4 accent-[#e50914] cursor-pointer"
                         />
                       </label>
+
+                      <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-gradient-to-br from-[#e50914]/15 to-[#a855f7]/15 border border-purple-500/35 cursor-pointer hover:border-purple-400/60">
+                        <div>
+                          <div className="text-white">🚀 Floating &amp; Center Pop-Up Ads</div>
+                          <div className="text-[10px] text-purple-300 font-normal">Spotlight &amp; Corner Widget</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={adDraft.showPopupAd !== false}
+                          onChange={(e) =>
+                            setAdDraft((prev) => ({ ...prev, showPopupAd: e.target.checked }))
+                          }
+                          className="w-4 h-4 accent-[#a855f7] cursor-pointer"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black/35 border border-white/10">
+                      <div>
+                        <div className="text-xs font-bold text-white">Pop-Up Ad Cooldown Interval (Seconds)</div>
+                        <div className="text-[10px] text-zinc-400">
+                          First popup triggers 8s after arrival, then repeats every {adDraft.popupIntervalSeconds || 90}s (min 15s).
+                        </div>
+                      </div>
+                      <input
+                        type="number"
+                        min={15}
+                        max={3600}
+                        value={adDraft.popupIntervalSeconds || 90}
+                        onChange={(e) =>
+                          setAdDraft((prev) => ({
+                            ...prev,
+                            popupIntervalSeconds: Math.max(15, parseInt(e.target.value, 10) || 90),
+                          }))
+                        }
+                        className="w-28 px-3 py-1.5 rounded-xl bg-black/60 border border-white/15 text-white font-mono text-xs text-center outline-none focus:border-purple-400"
+                      />
                     </div>
                   </div>
 

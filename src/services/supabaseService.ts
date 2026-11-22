@@ -274,6 +274,8 @@ export interface AdConfig {
   showHomeBanner: boolean;
   showModalBanner: boolean;
   showFooterNative: boolean;
+  showPopupAd: boolean;
+  popupIntervalSeconds: number;
 }
 
 export const AD_CONFIG_KEY = '__AD_CONFIG__';
@@ -290,6 +292,8 @@ export const DEFAULT_AD_CONFIG: AdConfig = {
   showHomeBanner: true,
   showModalBanner: true,
   showFooterNative: true,
+  showPopupAd: true,
+  popupIntervalSeconds: 90,
 };
 
 function normalizeAdConfig(raw: any): AdConfig {
@@ -319,6 +323,12 @@ function normalizeAdConfig(raw: any): AdConfig {
       ? raw.nativeContainerId.trim().replace(/[^a-zA-Z0-9_-]/g, '')
       : DEFAULT_AD_CONFIG.nativeContainerId;
 
+  const rawInterval = Number(raw.popupIntervalSeconds);
+  const safeInterval =
+    Number.isFinite(rawInterval) && rawInterval > 0
+      ? Math.max(15, Math.min(3600, Math.round(rawInterval)))
+      : DEFAULT_AD_CONFIG.popupIntervalSeconds;
+
   return {
     enabled: raw.enabled !== undefined ? Boolean(raw.enabled) : true,
     banner728Key: cleanKey || DEFAULT_AD_CONFIG.banner728Key,
@@ -335,6 +345,8 @@ function normalizeAdConfig(raw: any): AdConfig {
         : raw.showFooterBanner !== undefined
         ? Boolean(raw.showFooterBanner)
         : true,
+    showPopupAd: raw.showPopupAd !== undefined ? Boolean(raw.showPopupAd) : true,
+    popupIntervalSeconds: safeInterval,
   };
 }
 

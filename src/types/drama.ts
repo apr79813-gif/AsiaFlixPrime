@@ -53,6 +53,7 @@ export interface DramaItem {
   qualityBadge: string; // "1080p FHD"
   
   // --- GOOGLE SHEET COLUMNS (TELEGRAM 1, 2, 3 & NEW SECTIONS) ---
+  country?: string;            // Optional country/origin label from sheet
   statusText?: string;         // Exact text from Sheet's Status column (e.g. "Now Streaming Ep 6")
   ageRating?: string;          // From "Age Rating / Age Group"
   subCategory?: string;        // From "Content Type / Sub-Genre (Sub-Category)"

@@ -24,6 +24,7 @@ import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
 import { AdBannerSlot } from './components/AdBannerSlot';
+import { FloatingPopupAd } from './components/FloatingPopupAd';
 import {
   sendNativeBrowserNotification,
   registerServiceWorker,
@@ -52,6 +53,54 @@ import {
 
 export const OFFICIAL_SITE_URL = 'https://asiaflixprime.pages.dev';
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/export?format=csv&gid=0";
+
+const isHollyBollyTitle = (d: DramaItem): boolean => {
+  const cat = (d.category || '').toLowerCase();
+  const sub = (d.subCategory || '').toLowerCase();
+  const country = (d.country || '').toLowerCase();
+  const title = (d.title || '').toLowerCase();
+  return (
+    cat === 'holly/bolly' ||
+    cat.includes('holly') ||
+    cat.includes('bolly') ||
+    sub.includes('holly') ||
+    sub.includes('bolly') ||
+    sub.includes('indian') ||
+    country.includes('india') ||
+    country.includes('usa') ||
+    country.includes('uk') ||
+    title.includes('ramayana') ||
+    title.includes('hanuman') ||
+    title.includes('dhamaal')
+  );
+};
+
+const isAsianMovieTitle = (d: DramaItem): boolean => {
+  if (isHollyBollyTitle(d)) return false;
+  const cat = (d.category || '').toLowerCase();
+  const sub = (d.subCategory || '').toLowerCase();
+  return (
+    d.category === 'Asian Movies' ||
+    cat === 'movies' ||
+    sub.includes('asian movie') ||
+    sub.includes('movie') ||
+    Boolean(d.isMovie)
+  );
+};
+
+const detectPhoneOrPortrait = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const isPortrait =
+    window.innerHeight > window.innerWidth ||
+    (window.screen && window.screen.height > window.screen.width);
+  const isTouch =
+    navigator.maxTouchPoints > 0 ||
+    'ontouchstart' in window ||
+    window.matchMedia('(pointer: coarse)').matches;
+  const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const isNarrow = window.outerWidth <= 1024 || window.innerWidth <= 1024;
+  return isPortrait || isTouch || isMobileUA || isNarrow;
+};
 
 export default function App() {
   // --- GOOGLE SHEETS DYNAMIC URL STATE ---
@@ -903,6 +952,7 @@ export default function App() {
       
       const titleIdx = header.findIndex((h) => h === 'title' || h === 'name');
       const catIdx = header.findIndex((h) => h === 'category');
+      const countryIdx = header.findIndex((h) => h === 'country' || h.includes('country') || h === 'origin');
       const ageRatingIdx = header.findIndex((h) => h.includes('age'));
       const posterIdx = header.findIndex((h) => h.includes('poster') || h.includes('image'));
       const subCategoryIdx = header.findIndex((h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'));
@@ -1004,6 +1054,7 @@ export default function App() {
         if (isOrigComingSoon) comingSoonAudios.push('Original / Eng Sub');
 
         const categoryRaw = catIdx >= 0 ? row[catIdx]?.trim() || 'K-Drama' : 'K-Drama';
+        const countryVal = countryIdx >= 0 ? row[countryIdx]?.trim() || '' : '';
         const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
         const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
         const subCategory = subCategoryIdx >= 0 ? row[subCategoryIdx]?.trim() || '' : '';
@@ -1025,17 +1076,32 @@ export default function App() {
         const issueVal = issueIdx >= 0 ? row[issueIdx]?.trim() || '' : '';
         const issueFixedVal = issueFixedIdx >= 0 ? row[issueFixedIdx]?.trim() || '' : '';
 
-        // Check if Movie
+        // Check if Movie or Holly/Bolly
         const catLower = categoryRaw.toLowerCase();
         const subLower = subCategory.toLowerCase();
+        const countryLower = countryVal.toLowerCase();
+        const titleLower = cleanTitle.toLowerCase();
+        const isHollyBollyRow =
+          catLower === 'holly/bolly' ||
+          catLower.includes('bolly') ||
+          catLower.includes('holly') ||
+          subLower.includes('bolly') ||
+          subLower.includes('holly') ||
+          subLower.includes('indian') ||
+          countryLower.includes('india') ||
+          countryLower.includes('usa') ||
+          countryLower.includes('uk') ||
+          titleLower.includes('ramayana') ||
+          titleLower.includes('hanuman') ||
+          titleLower.includes('dhamaal');
         const isFilm = catLower.includes('movie') || catLower.includes('film') || catLower.includes('bolly') || catLower.includes('holly') ||
           subLower.includes('movie') || subLower.includes('film') ||
           Boolean(detailsRaw && detailsRaw.includes(':') && !detailsRaw.toLowerCase().includes('ep'));
 
         let dramaCategory: DramaCategory = 'K-Drama';
-        if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
+        if (isHollyBollyRow) dramaCategory = 'Hollywood / Bollywood';
+        else if (catLower.includes('c-drama') || catLower.includes('chinese')) dramaCategory = 'C-Drama';
         else if (catLower.includes('movie') || catLower.includes('film')) dramaCategory = 'Asian Movies';
-        else if (catLower.includes('bolly') || catLower.includes('holly')) dramaCategory = 'Hollywood / Bollywood';
         else if (catLower.includes('k-drama') || catLower.includes('korean')) dramaCategory = 'K-Drama';
         else dramaCategory = 'Other Series';
 
@@ -1375,6 +1441,7 @@ export default function App() {
           id: dramaId,
           title: cleanTitle,
           category: dramaCategory,
+          country: countryVal || undefined,
           releaseYear,
           status: dramaStatus,
           statusText: statusText || undefined,
@@ -2126,14 +2193,19 @@ export default function App() {
 
       // 3. Category Filter
       if (selectedCategory !== 'all') {
-        const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
-        if (selectedCategory === 'Asian Movies') {
-          if (!isMovie) return false;
-        } else if (selectedCategory === 'Hollywood / Bollywood') {
-          const isHollyBolly = d.category === 'Hollywood / Bollywood' || d.category.toLowerCase().includes('bolly') || d.category.toLowerCase().includes('holly');
-          if (!isHollyBolly) return false;
+        if (selectedCategory === 'Asian Movies' || selectedCategory === 'Movies') {
+          if (!isAsianMovieTitle(d)) return false;
+        } else if (selectedCategory === 'Hollywood / Bollywood' || selectedCategory === 'Holly/Bolly') {
+          if (!isHollyBollyTitle(d)) return false;
         } else if (selectedCategory === 'Other Series' || selectedCategory === 'J-Drama') {
-          const isOther = !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+          const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
+          const isOther =
+            !isMovie &&
+            !isHollyBollyTitle(d) &&
+            d.category !== 'K-Drama' &&
+            d.category !== 'C-Drama' &&
+            d.category !== 'Asian Movies' &&
+            d.category !== 'Hollywood / Bollywood';
           if (!isOther) return false;
         } else if (d.category !== selectedCategory) {
           return false;
@@ -2261,14 +2333,10 @@ export default function App() {
   const cdramaList = useMemo(() => dramas.filter((d) => d.category === 'C-Drama'), [dramas]);
   const otherSeriesList = useMemo(() => dramas.filter((d) => {
     const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
-    return !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+    return !isMovie && !isHollyBollyTitle(d) && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
   }), [dramas]);
-  const asianMoviesList = useMemo(() => dramas.filter((d) => 
-    d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie
-  ), [dramas]);
-  const hollyBollyList = useMemo(() => dramas.filter((d) => 
-    d.category === 'Hollywood / Bollywood' || d.category.toLowerCase().includes('bolly') || d.category.toLowerCase().includes('holly')
-  ), [dramas]);
+  const asianMoviesList = useMemo(() => dramas.filter((d) => isAsianMovieTitle(d)), [dramas]);
+  const hollyBollyList = useMemo(() => dramas.filter((d) => isHollyBollyTitle(d)), [dramas]);
   const completedList = useMemo(() => dramas.filter((d) => d.status.includes('Completed') || d.status.includes('Full')), [dramas]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -2296,7 +2364,18 @@ export default function App() {
   };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
-  const isPhoneDevice = typeof window !== 'undefined' && (window.screen.width < 768 || /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent));
+  const [isPhoneDevice, setIsPhoneDevice] = useState<boolean>(() => detectPhoneOrPortrait());
+
+  useEffect(() => {
+    const updatePhoneState = () => setIsPhoneDevice(detectPhoneOrPortrait());
+    updatePhoneState();
+    window.addEventListener('resize', updatePhoneState);
+    window.addEventListener('orientationchange', updatePhoneState);
+    return () => {
+      window.removeEventListener('resize', updatePhoneState);
+      window.removeEventListener('orientationchange', updatePhoneState);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white w-full">
@@ -2479,7 +2558,18 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <div className={isPhoneDevice ? 'grid grid-cols-4 gap-5' : 'grid grid-cols-6 gap-4'}>
+              <div
+                className={isPhoneDevice ? '' : 'grid grid-cols-6 gap-4'}
+                style={
+                  isPhoneDevice
+                    ? {
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                        gap: '20px',
+                      }
+                    : undefined
+                }
+              >
                 {filteredDramas.map((drama, idx) => (
                   <DramaCard
                     key={drama.id}
@@ -2676,7 +2766,7 @@ export default function App() {
               title="Asian Movies & Blockbusters in Hindi Dubbed 1080p"
               subtitle="Complete full-length cinematic experiences"
               icon="🎬🍿"
-              dramas={asianMoviesList.length > 0 ? asianMoviesList : dramas.filter((d) => d.totalEpisodes === 1)}
+              dramas={asianMoviesList.length > 0 ? asianMoviesList : dramas.filter((d) => !isHollyBollyTitle(d) && d.totalEpisodes === 1)}
               onSelectDrama={(d) => setSelectedDrama(d)}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
@@ -2954,10 +3044,10 @@ export default function App() {
                 }
                 if (instantFilter === 'Other Series') {
                   const isMovie = d.isMovie || d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie');
-                  return !isMovie && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
+                  return !isMovie && !isHollyBollyTitle(d) && d.category !== 'K-Drama' && d.category !== 'C-Drama' && d.category !== 'Asian Movies' && d.category !== 'Hollywood / Bollywood';
                 }
                 if (instantFilter === 'Movies') {
-                  return d.category === 'Asian Movies' || d.category.toLowerCase().includes('movie') || d.isMovie;
+                  return isAsianMovieTitle(d);
                 }
                 return true;
               });
@@ -3079,6 +3169,14 @@ export default function App() {
         }
         onOpenDrama={(drama) => setSelectedDrama(drama)}
         onDismiss={handleDismissToast}
+      />
+
+      {/* 11. FLOATING & CENTER VIP POP-UP AD SYSTEM */}
+      <FloatingPopupAd
+        adConfig={adConfig}
+        isDramaModalOpen={Boolean(selectedDrama)}
+        isAdminOpen={isAdminOpen}
+        isPhoneDevice={isPhoneDevice}
       />
     </div>
   );

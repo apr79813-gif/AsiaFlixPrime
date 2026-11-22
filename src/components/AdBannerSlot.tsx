@@ -119,6 +119,59 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
 </html>`;
   }, [customNativeUsesDocWrite, adConfig?.customNativeHtml]);
 
+  const nativeGridCustomCss = useMemo(() => {
+    const id = safeNativeContainerId;
+    return `
+      #${id} {
+        width: 100%;
+      }
+      #${id} a {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        text-decoration: none;
+        border-radius: 16px;
+        padding: 10px;
+        background: linear-gradient(160deg, rgba(255,255,255,0.045), rgba(14,15,24,0.92));
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.55), 0 0 18px rgba(229,9,20,0.14);
+        transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+        overflow: hidden;
+      }
+      #${id} a:hover {
+        transform: translateY(-4px);
+        border-color: rgba(245,158,11,0.65);
+        box-shadow: 0 14px 32px rgba(229,9,20,0.28), 0 0 22px rgba(168,85,247,0.28);
+      }
+      #${id} img {
+        border-radius: 14px !important;
+        border: 1px solid rgba(255,255,255,0.14) !important;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.6) !important;
+        object-fit: cover !important;
+        transition: transform 0.35s ease !important;
+      }
+      #${id} a:hover img {
+        transform: scale(1.03);
+      }
+      #${id} [class*="title"],
+      #${id} p,
+      #${id} span,
+      #${id} h3,
+      #${id} h4 {
+        color: #ffffff !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.01em;
+        transition: color 0.2s ease;
+      }
+      #${id} a:hover [class*="title"],
+      #${id} a:hover p,
+      #${id} a:hover h3,
+      #${id} a:hover h4 {
+        color: #fcd34d !important;
+      }
+    `;
+  }, [safeNativeContainerId]);
+
   // Reset adUnavailable whenever config changes
   useEffect(() => {
     setAdUnavailable(false);
@@ -145,7 +198,6 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
     doc.write(adHtmlString);
     doc.close();
 
-    // Detect blocked/empty creative so an empty black box is never left visible
     const timer = window.setTimeout(() => {
       try {
         const body = iframeRef.current?.contentWindow?.document?.body;
@@ -253,67 +305,104 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
 
   const wrapperClass =
     slot === 'modal'
-      ? 'w-full my-2'
-      : 'max-w-[1600px] mx-auto my-4 px-4 sm:px-6 lg:px-8 w-full';
+      ? 'w-full my-3'
+      : 'max-w-[1600px] mx-auto my-5 px-4 sm:px-6 lg:px-8 w-full';
 
   return (
     <section className={wrapperClass} aria-label={`Sponsored ${slot} slot`}>
-      <div className="relative bg-gradient-to-r from-[#0e0f17] via-[#151722] to-[#0e0f17] border border-white/10 rounded-2xl p-3 sm:p-3.5 shadow-[0_8px_30px_rgba(0,0,0,0.65)] overflow-hidden">
-        {/* Ambient Cyber-Glass Accent Glow */}
-        <div className="pointer-events-none absolute -top-12 -left-12 w-36 h-36 rounded-full bg-[#e50914]/10 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-12 -right-12 w-36 h-36 rounded-full bg-amber-500/10 blur-2xl" />
+      {slot === 'footer' && <style>{nativeGridCustomCss}</style>}
 
-        {/* Subtle Cyber-Glass Header Bar */}
-        <div className="relative z-10 flex items-center justify-between gap-2 pb-2 mb-2 border-b border-white/[0.06]">
-          <span
-            className={`font-black uppercase tracking-wider text-amber-300 flex items-center gap-1 ${
-              isPhoneDevice ? 'text-[11px]' : 'text-[10px]'
-            }`}
-          >
-            <span>⚡ SPONSORED PARTNER</span>
-          </span>
-          <span
-            className={`font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 border border-white/10 ${
-              isPhoneDevice ? 'text-[10px]' : 'text-[9px]'
-            }`}
-          >
-            ADSTERRA VIP
-          </span>
+      {/* Multi-layered Glowing Gradient Border */}
+      <div className="p-[1.5px] rounded-2xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#f59e0b] shadow-[0_0_35px_rgba(229,9,20,0.22)]">
+        {/* Inner Dark Velvet Glass Container */}
+        <div className="bg-[#0b0c14]/95 backdrop-blur-xl rounded-[15px] p-4 relative overflow-hidden">
+          {/* Subtle Animated Radial Neon Glow Orbs in Corners */}
+          <div className="pointer-events-none absolute -top-16 -left-16 w-48 h-48 rounded-full bg-radial from-[#e50914]/25 via-[#a855f7]/10 to-transparent blur-2xl animate-pulse" />
+          <div className="pointer-events-none absolute -bottom-16 -right-16 w-52 h-52 rounded-full bg-radial from-[#f59e0b]/25 via-[#a855f7]/15 to-transparent blur-2xl animate-pulse" />
+          <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60%] h-24 rounded-full bg-[#a855f7]/[0.06] blur-3xl" />
+
+          {/* VIP Neon Spotlight Header Bar */}
+          <div className="relative z-10 flex items-center justify-between gap-2 pb-3 mb-3 border-b border-white/[0.08]">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#e50914] via-[#d946ef] to-[#f59e0b] text-white font-black uppercase tracking-wider shadow-[0_0_16px_rgba(229,9,20,0.45)] ${
+                isPhoneDevice ? 'text-[11px]' : 'text-[10px]'
+              }`}
+            >
+              <span>🔥 VIP PARTNER SPOTLIGHT • SPECIAL OFFER</span>
+            </span>
+            <span
+              className={`font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-white/[0.06] text-amber-300 border border-amber-400/25 ${
+                isPhoneDevice ? 'text-[10px]' : 'text-[9px]'
+              }`}
+            >
+              SPONSORED SHOWCASE
+            </span>
+          </div>
+
+          {/* Ad Content Body */}
+          {slot === 'home' || slot === 'modal' ? (
+            <div className="relative z-10 w-full flex items-center justify-center gap-4 py-1 overflow-hidden">
+              {/* Left VIP Flanking Card (Wide Screens on Home Slot) */}
+              {slot === 'home' && (
+                <div className="hidden xl:flex flex-col justify-center gap-1 flex-1 min-w-[200px] max-w-[280px] h-[96px] px-4 rounded-xl bg-gradient-to-br from-[#e50914]/15 via-[#14111d]/90 to-[#0e0f17] border border-red-500/30 shadow-[0_0_20px_rgba(229,9,20,0.14)]">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-amber-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>⚡ High-Speed 1080p VIP Partner</span>
+                  </div>
+                  <p className="text-[11px] font-semibold text-zinc-300 leading-snug">
+                    Supporting free 1080p Hindi Dubbed &amp; Fan Dubbed releases on AsiaFlix Prime.
+                  </p>
+                </div>
+              )}
+
+              {/* Centered Scaled 728x90 Leaderboard Banner */}
+              <div className="shrink-0 flex items-center justify-center py-1.5 px-2 rounded-xl bg-black/40 border border-white/[0.07] shadow-inner">
+                <iframe
+                  key={`${slot}-${safeBannerKey}-${safeAdDomain}-${adConfig.customBannerHtml ? 'custom' : 'default'}`}
+                  ref={iframeRef}
+                  title={`ad-${slot}`}
+                  scrolling="no"
+                  frameBorder={0}
+                  width={728}
+                  height={90}
+                  className={`mx-auto max-w-full overflow-hidden relative z-10 border-0 bg-transparent block transform origin-center ${
+                    slot === 'modal' ? 'scale-100 sm:scale-105' : 'scale-105 sm:scale-110'
+                  }`}
+                />
+              </div>
+
+              {/* Right Pulsing Explore Offer Flanking Card (Wide Screens on Home Slot) */}
+              {slot === 'home' && (
+                <div className="hidden xl:flex flex-col items-center justify-center gap-1.5 flex-1 min-w-[200px] max-w-[280px] h-[96px] px-4 rounded-xl bg-gradient-to-br from-[#a855f7]/15 via-[#14111d]/90 to-[#f59e0b]/15 border border-amber-400/30 shadow-[0_0_20px_rgba(168,85,247,0.16)] text-center">
+                  <span className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-[#e50914] via-[#ec4899] to-[#f59e0b] text-white text-xs font-black tracking-wide shadow-[0_0_18px_rgba(245,158,11,0.4)] animate-pulse">
+                    Explore Offer ↗
+                  </span>
+                  <span className="text-[11px] font-bold text-zinc-300">
+                    Verified Partner Deals • Zero Token
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="relative z-10 w-full flex items-center justify-center overflow-hidden">
+              {customNativeUsesDocWrite ? (
+                <iframe
+                  key={`footer-native-iframe-${safeNativeContainerId}`}
+                  ref={nativeIframeRef}
+                  title={`ad-${slot}`}
+                  scrolling="no"
+                  frameBorder={0}
+                  className="w-full min-h-[120px] border-0 bg-transparent overflow-hidden relative z-10 block"
+                />
+              ) : (
+                <div
+                  ref={nativeContainerRef}
+                  className="w-full flex items-center justify-center overflow-x-auto no-scrollbar"
+                />
+              )}
+            </div>
+          )}
         </div>
-
-        {/* Ad Content Body */}
-        {slot === 'home' || slot === 'modal' ? (
-          <div className="relative z-10 w-full flex items-center justify-center overflow-hidden">
-            <iframe
-              key={`${slot}-${safeBannerKey}-${safeAdDomain}-${adConfig.customBannerHtml ? 'custom' : 'default'}`}
-              ref={iframeRef}
-              title={`ad-${slot}`}
-              scrolling="no"
-              frameBorder={0}
-              width={728}
-              height={90}
-              className="mx-auto max-w-full overflow-hidden relative z-10 border-0 bg-transparent block"
-            />
-          </div>
-        ) : (
-          <div className="relative z-10 w-full flex items-center justify-center overflow-hidden">
-            {customNativeUsesDocWrite ? (
-              <iframe
-                key={`footer-native-iframe-${safeNativeContainerId}`}
-                ref={nativeIframeRef}
-                title={`ad-${slot}`}
-                scrolling="no"
-                frameBorder={0}
-                className="w-full min-h-[120px] border-0 bg-transparent overflow-hidden relative z-10 block"
-              />
-            ) : (
-              <div
-                ref={nativeContainerRef}
-                className="w-full flex items-center justify-center overflow-x-auto no-scrollbar"
-              />
-            )}
-          </div>
-        )}
       </div>
     </section>
   );

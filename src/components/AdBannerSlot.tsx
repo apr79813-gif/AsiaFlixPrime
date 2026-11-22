@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AdConfig, DEFAULT_AD_CONFIG } from '../services/supabaseService';
 
 interface AdBannerSlotProps {
@@ -25,7 +25,10 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
   adConfig,
   isPhoneDevice = false,
 }) => {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const nativeIframeRef = useRef<HTMLIFrameElement>(null);
   const nativeContainerRef = useRef<HTMLDivElement>(null);
+  const [adUnavailable, setAdUnavailable] = useState(false);
 
   const isSlotVisible = useMemo(() => {
     if (!adConfig || !adConfig.enabled) return false;
@@ -61,7 +64,7 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
     return raw.replace(/[^a-zA-Z0-9_-]/g, '') || DEFAULT_AD_CONFIG.nativeContainerId;
   }, [adConfig?.nativeContainerId]);
 
-  const leaderboardSrcDoc = useMemo(() => {
+  const adHtmlString = useMemo(() => {
     const customHtml = adConfig?.customBannerHtml?.trim();
     if (customHtml) {
       return `<!DOCTYPE html>
@@ -102,7 +105,7 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
     return /document\.write/i.test(adConfig.customNativeHtml);
   }, [slot, adConfig?.customNativeHtml]);
 
-  const customNativeSrcDoc = useMemo(() => {
+  const customNativeHtmlString = useMemo(() => {
     if (!customNativeUsesDocWrite || !adConfig?.customNativeHtml) return '';
     return `<!DOCTYPE html>
 <html>
@@ -116,12 +119,86 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
 </html>`;
   }, [customNativeUsesDocWrite, adConfig?.customNativeHtml]);
 
+  // Reset adUnavailable whenever config changes
   useEffect(() => {
-    if (!isSlotVisible || slot !== 'footer' || customNativeUsesDocWrite) return;
+    setAdUnavailable(false);
+  }, [
+    slot,
+    adConfig?.enabled,
+    adConfig?.banner728Key,
+    adConfig?.adDomain,
+    adConfig?.customBannerHtml,
+    adConfig?.nativeScriptSrc,
+    adConfig?.nativeContainerId,
+    adConfig?.customNativeHtml,
+  ]);
+
+  // Execute 728x90 Leaderboard inside iframe via contentWindow.document.write (preserves real site origin)
+  useEffect(() => {
+    if (!isSlotVisible || adUnavailable || (slot !== 'home' && slot !== 'modal')) return;
+
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentWindow?.document;
+    if (!doc) return;
+
+    doc.open();
+    doc.write(adHtmlString);
+    doc.close();
+
+    // Detect blocked/empty creative so an empty black box is never left visible
+    const timer = window.setTimeout(() => {
+      try {
+        const body = iframeRef.current?.contentWindow?.document?.body;
+        if (!body) {
+          setAdUnavailable(true);
+          return;
+        }
+        const renderedNodes = body.querySelectorAll('iframe, img, a, ins, div, span, canvas');
+        if (renderedNodes.length === 0) {
+          setAdUnavailable(true);
+        }
+      } catch {
+        // Cross-origin frame populated cleanly — keep visible
+      }
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isSlotVisible, adUnavailable, slot, adHtmlString]);
+
+  // Execute Footer NativeBanner (with document.write iframe fallback if custom HTML uses document.write)
+  useEffect(() => {
+    if (!isSlotVisible || adUnavailable || slot !== 'footer') return;
+
+    if (customNativeUsesDocWrite) {
+      const iframe = nativeIframeRef.current;
+      const doc = iframe?.contentWindow?.document;
+      if (!doc) return;
+
+      doc.open();
+      doc.write(customNativeHtmlString);
+      doc.close();
+
+      const timer = window.setTimeout(() => {
+        try {
+          const body = nativeIframeRef.current?.contentWindow?.document?.body;
+          if (!body || body.querySelectorAll('iframe, img, a, ins, div, span').length === 0) {
+            setAdUnavailable(true);
+          }
+        } catch {}
+      }, 5000);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
     const host = nativeContainerRef.current;
     if (!host) return;
 
     host.replaceChildren();
+    let timerId: number | undefined;
 
     const customNative = adConfig?.customNativeHtml?.trim();
     if (customNative) {
@@ -131,36 +208,48 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
         const fragment = range.createContextualFragment(customNative);
         host.appendChild(fragment);
       } catch {
-        // Ignore malformed custom HTML quietly
+        setAdUnavailable(true);
       }
     } else {
+      const containerDiv = document.createElement('div');
+      containerDiv.id = safeNativeContainerId;
+
       const adScript = document.createElement('script');
       adScript.async = true;
       adScript.setAttribute('data-cfasync', 'false');
       adScript.src = safeNativeScriptSrc;
-
-      const containerDiv = document.createElement('div');
-      containerDiv.id = safeNativeContainerId;
+      adScript.onerror = () => {
+        setAdUnavailable(true);
+      };
 
       host.appendChild(adScript);
       host.appendChild(containerDiv);
+
+      timerId = window.setTimeout(() => {
+        if (containerDiv.children.length === 0 && !containerDiv.textContent?.trim()) {
+          setAdUnavailable(true);
+        }
+      }, 5000);
     }
 
     return () => {
+      if (timerId !== undefined) window.clearTimeout(timerId);
       if (nativeContainerRef.current) {
         nativeContainerRef.current.replaceChildren();
       }
     };
   }, [
     isSlotVisible,
+    adUnavailable,
     slot,
     adConfig?.customNativeHtml,
     customNativeUsesDocWrite,
+    customNativeHtmlString,
     safeNativeScriptSrc,
     safeNativeContainerId,
   ]);
 
-  if (!isSlotVisible) return null;
+  if (!isSlotVisible || adUnavailable) return null;
 
   const wrapperClass =
     slot === 'modal'
@@ -197,32 +286,30 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
           <div className="relative z-10 w-full flex items-center justify-center overflow-hidden">
             <iframe
               key={`${slot}-${safeBannerKey}-${safeAdDomain}-${adConfig.customBannerHtml ? 'custom' : 'default'}`}
-              title={`AsiaFlix Sponsored Leaderboard (${slot})`}
-              srcDoc={leaderboardSrcDoc}
-              width={728}
-              height={95}
+              ref={iframeRef}
+              title={`ad-${slot}`}
               scrolling="no"
               frameBorder={0}
-              sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation"
-              className="mx-auto max-w-full overflow-hidden border-0 bg-transparent block"
+              width={728}
+              height={90}
+              className="mx-auto max-w-full overflow-hidden relative z-10 border-0 bg-transparent block"
             />
           </div>
         ) : (
-          <div className="relative z-10 w-full min-h-[110px] flex items-center justify-center overflow-hidden">
+          <div className="relative z-10 w-full flex items-center justify-center overflow-hidden">
             {customNativeUsesDocWrite ? (
               <iframe
                 key={`footer-native-iframe-${safeNativeContainerId}`}
-                title="AsiaFlix Sponsored Native Banner"
-                srcDoc={customNativeSrcDoc}
+                ref={nativeIframeRef}
+                title={`ad-${slot}`}
                 scrolling="no"
                 frameBorder={0}
-                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation"
-                className="w-full min-h-[140px] border-0 bg-transparent overflow-hidden block"
+                className="w-full min-h-[120px] border-0 bg-transparent overflow-hidden relative z-10 block"
               />
             ) : (
               <div
                 ref={nativeContainerRef}
-                className="w-full flex items-center justify-center min-h-[110px] overflow-x-auto no-scrollbar"
+                className="w-full flex items-center justify-center overflow-x-auto no-scrollbar"
               />
             )}
           </div>

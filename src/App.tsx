@@ -2410,10 +2410,8 @@ export default function App() {
         isPhoneDevice={isPhoneDevice}
       />
 
-      {/* AD SLOT 1: HOME BANNER (Between Weekend Lineup & Filter Bar) */}
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
-        <AdBannerSlot slot="home" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
-      </div>
+      {/* AD SLOT 1: HOME 728x90 LEADERBOARD BANNER (Right below WeekendMegaLineupSection) */}
+      <AdBannerSlot slot="home" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
 
       {/* Catalog Search & Multi-Track Audio Filter Bar */}
       <FilterBar
@@ -2713,10 +2711,8 @@ export default function App() {
           </div>
         )}
 
-        {/* AD SLOT 3: FOOTER BANNER (Above Safety Policy Section) */}
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
-          <AdBannerSlot slot="footer" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
-        </div>
+        {/* AD SLOT 3: PRE-FOOTER NATIVE BANNER (Right above PolicySafetySection) */}
+        <AdBannerSlot slot="footer" adConfig={adConfig} isPhoneDevice={isPhoneDevice} />
 
         {/* Channel Policy & Safety Section */}
         <PolicySafetySection adsEnabled={adConfig.enabled} />

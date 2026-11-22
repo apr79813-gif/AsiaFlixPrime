@@ -265,49 +265,76 @@ export async function saveSheetSnapshotToSupabase(snapshotObj: Record<string, an
 
 export interface AdConfig {
   enabled: boolean;
-  mode: 'custom' | 'script';
-  scriptHtml: string;
-  customImageUrl: string;
-  customTargetUrl: string;
-  customHeadline: string;
-  customBadgeText: string;
+  banner728Key: string;
+  adDomain: string;
+  nativeScriptSrc: string;
+  nativeContainerId: string;
+  customBannerHtml: string;
+  customNativeHtml: string;
   showHomeBanner: boolean;
   showModalBanner: boolean;
-  showFooterBanner: boolean;
+  showFooterNative: boolean;
 }
 
 export const AD_CONFIG_KEY = '__AD_CONFIG__';
-export const AD_CONFIG_STORAGE_KEY = 'asiaflix_ad_config_v1';
+export const AD_CONFIG_STORAGE_KEY = 'asiaflix_ad_config_v2';
 
 export const DEFAULT_AD_CONFIG: AdConfig = {
-  enabled: false,
-  mode: 'custom',
-  scriptHtml: '',
-  customImageUrl: '',
-  customTargetUrl: '',
-  customHeadline: '',
-  customBadgeText: 'SPONSORED PARTNER',
+  enabled: true,
+  banner728Key: 'feba36fe11182be18bd172b85f043722',
+  adDomain: 'bancadeltempoidea.org',
+  nativeScriptSrc: 'https://bancadeltempoidea.org/21/bb8e0cf142cc695370f42b82967f601b',
+  nativeContainerId: 'container-bb8e0cf142cc695370f42b82967f601b',
+  customBannerHtml: '',
+  customNativeHtml: '',
   showHomeBanner: true,
   showModalBanner: true,
-  showFooterBanner: true,
+  showFooterNative: true,
 };
 
 function normalizeAdConfig(raw: any): AdConfig {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_AD_CONFIG };
+
+  const cleanKey =
+    typeof raw.banner728Key === 'string' && raw.banner728Key.trim()
+      ? raw.banner728Key.trim().replace(/[^a-zA-Z0-9_-]/g, '')
+      : DEFAULT_AD_CONFIG.banner728Key;
+
+  const cleanDomain =
+    typeof raw.adDomain === 'string' && raw.adDomain.trim()
+      ? raw.adDomain
+          .trim()
+          .replace(/^https?:\/\//i, '')
+          .replace(/\/.*$/, '')
+          .replace(/[^a-zA-Z0-9.-]/g, '')
+      : DEFAULT_AD_CONFIG.adDomain;
+
+  const cleanNativeSrc =
+    typeof raw.nativeScriptSrc === 'string' && raw.nativeScriptSrc.trim()
+      ? raw.nativeScriptSrc.trim()
+      : DEFAULT_AD_CONFIG.nativeScriptSrc;
+
+  const cleanContainerId =
+    typeof raw.nativeContainerId === 'string' && raw.nativeContainerId.trim()
+      ? raw.nativeContainerId.trim().replace(/[^a-zA-Z0-9_-]/g, '')
+      : DEFAULT_AD_CONFIG.nativeContainerId;
+
   return {
-    enabled: Boolean(raw.enabled),
-    mode: raw.mode === 'script' ? 'script' : 'custom',
-    scriptHtml: typeof raw.scriptHtml === 'string' ? raw.scriptHtml : '',
-    customImageUrl: typeof raw.customImageUrl === 'string' ? raw.customImageUrl : '',
-    customTargetUrl: typeof raw.customTargetUrl === 'string' ? raw.customTargetUrl : '',
-    customHeadline: typeof raw.customHeadline === 'string' ? raw.customHeadline : '',
-    customBadgeText:
-      typeof raw.customBadgeText === 'string' && raw.customBadgeText.trim()
-        ? raw.customBadgeText
-        : 'SPONSORED PARTNER',
+    enabled: raw.enabled !== undefined ? Boolean(raw.enabled) : true,
+    banner728Key: cleanKey || DEFAULT_AD_CONFIG.banner728Key,
+    adDomain: cleanDomain || DEFAULT_AD_CONFIG.adDomain,
+    nativeScriptSrc: cleanNativeSrc || DEFAULT_AD_CONFIG.nativeScriptSrc,
+    nativeContainerId: cleanContainerId || DEFAULT_AD_CONFIG.nativeContainerId,
+    customBannerHtml: typeof raw.customBannerHtml === 'string' ? raw.customBannerHtml : '',
+    customNativeHtml: typeof raw.customNativeHtml === 'string' ? raw.customNativeHtml : '',
     showHomeBanner: raw.showHomeBanner !== undefined ? Boolean(raw.showHomeBanner) : true,
     showModalBanner: raw.showModalBanner !== undefined ? Boolean(raw.showModalBanner) : true,
-    showFooterBanner: raw.showFooterBanner !== undefined ? Boolean(raw.showFooterBanner) : true,
+    showFooterNative:
+      raw.showFooterNative !== undefined
+        ? Boolean(raw.showFooterNative)
+        : raw.showFooterBanner !== undefined
+        ? Boolean(raw.showFooterBanner)
+        : true,
   };
 }
 

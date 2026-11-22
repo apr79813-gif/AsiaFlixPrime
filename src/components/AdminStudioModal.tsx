@@ -2868,10 +2868,10 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                 <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/15 via-[#181924] to-emerald-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h4 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
-                      <span>💰 VIP Monetization & Ad Slot System</span>
+                      <span>💰 Adsterra Monetization &amp; Ads Manager</span>
                     </h4>
                     <p className="text-[11px] text-zinc-300 mt-0.5">
-                      Control non-intrusive Cyber-Glass sponsor banners or Adsterra / Monetag tags across the portal and sync live to all visitors via Supabase.
+                      Pre-configured with your live Adsterra <strong className="text-amber-300">728x90 Leaderboard</strong> &amp; <strong className="text-emerald-300">NativeBanner</strong> slots. Customize codes or toggle slots and publish live across all devices.
                     </p>
                   </div>
 
@@ -2890,166 +2890,25 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                   </button>
                 </div>
 
-                {/* Ad Type / Mode Selector */}
+                {/* Slot Placement Toggles */}
                 <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-4">
                   <div>
-                    <label className="block text-[11px] font-black text-zinc-300 uppercase tracking-wider mb-2">
-                      Select Ad Format
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <label className="block text-[11px] font-black text-zinc-300 uppercase tracking-wider">
+                        Ad Placement Slot Controls
+                      </label>
                       <button
                         type="button"
-                        onClick={() => setAdDraft((prev) => ({ ...prev, mode: 'script' }))}
-                        className={`p-3 rounded-xl border text-left transition-all flex items-start gap-2.5 cursor-pointer ${
-                          adDraft.mode === 'script'
-                            ? 'bg-[#e50914]/15 border-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.2)]'
-                            : 'bg-black/30 border-white/10 text-zinc-400 hover:text-white'
-                        }`}
+                        onClick={() => setAdDraft({ ...DEFAULT_AD_CONFIG })}
+                        className="text-[11px] font-bold text-amber-300 hover:text-amber-200 underline cursor-pointer"
                       >
-                        <Code className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                        <div>
-                          <div className="text-xs font-black">Ad Network Script (Adsterra / Monetag HTML)</div>
-                          <div className="text-[10px] opacity-80 mt-0.5">
-                            Paste JS banner tags or native widget HTML snippets
-                          </div>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setAdDraft((prev) => ({ ...prev, mode: 'custom' }))}
-                        className={`p-3 rounded-xl border text-left transition-all flex items-start gap-2.5 cursor-pointer ${
-                          adDraft.mode === 'custom'
-                            ? 'bg-amber-500/15 border-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.2)]'
-                            : 'bg-black/30 border-white/10 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        <ImageIcon className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        <div>
-                          <div className="text-xs font-black">Custom Sponsor Banner (Image + Link)</div>
-                          <div className="text-[10px] opacity-80 mt-0.5">
-                            Direct sponsor card with custom image, headline, badge & link
-                          </div>
-                        </div>
+                        Reset to Default Adsterra Codes
                       </button>
                     </div>
-                  </div>
-
-                  {/* Mode Form */}
-                  {adDraft.mode === 'script' ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-xs font-bold text-zinc-300">
-                          Adsterra / Monetag / Custom HTML &amp; &lt;script&gt; Code
-                        </label>
-                        {adDraft.scriptHtml && (
-                          <button
-                            type="button"
-                            onClick={() => setAdDraft((prev) => ({ ...prev, scriptHtml: '' }))}
-                            className="text-[11px] text-red-400 hover:text-red-300 underline cursor-pointer"
-                          >
-                            Clear Code
-                          </button>
-                        )}
-                      </div>
-                      <textarea
-                        rows={5}
-                        value={adDraft.scriptHtml}
-                        onChange={(e) => setAdDraft((prev) => ({ ...prev, scriptHtml: e.target.value }))}
-                        placeholder={`Paste your Adsterra, Monetag, or HTML banner code here...\nExample:\n<script type="text/javascript">\n  atOptions = { 'key': '...', 'format': 'iframe', 'height': 90, 'width': 728 };\n</script>\n<script src="https://...invoke.js"></script>`}
-                        className="w-full p-3 rounded-xl bg-black/60 border border-white/15 text-emerald-300 font-mono text-[11px] outline-none focus:border-[#e50914]"
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
-                            Sponsor Headline *
-                          </label>
-                          <input
-                            type="text"
-                            value={adDraft.customHeadline}
-                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customHeadline: e.target.value }))}
-                            placeholder="e.g. Get Fast VIP Cloud Storage — 50% Off First Year!"
-                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
-                            Badge Text (Default: SPONSORED PARTNER)
-                          </label>
-                          <input
-                            type="text"
-                            value={adDraft.customBadgeText}
-                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customBadgeText: e.target.value }))}
-                            placeholder="SPONSORED PARTNER"
-                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
-                            Target Destination URL (https://...) *
-                          </label>
-                          <input
-                            type="url"
-                            value={adDraft.customTargetUrl}
-                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customTargetUrl: e.target.value }))}
-                            placeholder="https://sponsor-link.com/offer"
-                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-bold text-zinc-300 mb-1">
-                            Banner Image URL (Optional)
-                          </label>
-                          <input
-                            type="url"
-                            value={adDraft.customImageUrl}
-                            onChange={(e) => setAdDraft((prev) => ({ ...prev, customImageUrl: e.target.value }))}
-                            placeholder="https://... (uses sleek gradient card if blank)"
-                            className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white text-xs outline-none focus:border-amber-400"
-                          />
-                        </div>
-                      </div>
-
-                      {adDraft.customImageUrl.trim() && (
-                        <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 flex items-center gap-3">
-                          <img
-                            src={adDraft.customImageUrl}
-                            alt="Sponsor Preview"
-                            className="w-28 h-14 object-cover rounded-lg border border-white/10 shrink-0"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                          />
-                          <div className="text-[11px] text-zinc-300 min-w-0">
-                            <div className="font-bold text-white truncate">
-                              {adDraft.customHeadline || 'Sponsor Banner Image Preview'}
-                            </div>
-                            <div className="text-[10px] text-emerald-400 truncate">
-                              {adDraft.customTargetUrl || 'Add a target URL above'}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Individual Slot Visibility Toggles */}
-                  <div className="pt-2 border-t border-white/10">
-                    <label className="block text-[11px] font-black text-zinc-300 uppercase tracking-wider mb-2">
-                      Active Ad Placement Slots
-                    </label>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-bold">
                       <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
                         <div>
-                          <div className="text-white">Home Banner</div>
+                          <div className="text-white">Home 728x90 Banner</div>
                           <div className="text-[10px] text-zinc-400 font-normal">Below Weekend Lineup</div>
                         </div>
                         <input
@@ -3064,8 +2923,8 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
 
                       <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
                         <div>
-                          <div className="text-white">Episode Modal Banner</div>
-                          <div className="text-[10px] text-zinc-400 font-normal">Inside Drama Popup</div>
+                          <div className="text-white">Episode Modal 728x90 Banner</div>
+                          <div className="text-[10px] text-zinc-400 font-normal">Above Audio / Episodes</div>
                         </div>
                         <input
                           type="checkbox"
@@ -3079,18 +2938,126 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
 
                       <label className="flex items-center justify-between gap-2 p-3 rounded-xl bg-black/40 border border-white/10 cursor-pointer hover:border-white/25">
                         <div>
-                          <div className="text-white">Footer Banner</div>
-                          <div className="text-[10px] text-zinc-400 font-normal">Above Safety Policy</div>
+                          <div className="text-white">Footer 4-Card Native Banner</div>
+                          <div className="text-[10px] text-zinc-400 font-normal">Above Policy &amp; Safety</div>
                         </div>
                         <input
                           type="checkbox"
-                          checked={adDraft.showFooterBanner}
+                          checked={adDraft.showFooterNative}
                           onChange={(e) =>
-                            setAdDraft((prev) => ({ ...prev, showFooterBanner: e.target.checked }))
+                            setAdDraft((prev) => ({ ...prev, showFooterNative: e.target.checked }))
                           }
                           className="w-4 h-4 accent-[#e50914] cursor-pointer"
                         />
                       </label>
+                    </div>
+                  </div>
+
+                  {/* Pre-configured Key / Domain / Native Fields */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/10">
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Adsterra 728x90 Banner Key
+                      </label>
+                      <input
+                        type="text"
+                        value={adDraft.banner728Key}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, banner728Key: e.target.value }))}
+                        placeholder="feba36fe11182be18bd172b85f043722"
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-xs outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Adsterra Script Domain
+                      </label>
+                      <input
+                        type="text"
+                        value={adDraft.adDomain}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, adDomain: e.target.value }))}
+                        placeholder="bancadeltempoidea.org"
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-xs outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        NativeBanner Async Script URL
+                      </label>
+                      <input
+                        type="url"
+                        value={adDraft.nativeScriptSrc}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, nativeScriptSrc: e.target.value }))}
+                        placeholder="https://bancadeltempoidea.org/21/bb8e0cf142cc695370f42b82967f601b"
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-xs outline-none focus:border-emerald-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        NativeBanner Container ID
+                      </label>
+                      <input
+                        type="text"
+                        value={adDraft.nativeContainerId}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, nativeContainerId: e.target.value }))}
+                        placeholder="container-bb8e0cf142cc695370f42b82967f601b"
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-white font-mono text-xs outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Optional Raw HTML Paste Overrides */}
+                  <div className="space-y-3 pt-2 border-t border-white/10">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-bold text-zinc-300 flex items-center gap-1.5">
+                          <Code className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Paste Updated 728x90 Adsterra HTML/Script Override (Optional)</span>
+                        </label>
+                        {adDraft.customBannerHtml && (
+                          <button
+                            type="button"
+                            onClick={() => setAdDraft((prev) => ({ ...prev, customBannerHtml: '' }))}
+                            className="text-[10px] text-red-400 hover:text-red-300 underline cursor-pointer"
+                          >
+                            Use Default 728x90 Key
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        rows={3}
+                        value={adDraft.customBannerHtml}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, customBannerHtml: e.target.value }))}
+                        placeholder="Leave blank to use default pre-configured 728x90 script above, OR paste raw Adsterra 728x90 HTML code here..."
+                        className="w-full p-2.5 rounded-xl bg-black/60 border border-white/15 text-amber-200 font-mono text-[11px] outline-none focus:border-[#e50914]"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-bold text-zinc-300 flex items-center gap-1.5">
+                          <Code className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Paste Updated NativeBanner Adsterra HTML/Script Override (Optional)</span>
+                        </label>
+                        {adDraft.customNativeHtml && (
+                          <button
+                            type="button"
+                            onClick={() => setAdDraft((prev) => ({ ...prev, customNativeHtml: '' }))}
+                            className="text-[10px] text-red-400 hover:text-red-300 underline cursor-pointer"
+                          >
+                            Use Default NativeBanner
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        rows={3}
+                        value={adDraft.customNativeHtml}
+                        onChange={(e) => setAdDraft((prev) => ({ ...prev, customNativeHtml: e.target.value }))}
+                        placeholder="Leave blank to use default pre-configured NativeBanner async widget above, OR paste raw Adsterra NativeBanner HTML code here..."
+                        className="w-full p-2.5 rounded-xl bg-black/60 border border-white/15 text-emerald-300 font-mono text-[11px] outline-none focus:border-emerald-400"
+                      />
                     </div>
                   </div>
 
@@ -3119,9 +3086,9 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                           setAdsSaveFeedback({
                             type: 'success',
                             message:
-                              '✅ Ads configuration saved & published live to Supabase Cloud + all visitors!',
+                              '✅ Adsterra configuration saved & published live across all devices via Supabase!',
                           });
-                          setSuccessMessage('💰 Monetization & Ad Slots published live!');
+                          setSuccessMessage('💰 Adsterra Monetization Slots published live!');
                           setTimeout(() => setSuccessMessage(null), 3500);
                         } else {
                           setAdsSaveFeedback({

@@ -373,6 +373,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     if (isValid) {
       resetFailedAttempts();
       setIsAuthenticated(true);
+      localStorage.setItem('asiaflix_admin_unlocked', 'true');
+      sessionStorage.setItem('asiaflix_admin_unlocked', 'true');
       setAuthError(null);
       onAuthSuccess?.();
     } else {
@@ -406,6 +408,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
     resetFailedAttempts();
     setIsAuthenticated(true);
+    localStorage.setItem('asiaflix_admin_unlocked', 'true');
+    sessionStorage.setItem('asiaflix_admin_unlocked', 'true');
     setAuthError(null);
     onAuthSuccess?.();
   };
@@ -1171,6 +1175,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
               <button
                 onClick={() => {
                   setIsAuthenticated(false);
+                  localStorage.removeItem('asiaflix_admin_unlocked');
+                  sessionStorage.removeItem('asiaflix_admin_unlocked');
                   onAuthLogout?.();
                 }}
                 className="text-zinc-400 hover:text-white underline text-[11px]"
@@ -3281,6 +3287,8 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                   <button
                     onClick={() => {
                       setIsAuthenticated(false);
+                      localStorage.removeItem('asiaflix_admin_unlocked');
+                      sessionStorage.removeItem('asiaflix_admin_unlocked');
                       onAuthLogout?.();
                       onClose();
                     }}

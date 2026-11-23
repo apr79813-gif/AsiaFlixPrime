@@ -79,3 +79,16 @@
 .glow-red-lg {
   box-shadow: 0 0 45px rgba(229, 9, 20, 0.55);
 }
+
+@keyframes cinemaShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.animate-cinema-shimmer {
+  animation: cinemaShimmer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}

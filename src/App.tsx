@@ -33,6 +33,7 @@ import {
   syncShownIdsToServiceWorker,
 } from './services/notificationService';
 import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
+import { createDramaSlug, parseDeepLinkFromLocation } from './services/urlHelper';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
@@ -53,6 +54,7 @@ import {
 } from './services/supabaseService';
 
 export const OFFICIAL_SITE_URL = 'https://asiaflixprime.pages.dev';
+const DEFAULT_DOC_TITLE = 'AsiaFlix Prime — K-Drama & Movies VIP Portal';
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/export?format=csv&gid=0";
 
 const isHollyBollyTitle = (d: DramaItem): boolean => {
@@ -481,21 +483,65 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
 
-  // --- MODAL STATES ---
+  // --- MODAL & DEEP-LINK ROUTING STATES ---
   const [selectedDrama, setSelectedDrama] = useState<DramaItem | null>(null);
+  const [deepLinkEpisode, setDeepLinkEpisode] = useState<number | null>(() => {
+    return parseDeepLinkFromLocation()?.epNum ?? null;
+  });
+  const pendingDeepLinkRef = useRef(parseDeepLinkFromLocation());
+  const isHandlingPopStateRef = useRef<boolean>(false);
   const savedScrollYRef = useRef<number>(0);
 
-  const handleOpenDrama = (drama: DramaItem) => {
+  const findDramaBySlug = (list: DramaItem[], slug: string): DramaItem | undefined => {
+    const cleanSlug = (slug || '').toLowerCase().trim();
+    if (!cleanSlug) return undefined;
+    return (
+      list.find((d) => createDramaSlug(d) === cleanSlug) ||
+      list.find((d) => d.id.toLowerCase() === cleanSlug || d.id.toLowerCase() === `sheet-${cleanSlug}`) ||
+      list.find((d) => createDramaSlug(d).replace(/-\d{4}$/, '') === cleanSlug.replace(/-\d{4}$/, ''))
+    );
+  };
+
+  const handleOpenDrama = (drama: DramaItem, epOverride: number | null = null) => {
     if (!selectedDrama) {
       savedScrollYRef.current = window.scrollY;
     }
+    setDeepLinkEpisode(epOverride);
     setSelectedDrama(drama);
+    const slug = createDramaSlug(drama);
+    const targetPath = epOverride !== null ? `/watch/${slug}/ep-${epOverride}` : `/watch/${slug}`;
+    document.title =
+      epOverride !== null
+        ? `Ep ${epOverride} • ${drama.title} | AsiaFlix Prime`
+        : `${drama.title} — Watch Online in HD | AsiaFlix Prime`;
+    if (!isHandlingPopStateRef.current && window.location.pathname !== targetPath) {
+      window.history.pushState({ dramaSlug: slug, epNum: epOverride }, '', targetPath);
+    }
     window.scrollTo({ top: 0, behavior: 'auto' });
+  };
+
+  const handleActiveEpisodeChange = (epNum: number | null) => {
+    if (!selectedDrama) return;
+    const slug = createDramaSlug(selectedDrama);
+    const targetPath = epNum !== null ? `/watch/${slug}/ep-${epNum}` : `/watch/${slug}`;
+    document.title =
+      epNum !== null
+        ? `Ep ${epNum} • ${selectedDrama.title} | AsiaFlix Prime`
+        : `${selectedDrama.title} — Watch Online in HD | AsiaFlix Prime`;
+    if (!isHandlingPopStateRef.current && window.location.pathname !== targetPath) {
+      window.history.pushState({ dramaSlug: slug, epNum }, '', targetPath);
+    }
   };
 
   const handleCloseDrama = () => {
     const restoreY = savedScrollYRef.current;
+    pendingDeepLinkRef.current = null;
+    setDeepLinkEpisode(null);
     setSelectedDrama(null);
+    document.title = DEFAULT_DOC_TITLE;
+    if (!isHandlingPopStateRef.current && (window.location.pathname !== '/' || window.location.search)) {
+      window.history.pushState({}, '', '/');
+    }
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: restoreY, behavior: 'auto' });
     });
@@ -535,19 +581,27 @@ export default function App() {
     return [];
   });
 
-  // --- ADMIN AUTH STATE (Persistent per session) ---
+  // --- ADMIN AUTH STATE (Persistent across session & localStorage) ---
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('asiaflix_admin_session') === 'true';
+    return (
+      sessionStorage.getItem('asiaflix_admin_session') === 'true' ||
+      sessionStorage.getItem('asiaflix_admin_unlocked') === 'true' ||
+      localStorage.getItem('asiaflix_admin_unlocked') === 'true'
+    );
   });
 
   const handleAdminAuthSuccess = () => {
     setIsAdminAuthenticated(true);
     sessionStorage.setItem('asiaflix_admin_session', 'true');
+    sessionStorage.setItem('asiaflix_admin_unlocked', 'true');
+    localStorage.setItem('asiaflix_admin_unlocked', 'true');
   };
 
   const handleAdminAuthLogout = () => {
     setIsAdminAuthenticated(false);
     sessionStorage.removeItem('asiaflix_admin_session');
+    sessionStorage.removeItem('asiaflix_admin_unlocked');
+    localStorage.removeItem('asiaflix_admin_unlocked');
   };
 
   const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
@@ -608,6 +662,66 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('asiaflix_catalog_layout_mode_v1', catalogLayoutMode);
   }, [catalogLayoutMode]);
+
+  // Auto-resolve /watch/:slug[/ep-:epNum] deep links whenever catalog syncs
+  useEffect(() => {
+    dramasRef.current = dramas;
+
+    const pending = pendingDeepLinkRef.current;
+    if (pending && dramas.length > 0) {
+      const matched = findDramaBySlug(dramas, pending.slug);
+      if (matched) {
+        pendingDeepLinkRef.current = null;
+        setDeepLinkEpisode(pending.epNum);
+        setSelectedDrama(matched);
+        document.title =
+          pending.epNum !== null
+            ? `Ep ${pending.epNum} • ${matched.title} | AsiaFlix Prime`
+            : `${matched.title} — Watch Online in HD | AsiaFlix Prime`;
+        return;
+      }
+    }
+
+    if (selectedDrama) {
+      const updatedSelected = dramas.find((d) => d.id === selectedDrama.id);
+      if (updatedSelected && updatedSelected !== selectedDrama) {
+        setSelectedDrama(updatedSelected);
+      }
+    }
+  }, [dramas]);
+
+  // Handle Browser Back / Forward buttons (popstate) cleanly for /watch/... deep links
+  useEffect(() => {
+    const handlePopState = () => {
+      isHandlingPopStateRef.current = true;
+      const parsed = parseDeepLinkFromLocation();
+      if (!parsed) {
+        pendingDeepLinkRef.current = null;
+        setDeepLinkEpisode(null);
+        setSelectedDrama(null);
+        document.title = DEFAULT_DOC_TITLE;
+      } else {
+        const matched = findDramaBySlug(dramasRef.current, parsed.slug);
+        if (matched) {
+          pendingDeepLinkRef.current = null;
+          setSelectedDrama(matched);
+          setDeepLinkEpisode(parsed.epNum);
+          document.title =
+            parsed.epNum !== null
+              ? `Ep ${parsed.epNum} • ${matched.title} | AsiaFlix Prime`
+              : `${matched.title} — Watch Online in HD | AsiaFlix Prime`;
+        } else {
+          pendingDeepLinkRef.current = parsed;
+        }
+      }
+      window.setTimeout(() => {
+        isHandlingPopStateRef.current = false;
+      }, 0);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Global Admin Shortcut (Ctrl+Shift+A or Alt+A)
   useEffect(() => {
@@ -2848,7 +2962,13 @@ export default function App() {
     setSelectedCategory('all');
     setSelectedYear('all');
     setSelectedStatus('all');
+    pendingDeepLinkRef.current = null;
+    setDeepLinkEpisode(null);
     setSelectedDrama(null);
+    document.title = DEFAULT_DOC_TITLE;
+    if (!isHandlingPopStateRef.current && (window.location.pathname !== '/' || window.location.search)) {
+      window.history.pushState({}, '', '/');
+    }
     setIsWatchlistOpen(false);
     setIsNotificationsOpen(false);
     setIsRequestOpen(false);
@@ -2882,6 +3002,8 @@ export default function App() {
         <div className="w-full min-w-full min-h-screen bg-[#050508] relative z-50">
           <DramaDetailModal
             drama={selectedDrama}
+            initialEpisode={deepLinkEpisode}
+            onActiveEpisodeChange={handleActiveEpisodeChange}
             onClose={handleCloseDrama}
             onToggleWatchlist={handleToggleWatchlist}
             isWatchlisted={isDramaWatchlisted(selectedDrama.id)}
@@ -2893,7 +3015,7 @@ export default function App() {
             isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
             onSubscribeDubAlert={handleSubscribeDubAlert}
             onReportIssue={() => {
-              setSelectedDrama(null);
+              handleCloseDrama();
               setIsSupportOpen(true);
             }}
           />

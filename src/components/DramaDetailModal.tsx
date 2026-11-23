@@ -29,12 +29,16 @@ import {
   Gem,
   Server,
   Maximize,
+  Link2,
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
+import { createDramaSlug } from '../services/urlHelper';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
+  initialEpisode?: number | null;
+  onActiveEpisodeChange?: (epNum: number | null) => void;
   onClose: () => void;
   onToggleWatchlist: (drama: DramaItem, status?: WatchlistStatus) => void;
   isWatchlisted: boolean;
@@ -234,6 +238,8 @@ const QUALITY_OPTIONS = [
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
+  initialEpisode = null,
+  onActiveEpisodeChange,
   onClose,
   onToggleWatchlist,
   isWatchlisted,
@@ -251,6 +257,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hudTimerRef = useRef<number | null>(null);
   const pendingRestoreTimeRef = useRef<{ time: number; shouldPlay: boolean } | null>(null);
+  const videoAudioNodeRef = useRef<{ el: HTMLVideoElement; ctx: AudioContext; gain: GainNode } | null>(null);
+  const prevInitialEpisodeRef = useRef<number | null>(initialEpisode);
+
+  const isAdmin =
+    isAdminAuthenticated ||
+    (typeof window !== 'undefined' &&
+      (localStorage.getItem('asiaflix_admin_unlocked') === 'true' ||
+        sessionStorage.getItem('asiaflix_admin_unlocked') === 'true' ||
+        sessionStorage.getItem('asiaflix_admin_session') === 'true'));
 
   // Extract a clean single Telegram URL per audio track (excluding Es/Stream links)
   const extractCleanTrackTelegram = (track: AudioType): string | undefined => {
@@ -403,8 +418,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [audioSyncOffset, setAudioSyncOffset] = useState<number>(0);
   const [forceBuiltinAudio, setForceBuiltinAudio] = useState<boolean>(false);
+  const [isAudioCorsFallback, setIsAudioCorsFallback] = useState<boolean>(false);
 
   const [copied, setCopied] = useState(false);
+  const [epLinkCopied, setEpLinkCopied] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
   const [frontSuccess, setFrontSuccess] = useState(false);
 
   const showHudFeedback = (msg: string) => {
@@ -424,6 +442,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
     setForceBuiltinAudio(false);
+    setIsAudioCorsFallback(false);
   }, [activeStreamEp, drama?.id]);
 
   // Reset mirror & custom audio override when switching audio tracks without dropping playback if same video source
@@ -433,11 +452,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setForceBuiltinAudio(false);
   }, [activeAudio]);
 
-  // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
+  // Synchronize activeAudio & reset/auto-open player from deep link when drama or initialEpisode changes
   useEffect(() => {
-    setActiveStreamEp(null);
     setActiveMirrorIndex(0);
-    setIsStreamUnlocked(false);
     setIsLightsOff(false);
     setIsTheaterMode(false);
     setPlaybackSpeed(1);
@@ -449,28 +466,77 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsVideoLoading(true);
     setAudioSyncOffset(0);
     setForceBuiltinAudio(false);
+    setIsAudioCorsFallback(false);
     pendingRestoreTimeRef.current = null;
-    if (drama) {
+
+    if (!drama) {
+      setActiveStreamEp(null);
+      setIsStreamUnlocked(false);
+      return;
+    }
+
+    const pickPreferredTrackForEp = (targetEp: number | null): AudioType => {
+      const tracksOrder: AudioType[] = ['Hindi Dubbed', 'Hindi Fan Dubbed', 'Original / Eng Sub'];
+      if (targetEp !== null) {
+        const matchTrack = tracksOrder.find((tr) =>
+          getStreamableEpisodesForTrack(tr).some((e) => e.epNum === targetEp)
+        );
+        if (matchTrack) return matchTrack;
+      }
       if (
         audioLinkMap['Hindi Dubbed']?.startsWith('http') ||
         getStreamableEpisodesForTrack('Hindi Dubbed').length > 0
       ) {
-        setActiveAudio('Hindi Dubbed');
-      } else if (
+        return 'Hindi Dubbed';
+      }
+      if (
         audioLinkMap['Hindi Fan Dubbed']?.startsWith('http') ||
         getStreamableEpisodesForTrack('Hindi Fan Dubbed').length > 0
       ) {
-        setActiveAudio('Hindi Fan Dubbed');
-      } else if (
+        return 'Hindi Fan Dubbed';
+      }
+      if (
         audioLinkMap['Original / Eng Sub']?.startsWith('http') ||
         getStreamableEpisodesForTrack('Original / Eng Sub').length > 0
       ) {
-        setActiveAudio('Original / Eng Sub');
-      } else if (availableTrackList.length > 0) {
-        setActiveAudio(availableTrackList[0]);
+        return 'Original / Eng Sub';
       }
+      return availableTrackList[0] || 'Hindi Dubbed';
+    };
+
+    const chosenTrack = pickPreferredTrackForEp(initialEpisode);
+    setActiveAudio(chosenTrack);
+
+    if (initialEpisode !== null && initialEpisode !== undefined) {
+      setActiveStreamEp(initialEpisode);
+      setIsStreamUnlocked(true);
+    } else {
+      setActiveStreamEp(null);
+      setIsStreamUnlocked(false);
     }
+    prevInitialEpisodeRef.current = initialEpisode;
   }, [drama?.id]);
+
+  // Sync deep-link initialEpisode changes on browser Back/Forward (popstate)
+  useEffect(() => {
+    if (!drama) return;
+    if (prevInitialEpisodeRef.current === initialEpisode) return;
+    prevInitialEpisodeRef.current = initialEpisode;
+
+    if (initialEpisode !== null && initialEpisode !== undefined) {
+      const tracksOrder: AudioType[] = ['Hindi Dubbed', 'Hindi Fan Dubbed', 'Original / Eng Sub'];
+      const matchTrack = tracksOrder.find((tr) =>
+        getStreamableEpisodesForTrack(tr).some((e) => e.epNum === initialEpisode)
+      );
+      if (matchTrack) setActiveAudio(matchTrack);
+      setActiveStreamEp(initialEpisode);
+      setIsStreamUnlocked(true);
+    } else {
+      if (audioRef.current) audioRef.current.pause();
+      setActiveStreamEp(null);
+      setIsStreamUnlocked(false);
+    }
+  }, [initialEpisode, drama?.id]);
 
   // Apply playbackRate to native <video> & synced <audio> whenever speed or active video changes
   useEffect(() => {
@@ -486,6 +552,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return () => {
       if (hudTimerRef.current !== null) {
         window.clearTimeout(hudTimerRef.current);
+      }
+      if (videoAudioNodeRef.current) {
+        videoAudioNodeRef.current.ctx.close().catch(() => {});
+        videoAudioNodeRef.current = null;
       }
     };
   }, []);
@@ -580,11 +650,49 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     ? resolveVideoPlayerSource(currentPlayingStream.streamUrl, activeMirrorIndex)
     : null;
 
+  const attachVideoSilenceRouter = (vid: HTMLVideoElement, shouldSilence: boolean) => {
+    try {
+      let entry = videoAudioNodeRef.current;
+      if (!entry || entry.el !== vid) {
+        if (entry) {
+          entry.ctx.close().catch(() => {});
+          videoAudioNodeRef.current = null;
+        }
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) {
+          if (shouldSilence) setIsAudioCorsFallback((prev) => (prev ? prev : true));
+          return;
+        }
+        const ctx = new AudioCtx();
+        const source = ctx.createMediaElementSource(vid);
+        const gain = ctx.createGain();
+        gain.gain.value = shouldSilence ? 0 : 1;
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        entry = { el: vid, ctx, gain };
+        videoAudioNodeRef.current = entry;
+      } else {
+        entry.gain.gain.value = shouldSilence ? 0 : 1;
+      }
+      if (entry.ctx.state === 'suspended') {
+        entry.ctx.resume().catch(() => {});
+      }
+      setIsAudioCorsFallback((prev) => (prev ? false : prev));
+    } catch {
+      if (shouldSilence) {
+        setIsAudioCorsFallback((prev) => (prev ? prev : true));
+      }
+    }
+  };
+
   const syncAudioToVideo = (forcePlay = false) => {
     const vid = videoRef.current;
     const aud = audioRef.current;
     if (!vid || !aud || !isExternalAudioActive) return;
 
+    attachVideoSilenceRouter(vid, true);
     aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
     aud.muted = isAudioMuted;
     aud.playbackRate = vid.playbackRate || playbackSpeed;
@@ -607,14 +715,20 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  // Keep master audio volume, mute & lip-sync offset synchronized in real time
+  // Keep master audio volume, mute & lip-sync offset synchronized in real time while keeping native speaker UNMUTED
   useEffect(() => {
     const aud = audioRef.current;
     const vid = videoRef.current;
 
     if (isExternalAudioActive) {
-      if (vid && !vid.muted) {
-        vid.muted = true;
+      if (vid) {
+        attachVideoSilenceRouter(vid, true);
+        if (isAudioCorsFallback) {
+          vid.muted = true;
+        } else {
+          vid.muted = isAudioMuted;
+          vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        }
       }
       if (aud && vid) {
         aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -637,11 +751,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         aud.pause();
       }
       if (vid) {
+        if (videoAudioNodeRef.current && videoAudioNodeRef.current.el === vid) {
+          videoAudioNodeRef.current.gain.gain.value = 1;
+        }
         vid.muted = isAudioMuted;
         vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
       }
     }
-  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, trackCustomAudio, activeAudio]);
+  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio]);
 
   const currentStreamIndex = currentPlayingStream
     ? activeTrackStreamables.findIndex((item) => item.epNum === currentPlayingStream.epNum)
@@ -722,6 +839,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       setActiveAudio(trackOverride);
     }
     setActiveStreamEp(epNum);
+    onActiveEpisodeChange?.(epNum);
 
     // Only unlock immediately for trusted human mouse/touch clicks
     if (clickEvent && clickEvent.nativeEvent?.isTrusted) {
@@ -751,6 +869,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
     pendingRestoreTimeRef.current = null;
     setActiveStreamEp(null);
+    onActiveEpisodeChange?.(null);
     setActiveMirrorIndex(0);
     setIsStreamUnlocked(false);
     setIsLightsOff(false);
@@ -835,11 +954,29 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     showHudFeedback('🔄 Stream Reloaded');
   };
 
+  const triggerShareToast = (msg: string) => {
+    setShareToast(msg);
+    window.setTimeout(() => {
+      setShareToast((curr) => (curr === msg ? null : curr));
+    }, 2600);
+  };
+
   const handleShare = () => {
-    const text = `🌸 Watch "${drama.title}" in Clean Audio on AsiaFlix Prime VIP: https://asiaflixprime.pages.dev/`;
-    navigator.clipboard.writeText(text);
+    const seriesUrl = `https://asiaflixprime.pages.dev/watch/${createDramaSlug(drama)}`;
+    navigator.clipboard?.writeText(seriesUrl).catch(() => {});
     setCopied(true);
+    triggerShareToast('✅ Direct Series Link Copied!');
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleCopyEpisodeLink = () => {
+    if (activeStreamEp === null) return;
+    const epUrl = `https://asiaflixprime.pages.dev/watch/${createDramaSlug(drama)}/ep-${activeStreamEp}`;
+    navigator.clipboard?.writeText(epUrl).catch(() => {});
+    setEpLinkCopied(true);
+    triggerShareToast(`✅ Direct Episode ${activeStreamEp} Link Copied!`);
+    showHudFeedback(`🔗 Ep ${activeStreamEp} Link Copied!`);
+    setTimeout(() => setEpLinkCopied(false), 2500);
   };
 
   // Episodes matching active audio track
@@ -889,6 +1026,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           <X className="w-5 h-5" />
         </button>
       </header>
+
+      {/* Glowing Share / Deep-Link Copy Toast */}
+      {shareToast && (
+        <div className="fixed top-20 right-4 sm:right-8 z-50 px-4 py-2.5 rounded-xl bg-emerald-950/95 border border-emerald-400/50 text-emerald-200 text-xs sm:text-sm font-black shadow-[0_0_25px_rgba(16,185,129,0.45)] flex items-center gap-2 backdrop-blur-xl animate-fade-in">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{shareToast}</span>
+        </div>
+      )}
 
       {/* Lights-Off Cinema Overlay Dimmer inside page */}
       {isLightsOff && isPlayerActive && (
@@ -1045,10 +1190,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
                 <button
                   onClick={handleShare}
-                  className="p-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-white transition-all cursor-pointer"
-                  title="Share Drama Link"
+                  className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                    copied
+                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                      : 'bg-white/[0.08] hover:bg-white/[0.15] border-white/10 text-white'
+                  }`}
+                  title="Copy Direct Shareable Series Link"
                 >
                   {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
+                  <span>{copied ? 'Series Link Copied!' : 'Copy Series Link'}</span>
                 </button>
               </div>
             </div>
@@ -1097,8 +1247,28 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Right Action Buttons: Back to Drama Info + Close Player */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  {/* Right Action Buttons: Copy Ep Link, Back to Drama Info + Close Player */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {activeStreamEp !== null && (
+                      <button
+                        onClick={handleCopyEpisodeLink}
+                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                          epLinkCopied
+                            ? 'bg-emerald-500/25 border-emerald-400/50 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                            : 'bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-amber-200 border-[#f59e0b]/40'
+                        }`}
+                        title="Copy Direct Episode Link for Telegram"
+                      >
+                        {epLinkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
+                        <span>
+                          {epLinkCopied
+                            ? `Copied Ep ${activeStreamEp}!`
+                            : isMovie
+                            ? 'Copy Movie Link'
+                            : `Copy Ep ${activeStreamEp} Link`}
+                        </span>
+                      </button>
+                    )}
                     <button
                       onClick={handleClosePlayer}
                       className="px-3 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/15 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
@@ -1139,6 +1309,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       </div>
                     </div>
                   )}
+
+                  {/* Top-Right Official AsiaFlix Prime Channel Watermark Logo (visible on all videos & movies) */}
+                  <div className="absolute top-3.5 right-4 z-30 pointer-events-none select-none">
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/55 backdrop-blur-md border border-white/15 shadow-[0_4px_20px_rgba(0,0,0,0.6)] opacity-85">
+                      <div className="w-5 h-5 rounded-lg bg-gradient-to-br from-[#e50914] to-[#f59e0b] flex items-center justify-center shadow-[0_0_12px_rgba(229,9,20,0.6)]">
+                        <Play className="w-2.5 h-2.5 text-white fill-white ml-0.5" />
+                      </div>
+                      <span className="text-xs sm:text-sm font-black tracking-tight text-white">AsiaFlix</span>
+                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[#e50914] text-white tracking-wider">
+                        PRIME
+                      </span>
+                    </div>
+                  </div>
 
                   {/* Center-Screen Animated Gold/Obsidian HUD Overlay (for native video seek/speed/quality) */}
                   {hudToast && (
@@ -1183,16 +1366,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         controls
                         autoPlay
                         playsInline
-                        muted={isExternalAudioActive ? true : isAudioMuted}
+                        muted={isExternalAudioActive && isAudioCorsFallback ? true : isAudioMuted}
                         onLoadStart={() => setIsVideoLoading(true)}
                         onLoadedMetadata={(e) => {
                           const vid = e.currentTarget;
                           vid.playbackRate = playbackSpeed;
-                          if (!isExternalAudioActive) {
+                          if (isExternalAudioActive) {
+                            attachVideoSilenceRouter(vid, true);
+                            if (isAudioCorsFallback) {
+                              vid.muted = true;
+                            } else {
+                              vid.muted = isAudioMuted;
+                              vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                            }
+                          } else {
                             vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                             vid.muted = isAudioMuted;
-                          } else {
-                            vid.muted = true;
                           }
                           const pending = pendingRestoreTimeRef.current;
                           if (pending) {
@@ -1233,6 +1422,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onRateChange={(e) => {
                           if (audioRef.current) {
                             audioRef.current.playbackRate = e.currentTarget.playbackRate;
+                          }
+                        }}
+                        onVolumeChange={(e) => {
+                          const vid = e.currentTarget;
+                          if (isExternalAudioActive && isAudioCorsFallback) return;
+                          setAudioVolume(vid.volume);
+                          setIsAudioMuted(vid.muted);
+                          if (audioRef.current) {
+                            audioRef.current.volume = vid.muted ? 0 : vid.volume;
+                            audioRef.current.muted = vid.muted;
                           }
                         }}
                         onTimeUpdate={(e) => {
@@ -1282,10 +1481,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         />
                       )}
 
-                      {/* 16:9 Full-Widescreen Custom Thumbnail Overlay before playback begins (ZERO black sidebars) */}
+                      {/* Fallback sleek floating speaker control only if CORS blocks Web Audio zero-gain routing */}
+                      {isExternalAudioActive && isAudioCorsFallback && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsAudioMuted((m) => !m);
+                          }}
+                          className="absolute bottom-14 right-4 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black border border-white/20 text-white text-xs font-black shadow-lg backdrop-blur-md cursor-pointer"
+                          title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
+                        >
+                          {isAudioMuted ? (
+                            <VolumeX className="w-4 h-4 text-red-400" />
+                          ) : (
+                            <Volume2 className="w-4 h-4 text-emerald-400" />
+                          )}
+                          <span>{isAudioMuted ? 'Muted' : `${Math.round(audioVolume * 100)}%`}</span>
+                        </button>
+                      )}
+
+                      {/* 16:9 Full-Widescreen Custom Thumbnail Overlay + Cyber-Cinema Animated Loader */}
                       {!isVideoPlaying && (
                         <div
                           onClick={() => {
+                            videoAudioNodeRef.current?.ctx.resume().catch(() => {});
                             videoRef.current?.play().catch(() => {});
                           }}
                           className="absolute inset-0 z-20 overflow-hidden cursor-pointer group bg-[#050508]"
@@ -1312,15 +1532,47 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             </>
                           )}
 
-                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center gap-3">
-                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#e50914]/90 group-hover:bg-[#f6121d] border-2 border-white/40 shadow-[0_0_35px_rgba(229,9,20,0.7)] flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
-                              <Play className="w-7 h-7 sm:w-9 sm:h-9 text-white fill-white ml-1" />
-                            </div>
-                            <div className="px-4 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-[#f59e0b]/45 text-white text-xs sm:text-sm font-black tracking-wide shadow-[0_0_25px_rgba(0,0,0,0.85)]">
-                              {isVideoLoading
-                                ? `🎬 Loading 1080p FHD Stream • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp}`}`
-                                : `▶ Tap to Play 1080p FHD • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp}`}`}
-                            </div>
+                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center gap-4">
+                            {isVideoLoading ? (
+                              <>
+                                <div className="relative flex items-center justify-center">
+                                  <div className="w-24 h-24 rounded-full border-4 border-white/10 border-t-[#e50914] border-r-[#f59e0b] animate-spin shadow-[0_0_30px_rgba(229,9,20,0.45)]" />
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="w-14 h-14 rounded-full bg-black/75 border border-white/20 flex items-center justify-center backdrop-blur-md">
+                                      <Play className="w-6 h-6 text-white fill-white ml-0.5 animate-pulse" />
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="px-5 py-2.5 rounded-2xl bg-black/80 backdrop-blur-xl border border-[#e50914]/50 shadow-[0_0_30px_rgba(229,9,20,0.45)] flex flex-col items-center gap-1.5">
+                                  <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-white">
+                                    <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
+                                      <span className="w-[3px] h-2 bg-[#e50914] rounded-full animate-pulse" />
+                                      <span className="w-[3px] h-3.5 bg-[#f59e0b] rounded-full animate-bounce" />
+                                      <span className="w-[3px] h-2.5 bg-[#e50914] rounded-full animate-pulse" />
+                                    </span>
+                                    <span className="animate-pulse">⚡ Loading 1080p FHD Stream...</span>
+                                    <span className="px-2 py-0.5 rounded-md bg-[#e50914] text-white text-[10px] font-black uppercase tracking-wider">
+                                      {isMovie ? 'Full Movie' : `Episode ${activeStreamEp}`}
+                                    </span>
+                                  </div>
+                                  <div className="w-44 h-1.5 rounded-full bg-white/10 overflow-hidden relative">
+                                    <div className="w-24 h-full rounded-full bg-gradient-to-r from-[#e50914] via-[#f59e0b] to-[#ff2b54] animate-cinema-shimmer" />
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="relative flex items-center justify-center">
+                                  <div className="absolute w-24 h-24 rounded-full bg-[#e50914]/30 animate-ping" />
+                                  <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#e50914]/90 group-hover:bg-[#f6121d] border-2 border-white/40 shadow-[0_0_35px_rgba(229,9,20,0.7)] flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+                                    <Play className="w-7 h-7 sm:w-9 sm:h-9 text-white fill-white ml-1" />
+                                  </div>
+                                </div>
+                                <div className="px-5 py-2 rounded-full bg-black/80 backdrop-blur-md border border-[#e50914]/50 text-white text-xs sm:text-sm font-black tracking-wide shadow-[0_0_25px_rgba(229,9,20,0.4)]">
+                                  ▶ Tap to Watch {isMovie ? 'Full Movie' : `Episode ${activeStreamEp}`}
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1421,8 +1673,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Compact Master Audio Sync Bar (Volume, Mute, Lip-Sync Offset & External/Built-in Toggle) */}
-                  {(resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
+                  {/* Admin-Only Master Audio Sync & Lip-Sync Calibration Bar (Hidden from regular visitors) */}
+                  {isAdmin && (resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
                     <div className="px-3.5 py-2.5 rounded-xl bg-[#11131d] border border-white/10 flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2.5">
                         <span

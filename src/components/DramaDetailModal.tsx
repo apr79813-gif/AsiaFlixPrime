@@ -24,6 +24,7 @@ import {
   RotateCw,
   ArrowLeft,
   Gauge,
+  Gem,
   Server,
   Maximize,
 } from 'lucide-react';
@@ -202,6 +203,32 @@ interface StreamableEpisodeEntry {
 }
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+const QUALITY_OPTIONS = [
+  {
+    id: '1080p FHD (Ultra)',
+    label: '1080p FHD (Ultra)',
+    filter: 'contrast(1.07) saturate(1.14) brightness(1.02)',
+    hudText: '💎 Quality: 1080p FHD (Ultra) Enhanced',
+  },
+  {
+    id: '720p HD',
+    label: '720p HD',
+    filter: 'contrast(1.0) saturate(1.0) brightness(1.0)',
+    hudText: '💎 Quality: 720p HD Standard Crisp',
+  },
+  {
+    id: '480p Saver',
+    label: '480p Saver',
+    filter: 'contrast(0.95) saturate(0.88) brightness(0.98)',
+    hudText: '💎 Quality: 480p Saver Mode',
+  },
+  {
+    id: 'Auto HDR',
+    label: 'Auto HDR',
+    filter: 'contrast(1.16) saturate(1.26) brightness(1.05) drop-shadow(0 0 12px rgba(0,242,254,0.25))',
+    hudText: '💎 Quality: Auto HDR Cinema Boost Active',
+  },
+] as const;
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
@@ -220,6 +247,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const hudTimerRef = useRef<number | null>(null);
 
   // Extract a clean single Telegram URL per audio track (excluding Es/Stream links)
@@ -363,6 +391,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isTheaterMode, setIsTheaterMode] = useState<boolean>(false);
   const [isLightsOff, setIsLightsOff] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [selectedQuality, setSelectedQuality] = useState<string>('1080p FHD (Ultra)');
+  const [virtualTime, setVirtualTime] = useState<number>(0);
   const [streamReloadNonce, setStreamReloadNonce] = useState<number>(0);
   const [hudToast, setHudToast] = useState<string | null>(null);
 
@@ -376,13 +406,23 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
     hudTimerRef.current = window.setTimeout(() => {
       setHudToast(null);
-    }, 1700);
+    }, 1400);
   };
 
-  // Reset server mirror index to Server 1 (India No-VPN) whenever episode or track changes
+  // Reset server mirror index & virtual timeline whenever episode, track, or drama changes
   useEffect(() => {
     setActiveMirrorIndex(0);
+    setVirtualTime(0);
   }, [activeStreamEp, activeAudio, drama?.id]);
+
+  // Maintain virtual playback time counter while stream is unlocked & active (for iframe postMessage seek)
+  useEffect(() => {
+    if (activeStreamEp === null || !isStreamUnlocked) return;
+    const intervalId = window.setInterval(() => {
+      setVirtualTime((t) => t + playbackSpeed);
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [activeStreamEp, isStreamUnlocked, playbackSpeed]);
 
   // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
   useEffect(() => {
@@ -392,6 +432,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsLightsOff(false);
     setIsTheaterMode(false);
     setPlaybackSpeed(1);
+    setSelectedQuality('1080p FHD (Ultra)');
+    setVirtualTime(0);
     setStreamReloadNonce(0);
     setHudToast(null);
     if (drama) {
@@ -563,6 +605,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const handleClosePlayer = () => {
     setActiveStreamEp(null);
     setActiveMirrorIndex(0);
+    setVirtualTime(0);
     setIsStreamUnlocked(false);
     setIsLightsOff(false);
     setIsTheaterMode(false);
@@ -570,23 +613,57 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleSeek = (deltaSeconds: number, feedbackLabel: string) => {
-    if (videoRef.current && resolvedPlayerSource?.type === 'video') {
-      const nextTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
-      videoRef.current.currentTime = nextTime;
-      showHudFeedback(feedbackLabel);
+    const newTime = Math.max(0, virtualTime + deltaSeconds);
+    setVirtualTime(newTime);
+
+    if (videoRef.current) {
+      videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
     }
+
+    if (iframeRef.current?.contentWindow) {
+      const win = iframeRef.current.contentWindow;
+      try {
+        win.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [newTime, true] }), '*');
+        win.postMessage({ event: 'command', func: 'seekTo', args: [newTime, true] }, '*');
+        win.postMessage({ type: 'seek', time: newTime, delta: deltaSeconds }, '*');
+        win.postMessage({ api: 'seek', value: newTime }, '*');
+        win.focus();
+      } catch {
+        // ignore cross-origin postMessage restriction
+      }
+    }
+
+    showHudFeedback(feedbackLabel);
   };
 
-  const handleSpeedChange = (speed: number) => {
-    setPlaybackSpeed(speed);
+  const handleSpeedChange = (rate: number) => {
+    setPlaybackSpeed(rate);
     if (videoRef.current) {
-      videoRef.current.playbackRate = speed;
+      videoRef.current.playbackRate = rate;
     }
-    showHudFeedback(`⚡ Speed: ${speed}x`);
+    if (iframeRef.current?.contentWindow) {
+      const win = iframeRef.current.contentWindow;
+      try {
+        win.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [rate] }), '*');
+        win.postMessage({ type: 'rate', rate, speed: rate }, '*');
+        win.postMessage({ api: 'speed', value: rate }, '*');
+        win.postMessage({ method: 'setPlaybackRate', value: rate }, '*');
+      } catch {
+        // ignore cross-origin postMessage restriction
+      }
+    }
+    showHudFeedback(`⚡ Speed: ${rate}x Turbo`);
+  };
+
+  const handleQualityChange = (qualityId: string) => {
+    setSelectedQuality(qualityId);
+    const meta = QUALITY_OPTIONS.find((q) => q.id === qualityId);
+    showHudFeedback(meta ? meta.hudText : `💎 Quality: ${qualityId}`);
   };
 
   const handleMirrorSelect = (idx: number, label: string) => {
     setActiveMirrorIndex(idx);
+    setVirtualTime(0);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback(`Switched to ${label}`);
   };
@@ -602,8 +679,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleReloadStream = () => {
+    setVirtualTime(0);
     setStreamReloadNonce((n) => n + 1);
-    showHudFeedback('🔄 Player Reloaded');
+    showHudFeedback('🔄 Stream Reloaded');
   };
 
   const handleShare = () => {
@@ -896,10 +974,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* Live On-Screen Cyber HUD Overlay */}
+                  {/* Center-Screen Animated Neon HUD Overlay (1.4s feedback for Seek, Speed & Quality Boost) */}
                   {hudToast && (
-                    <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-black/85 backdrop-blur-md border border-cyan-400/50 text-white text-xs font-black tracking-wide shadow-[0_0_25px_rgba(0,242,254,0.45)] animate-fade-in">
-                      {hudToast}
+                    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-4">
+                      <div className="px-6 py-3 rounded-2xl bg-black/85 backdrop-blur-xl border border-cyan-400/60 text-white text-sm sm:text-base font-black tracking-wide shadow-[0_0_35px_rgba(0,242,254,0.55),0_0_20px_rgba(217,70,239,0.45)] animate-fade-in">
+                        {hudToast}
+                      </div>
                     </div>
                   )}
 
@@ -927,227 +1007,161 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </button>
                       </div>
                     </div>
-                  ) : resolvedPlayerSource.type === 'video' ? (
-                    <video
-                      ref={videoRef}
-                      key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
-                      src={resolvedPlayerSource.src}
-                      poster={drama.backdrop || drama.poster}
-                      controls
-                      autoPlay
-                      playsInline
-                      {...({ referrerpolicy: 'origin' } as Record<string, string>)}
-                      className="w-full h-full object-contain bg-black"
-                    />
                   ) : (
-                    <iframe
-                      key={`${resolvedPlayerSource.src}-${activeMirrorIndex}-${streamReloadNonce}`}
-                      src={resolvedPlayerSource.src}
-                      title={`${drama.title} Ep ${activeStreamEp}`}
-                      className="w-full h-full border-0 bg-black"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                      referrerPolicy="origin"
-                    />
+                    <div
+                      className="w-full h-full transition-[filter] duration-300"
+                      style={{
+                        filter:
+                          QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
+                          'contrast(1.07) saturate(1.14) brightness(1.02)',
+                      }}
+                    >
+                      {resolvedPlayerSource.type === 'video' ? (
+                        <video
+                          ref={videoRef}
+                          key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
+                          src={resolvedPlayerSource.src}
+                          poster={drama.backdrop || drama.poster}
+                          controls
+                          autoPlay
+                          playsInline
+                          {...({ referrerpolicy: 'origin' } as Record<string, string>)}
+                          className="w-full h-full object-contain bg-black"
+                        />
+                      ) : (
+                        <iframe
+                          ref={iframeRef}
+                          key={`${resolvedPlayerSource.src}-${activeMirrorIndex}-${streamReloadNonce}`}
+                          src={resolvedPlayerSource.src}
+                          title={`${drama.title} Ep ${activeStreamEp}`}
+                          className="w-full h-full border-0 bg-black"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowFullScreen
+                          referrerPolicy="origin"
+                        />
+                      )}
+                    </div>
                   )}
                 </div>
 
-                {/* 3. Conditional Genuine Working Control Deck: Iframe Server Switcher vs Direct HTML5 Controls */}
-                {currentSourceMeta?.type === 'iframe' ? (
-                  <div className="px-4 py-3 bg-gradient-to-r from-[#0d0e17] via-[#100e1c] to-[#0b111b] border-t border-white/10 space-y-2.5">
-                    {/* No-VPN Server Switcher Row */}
-                    {currentSourceMeta.mirrors.length > 0 && (
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                            <Server className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>⚡ Cloud Servers:</span>
-                          </span>
-                          {currentSourceMeta.mirrors.map((mirror, idx) => {
-                            const isMirrorActive = activeMirrorIndex === idx;
-                            return (
-                              <button
-                                key={`${mirror.label}-${idx}`}
-                                onClick={() => handleMirrorSelect(idx, mirror.label)}
-                                className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer whitespace-nowrap ${
-                                  isMirrorActive
-                                    ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white border-white/35 shadow-[0_0_16px_rgba(0,242,254,0.45)]'
-                                    : 'bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border-white/10'
-                                }`}
-                              >
-                                {mirror.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                {/* 3. ALWAYS-VISIBLE MULTI-COLOR NEON CYBER-GLASS CINEMA CONTROL DECK */}
+                <div className="bg-gradient-to-r from-[#0d0718] via-[#130a24] to-[#081526] border-t border-b border-fuchsia-500/30 p-3.5 sm:p-4 shadow-[inset_0_1px_25px_rgba(168,85,247,0.18)] flex flex-wrap items-center justify-between gap-3">
+                  {/* Seek, Skip Intro & Reload Group */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
+                      className="bg-gradient-to-r from-cyan-500/20 to-blue-600/25 border border-cyan-400/50 text-cyan-200 hover:from-cyan-500 hover:to-blue-600 hover:text-white shadow-[0_0_15px_rgba(6,182,212,0.3)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                    >
+                      ⏪ -10s
+                    </button>
+                    <button
+                      onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
+                      className="bg-gradient-to-r from-cyan-500/20 to-blue-600/25 border border-cyan-400/50 text-cyan-200 hover:from-cyan-500 hover:to-blue-600 hover:text-white shadow-[0_0_15px_rgba(6,182,212,0.3)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                    >
+                      +10s ⏩
+                    </button>
+                    <button
+                      onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
+                      className="bg-gradient-to-r from-[#ff0f39] via-[#d946ef] to-[#f59e0b] text-white border border-pink-400/60 shadow-[0_0_20px_rgba(255,15,57,0.45)] hover:brightness-110 font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                    >
+                      ⚡ Skip Intro (+85s)
+                    </button>
+                    <button
+                      onClick={handleReloadStream}
+                      className="bg-gradient-to-r from-emerald-500/20 to-teal-600/25 border border-emerald-400/50 text-emerald-200 hover:from-emerald-500 hover:to-teal-600 hover:text-white shadow-[0_0_15px_rgba(16,185,129,0.28)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      title="Reload current video stream"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span>🔄 Reload Stream</span>
+                    </button>
+                  </div>
 
-                    {/* Helpful Tip Pill */}
-                    <div className="px-3 py-1.5 rounded-lg bg-sky-500/10 border border-sky-400/25 text-[11px] font-semibold text-sky-200 flex items-center gap-2">
-                      <span>
-                        💡 Tip: If your network blocks a server, switch to Server 1 or Server 2 (No VPN Required) • Use ⚙️ inside video for Speed/Quality
-                      </span>
-                    </div>
-
-                    {/* 100% Working Action Buttons for Iframe Streams */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {!isMovie && (
-                          <>
-                            <button
-                              onClick={(e) =>
-                                prevStreamItem &&
-                                handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
-                              }
-                              disabled={!prevStreamItem}
-                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                                prevStreamItem
-                                  ? 'bg-white/[0.08] hover:bg-white/[0.15] text-white border-white/15 cursor-pointer'
-                                  : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                              }`}
-                            >
-                              <SkipBack className="w-3.5 h-3.5" />
-                              <span>⏮ Prev Ep</span>
-                            </button>
-
-                            <button
-                              onClick={(e) =>
-                                nextStreamItem &&
-                                handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
-                              }
-                              disabled={!nextStreamItem}
-                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                                nextStreamItem
-                                  ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40 shadow cursor-pointer'
-                                  : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                              }`}
-                            >
-                              <span>⏭ Next Ep</span>
-                              <SkipForward className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-
+                  {/* SPEED Pod (0.5x – 2x) */}
+                  <div className="flex flex-wrap items-center gap-1.5 bg-[#090612]/90 border border-fuchsia-500/35 rounded-2xl px-3 py-1.5">
+                    <span className="text-[10px] font-black text-fuchsia-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                      <Gauge className="w-3.5 h-3.5 text-fuchsia-400" />
+                      <span>⚡ SPEED</span>
+                    </span>
+                    {SPEED_OPTIONS.map((spd) => {
+                      const active = playbackSpeed === spd;
+                      return (
                         <button
-                          onClick={handleReloadStream}
-                          className="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/30 text-sky-300 border border-sky-500/35 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                        >
-                          <RotateCw className="w-3 h-3" />
-                          <span>🔄 Reload Player</span>
-                        </button>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <button
-                          onClick={() => setIsLightsOff((prev) => !prev)}
-                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                            isLightsOff
-                              ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                              : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                          key={`spd-${spd}`}
+                          onClick={() => handleSpeedChange(spd)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
+                            active
+                              ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white font-black shadow-[0_0_18px_rgba(217,70,239,0.65)] scale-105'
+                              : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
                           }`}
                         >
-                          <Lightbulb className="w-3.5 h-3.5" />
-                          <span>{isLightsOff ? 'Lights On' : '💡 Lights Off'}</span>
+                          {spd}x
                         </button>
+                      );
+                    })}
+                  </div>
 
+                  {/* QUALITY Pod (GPU Visual Boost & HDR Engine) */}
+                  <div className="flex flex-wrap items-center gap-1.5 bg-[#090612]/90 border border-amber-500/35 rounded-2xl px-3 py-1.5">
+                    <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                      <Gem className="w-3.5 h-3.5 text-amber-400" />
+                      <span>💎 QUALITY</span>
+                    </span>
+                    {QUALITY_OPTIONS.map((q) => {
+                      const active = selectedQuality === q.id;
+                      return (
                         <button
-                          onClick={() => setIsTheaterMode((prev) => !prev)}
-                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                            isTheaterMode
-                              ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
-                              : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                          key={q.id}
+                          onClick={() => handleQualityChange(q.id)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                            active
+                              ? 'bg-gradient-to-r from-[#7c3aed] via-[#ec4899] to-[#00f2fe] text-white font-black shadow-[0_0_20px_rgba(0,242,254,0.55)] scale-105'
+                              : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
                           }`}
                         >
-                          {isTheaterMode ? (
-                            <Minimize2 className="w-3.5 h-3.5" />
-                          ) : (
-                            <Maximize2 className="w-3.5 h-3.5" />
-                          )}
-                          <span>⛶ Expand Theater</span>
+                          {q.label}
                         </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-                        <button
-                          onClick={handleFullscreen}
-                          className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-white border border-white/15 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                        >
-                          <Maximize className="w-3.5 h-3.5" />
-                          <span>⛶ Fullscreen</span>
-                        </button>
+                {/* 4. Cloud Servers (India No-VPN) + Episode Navigation, Audio Switcher & Utility Modes */}
+                <div className="px-4 py-3 bg-[#090a10] space-y-2.5">
+                  {/* Cloud Server Switcher Row (shown whenever mirrors exist) */}
+                  {currentSourceMeta && currentSourceMeta.mirrors.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/[0.07]">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                          <Server className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>🇮🇳 Cloud Servers:</span>
+                        </span>
+                        {currentSourceMeta.mirrors.map((mirror, idx) => {
+                          const isMirrorActive = activeMirrorIndex === idx;
+                          return (
+                            <button
+                              key={`${mirror.label}-${idx}`}
+                              onClick={() => handleMirrorSelect(idx, mirror.label)}
+                              className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer whitespace-nowrap ${
+                                isMirrorActive
+                                  ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white border-white/35 shadow-[0_0_16px_rgba(0,242,254,0.45)]'
+                                  : 'bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border-white/10'
+                              }`}
+                            >
+                              {mirror.label}
+                            </button>
+                          );
+                        })}
                       </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="px-4 py-3 bg-gradient-to-r from-[#0d0e17] via-[#100e1c] to-[#0b111b] border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
-                    {/* Direct Video HTML5 Skip, Seek, Reload & Fullscreen Controls */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        onClick={() => handleSeek(-10, '⏪ Rewound -10s')}
-                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border border-white/10 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        ⏪ -10s
-                      </button>
-                      <button
-                        onClick={() => handleSeek(10, '⏩ Forwarded +10s')}
-                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border border-white/10 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        +10s ⏩
-                      </button>
-                      <button
-                        onClick={() => handleSeek(85, '⚡ Intro Skipped +85s')}
-                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#ff0f39]/25 to-[#a855f7]/25 hover:from-[#ff0f39] hover:to-[#a855f7] text-rose-200 hover:text-white border border-rose-500/40 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        ⚡ Skip Intro (+85s)
-                      </button>
-                      <button
-                        onClick={handleReloadStream}
-                        className="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/30 text-sky-300 border border-sky-500/35 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                        title="Reload current video stream"
-                      >
-                        <RotateCw className="w-3 h-3" />
-                        <span>Reload Stream</span>
-                      </button>
-                      <button
-                        onClick={handleFullscreen}
-                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-white border border-white/15 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        <Maximize className="w-3 h-3" />
-                        <span>⛶ Fullscreen</span>
-                      </button>
-                    </div>
-
-                    {/* Real HTML5 Playback Speed Changer */}
-                    <div className="flex flex-wrap items-center gap-1 bg-black/50 px-2 py-1 rounded-xl border border-white/10">
-                      <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                        <Gauge className="w-3 h-3" />
-                        <span>⚡ Speed</span>
+                      <span className="text-[11px] font-semibold text-sky-300/90">
+                        💡 No VPN needed on Server 1/2 in India
                       </span>
-                      {SPEED_OPTIONS.map((spd) => {
-                        const active = playbackSpeed === spd;
-                        return (
-                          <button
-                            key={`spd-${spd}`}
-                            onClick={() => handleSpeedChange(spd)}
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-black transition-all cursor-pointer ${
-                              active
-                                ? 'bg-gradient-to-r from-[#ff0f39] to-[#00f2fe] text-white shadow-[0_0_12px_rgba(0,242,254,0.65)]'
-                                : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
-                            }`}
-                          >
-                            {spd}x
-                          </button>
-                        );
-                      })}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* 4. Bottom Audio Switcher, Utility Modes (for direct video), Telegram Backup & Quick Episode Selector */}
-                <div className="px-4 py-3 bg-[#090a10] border-t border-white/10 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2.5">
-                    {/* Left: Prev/Next (for direct video) + 1-Click Audio Switcher */}
+                    {/* Left: Prev/Next Ep + 1-Click Audio Switcher */}
                     <div className="flex flex-wrap items-center gap-2">
-                      {currentSourceMeta?.type === 'video' && !isMovie && (
+                      {!isMovie && (
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             onClick={(e) =>
@@ -1205,39 +1219,43 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       )}
                     </div>
 
-                    {/* Right: Direct Video Lights Off & Theater + Telegram Backup Link */}
+                    {/* Right: Lights Off, Theater, Fullscreen & Telegram Backup Link */}
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {currentSourceMeta?.type === 'video' && (
-                        <>
-                          <button
-                            onClick={() => setIsLightsOff((prev) => !prev)}
-                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                              isLightsOff
-                                ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                                : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                            }`}
-                          >
-                            <Lightbulb className="w-3.5 h-3.5" />
-                            <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
-                          </button>
+                      <button
+                        onClick={() => setIsLightsOff((prev) => !prev)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                          isLightsOff
+                            ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                        }`}
+                      >
+                        <Lightbulb className="w-3.5 h-3.5" />
+                        <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
+                      </button>
 
-                          <button
-                            onClick={() => setIsTheaterMode((prev) => !prev)}
-                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                              isTheaterMode
-                                ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
-                                : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                            }`}
-                          >
-                            {isTheaterMode ? (
-                              <Minimize2 className="w-3.5 h-3.5" />
-                            ) : (
-                              <Maximize2 className="w-3.5 h-3.5" />
-                            )}
-                            <span>Theater</span>
-                          </button>
-                        </>
-                      )}
+                      <button
+                        onClick={() => setIsTheaterMode((prev) => !prev)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                          isTheaterMode
+                            ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                        }`}
+                      >
+                        {isTheaterMode ? (
+                          <Minimize2 className="w-3.5 h-3.5" />
+                        ) : (
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>Theater</span>
+                      </button>
+
+                      <button
+                        onClick={handleFullscreen}
+                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-white border border-white/15 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        <Maximize className="w-3.5 h-3.5" />
+                        <span>Fullscreen</span>
+                      </button>
 
                       {currentPlayingStream.telegramUrl && (
                         <a

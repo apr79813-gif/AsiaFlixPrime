@@ -244,7 +244,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
           </div>
         ) : (
           <div className="relative">
-            <div className={`flex overflow-x-auto pb-4 pt-1 scrollbar-thin scrollbar-thumb-red-600/40 scrollbar-track-transparent snap-x ${effectiveIsPhone ? 'gap-5' : 'gap-4'}`}>
+            <div className={`flex overflow-x-auto pb-4 pt-1 scrollbar-thin scrollbar-thumb-red-600/40 scrollbar-track-transparent snap-x ${effectiveIsPhone ? 'gap-[22px]' : 'gap-4'}`}>
               {filteredDramas.map((drama, idx) => {
                 const droppingToday = isDramaAiringTodayActive(drama);
                 const hasComingSoonAudios = Boolean(drama.comingSoonAudios && drama.comingSoonAudios.length > 0);
@@ -308,10 +308,10 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                     style={
                       effectiveIsPhone
                         ? {
-                            width: 'calc((100% - 54px) / 3.75)',
-                            minWidth: '336px',
-                            maxWidth: '370px',
-                            height: '650px',
+                            width: 'calc((100% - 44px) / 3)',
+                            minWidth: '418px',
+                            maxWidth: '445px',
+                            height: '810px',
                             flexShrink: 0,
                           }
                         : undefined
@@ -327,7 +327,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                     {/* Locked-Height Poster Area */}
                     <div
                       onClick={() => onSelectDrama(drama)}
-                      style={effectiveIsPhone ? { height: '395px', minHeight: '395px' } : undefined}
+                      style={effectiveIsPhone ? { height: '510px', minHeight: '510px' } : undefined}
                       className={`relative w-full shrink-0 overflow-hidden bg-zinc-900 cursor-pointer ${
                         effectiveIsPhone ? '' : 'h-[240px]'
                       }`}
@@ -347,35 +347,35 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       <div className="absolute inset-0 bg-gradient-to-t from-[#090a10] via-[#090a10]/30 to-transparent" />
 
                       {/* Top Left of Poster: Rank badge + Audio badge */}
-                      <div className={`absolute top-2.5 left-2.5 flex flex-col items-start z-10 pointer-events-none ${effectiveIsPhone ? 'gap-1.5' : 'gap-1'}`}>
+                      <div className={`absolute top-2.5 left-2.5 flex flex-col items-start z-10 pointer-events-none ${effectiveIsPhone ? 'gap-2' : 'gap-1'}`}>
                         {idx === 0 ? (
-                          <span className={`bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black uppercase tracking-wider rounded shadow-lg ${effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-2 py-0.5'}`}>
+                          <span className={`bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black uppercase tracking-wider rounded shadow-lg ${effectiveIsPhone ? 'text-[15px] px-3.5 py-1.5' : 'text-[9px] px-2 py-0.5'}`}>
                             👑 TOP 1
                           </span>
                         ) : (
-                          <span className={`bg-black/80 text-zinc-200 border border-white/15 font-black rounded shadow ${effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-1.5 py-0.5'}`}>
+                          <span className={`bg-black/80 text-zinc-200 border border-white/15 font-black rounded shadow ${effectiveIsPhone ? 'text-[15px] px-3.5 py-1.5' : 'text-[9px] px-1.5 py-0.5'}`}>
                             #{idx + 1}
                           </span>
                         )}
-                        <span className={`${audioBadgeColor} font-black uppercase tracking-wider rounded shadow border ${effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-1.5 py-0.5'}`}>
+                        <span className={`${audioBadgeColor} font-black uppercase tracking-wider rounded shadow border ${effectiveIsPhone ? 'text-[15px] px-3.5 py-1.5' : 'text-[9px] px-1.5 py-0.5'}`}>
                           {audioLabel}
                         </span>
                         {hasOnlineStream && (
-                          <span className={`bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 text-black font-black uppercase tracking-wider rounded border border-emerald-200/70 shadow-[0_0_12px_rgba(16,185,129,0.75)] flex items-center gap-1 ${effectiveIsPhone ? 'text-[11px] px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'}`}>
+                          <span className={`bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 text-black font-black uppercase tracking-wider rounded border border-emerald-200/70 shadow-[0_0_12px_rgba(16,185,129,0.75)] flex items-center gap-1 ${effectiveIsPhone ? 'text-[14px] px-3 py-1' : 'text-[8.5px] px-1.5 py-0.5'}`}>
                             ▶ STREAM
                           </span>
                         )}
                       </div>
 
                       {/* Top Right of Poster: Watchlist Bookmark + Automatic 18+ Seal directly below */}
-                      <div className="absolute top-2.5 right-2.5 z-20 flex flex-col items-end gap-1.5">
+                      <div className="absolute top-2.5 right-2.5 z-20 flex flex-col items-end gap-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onToggleWatchlist(drama);
                           }}
                           className={`rounded-full backdrop-blur-md border transition-all cursor-pointer flex items-center justify-center ${
-                            effectiveIsPhone ? 'w-10 h-10' : 'p-1.5'
+                            effectiveIsPhone ? 'w-11 h-11' : 'p-1.5'
                           } ${
                             isWatchlisted(drama.id)
                               ? 'bg-amber-500/90 border-amber-300 text-black shadow-lg'
@@ -391,7 +391,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </button>
 
                         {ageInfo.is18Plus && (
-                          <span className={`bg-[#e50914] text-white font-black rounded-md border border-white/30 shadow-[0_0_12px_rgba(229,9,20,0.8)] tracking-tighter pointer-events-none ${effectiveIsPhone ? 'text-[12px] px-2 py-0.5' : 'text-[10px] px-1.5 py-0.5'}`}>
+                          <span className={`bg-[#e50914] text-white font-black rounded-md border border-white/30 shadow-[0_0_12px_rgba(229,9,20,0.8)] tracking-tighter pointer-events-none ${effectiveIsPhone ? 'text-[14px] px-2.5 py-1' : 'text-[10px] px-1.5 py-0.5'}`}>
                             18+
                           </span>
                         )}
@@ -401,13 +401,13 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       {(drama.issueFixedText || drama.issueText) && (
                         <div
                           className={`absolute left-2.5 right-2.5 flex items-center z-10 pointer-events-none ${
-                            effectiveIsPhone ? 'bottom-12' : 'bottom-9'
+                            effectiveIsPhone ? 'bottom-14' : 'bottom-9'
                           }`}
                         >
                           {drama.issueFixedText ? (
                             <span
                               className={`inline-flex items-center gap-1 rounded-full bg-emerald-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-emerald-200/70 shadow-[0_0_14px_rgba(16,185,129,0.75)] ${
-                                effectiveIsPhone ? 'text-[12px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                                effectiveIsPhone ? 'text-[14px] px-3.5 py-1.5' : 'text-[9px] px-2 py-0.5'
                               }`}
                             >
                               ✅ ISSUE FIXED
@@ -415,7 +415,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           ) : (
                             <span
                               className={`inline-flex items-center gap-1 rounded-full bg-amber-500/90 backdrop-blur-md text-black font-black uppercase tracking-wider border border-amber-200/70 shadow-[0_0_14px_rgba(245,158,11,0.75)] animate-pulse ${
-                                effectiveIsPhone ? 'text-[12px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
+                                effectiveIsPhone ? 'text-[14px] px-3.5 py-1.5' : 'text-[9px] px-2 py-0.5'
                               }`}
                             >
                               ⚠️ FIXING ISSUE
@@ -425,43 +425,43 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       )}
 
                       {/* Bottom of Poster: Smart Audio-Aware Status Pill on Left & Rating on Right */}
-                      <div className={`absolute bottom-2.5 left-2 right-2 flex items-center justify-between gap-1.5 z-10 pointer-events-none ${effectiveIsPhone ? 'text-[13px]' : 'text-[10px]'}`}>
+                      <div className={`absolute bottom-3 left-2.5 right-2.5 flex items-center justify-between gap-2 z-10 pointer-events-none ${effectiveIsPhone ? 'text-[15px]' : 'text-[10px]'}`}>
                         <div
-                          className={`flex items-center gap-1.5 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white min-w-0 ${
-                            effectiveIsPhone ? 'px-3 py-1 max-w-[235px] font-extrabold' : 'px-2.5 py-0.5 max-w-[calc(100%-50px)] font-bold'
+                          className={`flex items-center gap-2 bg-black/85 backdrop-blur-md rounded-full border border-white/15 text-white min-w-0 ${
+                            effectiveIsPhone ? 'px-3.5 py-1.5 max-w-[300px] font-black' : 'px-2.5 py-0.5 max-w-[calc(100%-50px)] font-bold'
                           }`}
                           title={hasComingSoonAudios ? 'Coming Soon' : smartPosterStatus}
                         >
                           {hasComingSoonAudios ? (
                             <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
-                              <span className={`truncate text-amber-300 ${effectiveIsPhone ? 'text-[13px] font-extrabold' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
+                              <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] shrink-0 animate-pulse" />
+                              <span className={`truncate text-amber-300 ${effectiveIsPhone ? 'text-[15px] font-black' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
                                 ⏳ Coming Soon
                               </span>
                             </>
                           ) : (
                             <>
-                              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse shrink-0" />
-                              <span className={`truncate text-sky-300 ${effectiveIsPhone ? 'text-[13px] font-extrabold' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
+                              <span className="w-2 h-2 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse shrink-0" />
+                              <span className={`truncate text-sky-300 ${effectiveIsPhone ? 'text-[15px] font-black' : 'text-[9px] sm:text-[9.5px] font-extrabold'}`}>
                                 {smartPosterStatus}
                               </span>
                             </>
                           )}
                         </div>
 
-                        <span className={`bg-black/85 backdrop-blur-md text-amber-300 rounded border border-amber-500/25 shrink-0 flex items-center gap-0.5 ${effectiveIsPhone ? 'text-[13px] px-3 py-1 font-extrabold' : 'px-1.5 py-0.5 font-black'}`}>
+                        <span className={`bg-black/85 backdrop-blur-md text-amber-300 rounded-full border border-amber-500/25 shrink-0 flex items-center gap-1 ${effectiveIsPhone ? 'text-[15px] px-3.5 py-1.5 font-black' : 'px-1.5 py-0.5 font-black'}`}>
                           ★ {drama.rating}
                         </span>
                       </div>
                     </div>
 
                     {/* Locked-Height Info Area */}
-                    <div className={`flex-1 min-h-0 flex flex-col justify-between gap-1.5 bg-gradient-to-b from-[#11121a] to-[#0a0b10] ${effectiveIsPhone ? 'px-4 py-3' : 'p-3.5'}`}>
+                    <div className={`flex-1 min-h-0 flex flex-col justify-between gap-1.5 bg-gradient-to-b from-[#11121a] to-[#0a0b10] ${effectiveIsPhone ? 'px-4 py-3.5' : 'p-3.5'}`}>
                       <div className="space-y-1.5 min-w-0">
                         <h3
                           onClick={() => onSelectDrama(drama)}
                           className={`text-white hover:text-[#ff2b54] transition-colors truncate cursor-pointer ${
-                            effectiveIsPhone ? 'text-[19px] font-black leading-snug' : 'text-[13.5px] font-extrabold leading-tight'
+                            effectiveIsPhone ? 'text-[22px] font-black leading-snug' : 'text-[13.5px] font-extrabold leading-tight'
                           }`}
                           title={drama.title}
                         >
@@ -593,11 +593,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                       </div>
 
                       {/* Pinned Action Buttons */}
-                      <div className={`grid grid-cols-2 pt-1 mt-auto ${effectiveIsPhone ? 'gap-2.5' : 'gap-1.5'}`}>
+                      <div className={`grid grid-cols-2 pt-1.5 mt-auto ${effectiveIsPhone ? 'gap-3' : 'gap-1.5'}`}>
                         <button
                           onClick={() => onSelectDrama(drama)}
                           className={`w-full bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                            effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-bold'
+                            effectiveIsPhone ? 'py-4 px-3 rounded-xl text-[17px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-bold'
                           }`}
                         >
                           <Play className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} text-red-400 fill-red-400`} />
@@ -610,7 +610,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                             target="_blank"
                             rel="noopener noreferrer"
                             className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+                              effectiveIsPhone ? 'py-4 px-3 rounded-xl text-[17px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
                             }`}
                           >
                             <Send className={effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} />
@@ -619,8 +619,8 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         ) : (
                           <button
                             onClick={() => onSelectDrama(drama)}
-                            className={`w-full bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] hover:brightness-110 text-white text-center shadow-[0_0_14px_rgba(168,85,247,0.45)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+                            className={`w-full bg-[#e50914] hover:bg-[#f6121d] text-white text-center shadow-[0_0_14px_rgba(229,9,20,0.45)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                              effectiveIsPhone ? 'py-4 px-3 rounded-xl text-[17px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
                             }`}
                           >
                             <Play className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} fill-white`} />

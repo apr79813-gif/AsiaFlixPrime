@@ -4,14 +4,16 @@ import { AdConfig, DEFAULT_AD_CONFIG } from '../services/supabaseService';
 
 interface FloatingPopupAdProps {
   adConfig: AdConfig;
-  isDramaModalOpen: boolean;
+  isDramaModalOpen?: boolean;
+  isPlayerOpen?: boolean;
   isAdminOpen?: boolean;
   isPhoneDevice?: boolean;
 }
 
 export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
   adConfig,
-  isDramaModalOpen,
+  isDramaModalOpen = false,
+  isPlayerOpen = false,
   isAdminOpen = false,
   isPhoneDevice = false,
 }) => {
@@ -75,19 +77,21 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
 </html>`;
   }, [adConfig?.customBannerHtml, safeBannerKey, safeAdDomain]);
 
-  // Hide immediately if disabled, dismissed, or while Admin Studio is open
+  const isBlocked = Boolean(isPlayerOpen || isDramaModalOpen || isAdminOpen);
+
+  // Hide immediately if disabled, dismissed, or while Drama Page / Player / Admin Studio is open
   useEffect(() => {
-    if (!isEnabled || dismissedForThisVisit || isAdminOpen) {
+    if (!isEnabled || dismissedForThisVisit || isBlocked) {
       setIsVisible(false);
     }
-  }, [isEnabled, dismissedForThisVisit, isAdminOpen]);
+  }, [isEnabled, dismissedForThisVisit, isBlocked]);
 
-  // Trigger ONCE per page visit after initial 8-second delay (never repeats once closed)
+  // Trigger ONCE per page load after initial 8-second delay (never repeats once shown or closed until page refresh)
   useEffect(() => {
-    if (!isEnabled || dismissedForThisVisit || hasShownThisVisitRef.current) return;
+    if (!isEnabled || dismissedForThisVisit || hasShownThisVisitRef.current || isBlocked) return;
 
     const initialTimer = window.setTimeout(() => {
-      if (hasShownThisVisitRef.current || dismissedForThisVisit || isDramaModalOpen || isAdminOpen) {
+      if (hasShownThisVisitRef.current || dismissedForThisVisit || isBlocked) {
         return;
       }
       hasShownThisVisitRef.current = true;
@@ -99,7 +103,7 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
     return () => {
       window.clearTimeout(initialTimer);
     };
-  }, [isEnabled, dismissedForThisVisit, isDramaModalOpen, isAdminOpen]);
+  }, [isEnabled, dismissedForThisVisit, isBlocked]);
 
   // Inject Adsterra HTML via contentWindow.document.write (preserves real site origin)
   useEffect(() => {
@@ -136,7 +140,7 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
     setDismissedForThisVisit(true);
   };
 
-  if (!isEnabled || dismissedForThisVisit || !isVisible) return null;
+  if (!isEnabled || dismissedForThisVisit || !isVisible || isBlocked) return null;
 
   if (popupStyle === 'center') {
     return (

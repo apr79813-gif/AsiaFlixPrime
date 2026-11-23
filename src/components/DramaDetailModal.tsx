@@ -30,8 +30,6 @@ import {
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
-import { AdBannerSlot } from './AdBannerSlot';
-import { AdConfig } from '../services/supabaseService';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
@@ -46,7 +44,6 @@ interface DramaDetailModalProps {
   isTopOne?: boolean;
   onSubscribeDubAlert?: (dramaTitle: string, audio: string) => void;
   onReportIssue?: () => void;
-  adConfig?: AdConfig;
 }
 
 export interface VideoMirrorOption {
@@ -242,9 +239,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   isAdminAuthenticated = false,
   isTopOne = false,
   onReportIssue,
-  adConfig,
 }) => {
-  const modalBodyRef = useRef<HTMLDivElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -392,9 +387,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isLightsOff, setIsLightsOff] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [selectedQuality, setSelectedQuality] = useState<string>('1080p FHD (Ultra)');
-  const [virtualTime, setVirtualTime] = useState<number>(0);
   const [streamReloadNonce, setStreamReloadNonce] = useState<number>(0);
   const [hudToast, setHudToast] = useState<string | null>(null);
+  const [iframeControlNotice, setIframeControlNotice] = useState<boolean>(false);
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
@@ -409,20 +404,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }, 1400);
   };
 
-  // Reset server mirror index & virtual timeline whenever episode, track, or drama changes
+  // Reset server mirror index & embed notice whenever episode, track, or drama changes
   useEffect(() => {
     setActiveMirrorIndex(0);
-    setVirtualTime(0);
+    setIframeControlNotice(false);
   }, [activeStreamEp, activeAudio, drama?.id]);
-
-  // Maintain virtual playback time counter while stream is unlocked & active (for iframe postMessage seek)
-  useEffect(() => {
-    if (activeStreamEp === null || !isStreamUnlocked) return;
-    const intervalId = window.setInterval(() => {
-      setVirtualTime((t) => t + playbackSpeed);
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [activeStreamEp, isStreamUnlocked, playbackSpeed]);
 
   // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
   useEffect(() => {
@@ -433,9 +419,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsTheaterMode(false);
     setPlaybackSpeed(1);
     setSelectedQuality('1080p FHD (Ultra)');
-    setVirtualTime(0);
     setStreamReloadNonce(0);
     setHudToast(null);
+    setIframeControlNotice(false);
     if (drama) {
       if (
         audioLinkMap['Hindi Dubbed']?.startsWith('http') ||
@@ -591,7 +577,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
 
     setTimeout(() => {
-      modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 30);
   };
 
@@ -605,65 +591,54 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const handleClosePlayer = () => {
     setActiveStreamEp(null);
     setActiveMirrorIndex(0);
-    setVirtualTime(0);
     setIsStreamUnlocked(false);
     setIsLightsOff(false);
     setIsTheaterMode(false);
     setHudToast(null);
+    setIframeControlNotice(false);
   };
 
   const handleSeek = (deltaSeconds: number, feedbackLabel: string) => {
-    const newTime = Math.max(0, virtualTime + deltaSeconds);
-    setVirtualTime(newTime);
+    if (resolvedPlayerSource?.type === 'iframe') {
+      iframeRef.current?.focus();
+      setIframeControlNotice(true);
+      return;
+    }
 
     if (videoRef.current) {
       videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
+      showHudFeedback(feedbackLabel);
     }
-
-    if (iframeRef.current?.contentWindow) {
-      const win = iframeRef.current.contentWindow;
-      try {
-        win.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [newTime, true] }), '*');
-        win.postMessage({ event: 'command', func: 'seekTo', args: [newTime, true] }, '*');
-        win.postMessage({ type: 'seek', time: newTime, delta: deltaSeconds }, '*');
-        win.postMessage({ api: 'seek', value: newTime }, '*');
-        win.focus();
-      } catch {
-        // ignore cross-origin postMessage restriction
-      }
-    }
-
-    showHudFeedback(feedbackLabel);
   };
 
   const handleSpeedChange = (rate: number) => {
     setPlaybackSpeed(rate);
+    if (resolvedPlayerSource?.type === 'iframe') {
+      iframeRef.current?.focus();
+      setIframeControlNotice(true);
+      return;
+    }
+
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
+      showHudFeedback(`⚡ Speed: ${rate}x`);
     }
-    if (iframeRef.current?.contentWindow) {
-      const win = iframeRef.current.contentWindow;
-      try {
-        win.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [rate] }), '*');
-        win.postMessage({ type: 'rate', rate, speed: rate }, '*');
-        win.postMessage({ api: 'speed', value: rate }, '*');
-        win.postMessage({ method: 'setPlaybackRate', value: rate }, '*');
-      } catch {
-        // ignore cross-origin postMessage restriction
-      }
-    }
-    showHudFeedback(`⚡ Speed: ${rate}x Turbo`);
   };
 
   const handleQualityChange = (qualityId: string) => {
     setSelectedQuality(qualityId);
+    if (resolvedPlayerSource?.type === 'iframe') {
+      iframeRef.current?.focus();
+      setIframeControlNotice(true);
+      return;
+    }
     const meta = QUALITY_OPTIONS.find((q) => q.id === qualityId);
     showHudFeedback(meta ? meta.hudText : `💎 Quality: ${qualityId}`);
   };
 
   const handleMirrorSelect = (idx: number, label: string) => {
     setActiveMirrorIndex(idx);
-    setVirtualTime(0);
+    setIframeControlNotice(false);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback(`Switched to ${label}`);
   };
@@ -679,7 +654,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleReloadStream = () => {
-    setVirtualTime(0);
+    setIframeControlNotice(false);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback('🔄 Stream Reloaded');
   };
@@ -709,37 +684,53 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 overflow-y-auto backdrop-blur-md animate-fade-in transition-colors duration-300 ${
-        isLightsOff && isPlayerActive ? 'bg-black/95' : 'bg-black/85'
+      className={`relative w-full min-w-full min-h-screen text-white flex flex-col animate-fade-in transition-colors duration-300 ${
+        isLightsOff && isPlayerActive ? 'bg-black' : 'bg-[#050508]'
       }`}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className={`relative w-full ${
-          isTheaterMode ? 'max-w-6xl' : 'max-w-4xl'
-        } bg-[#111218] rounded-2xl border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden my-auto max-h-[92vh] flex flex-col transition-all duration-300`}
-      >
-        {/* Close Modal Button */}
+      {/* Sticky Full-Width Page Top Navigation Bar */}
+      <header className="sticky top-0 z-40 w-full px-4 sm:px-8 py-3.5 bg-[#08090f]/95 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between gap-3 shrink-0 shadow-[0_8px_30px_rgba(0,0,0,0.85)]">
         <button
           onClick={onClose}
-          className="absolute top-3.5 right-3.5 z-40 p-2.5 rounded-full bg-black/75 hover:bg-[#e50914] text-zinc-300 hover:text-white transition-all border border-white/15 cursor-pointer shadow-lg"
-          aria-label="Close modal"
+          className="px-5 py-2.5 text-base sm:text-lg font-black rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 flex items-center gap-2 transition-all cursor-pointer shrink-0 shadow-lg"
         >
-          <X className="w-4 h-4" />
+          <ArrowLeft className="w-5 h-5" />
+          <span>Back to Home</span>
         </button>
 
-        {/* Lights-Off Cinema Overlay Dimmer inside modal */}
-        {isLightsOff && isPlayerActive && (
-          <div
-            onClick={() => setIsLightsOff(false)}
-            className="fixed inset-0 z-20 bg-black/90 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
-            title="Click anywhere outside the player to turn lights back on"
-          />
-        )}
+        <div className="flex items-center justify-center gap-2.5 min-w-0 flex-1 px-2">
+          <h1 className="text-base sm:text-xl font-black text-white truncate">{drama.title}</h1>
+          <span className="hidden sm:inline-flex px-2.5 py-1 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[11px] font-black text-amber-300 uppercase tracking-wider shrink-0">
+            {activeAudioBadgeText}
+          </span>
+        </div>
 
+        <button
+          onClick={onClose}
+          className="p-3 rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 transition-all cursor-pointer shrink-0 shadow-lg"
+          aria-label="Close Drama Page"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </header>
+
+      {/* Lights-Off Cinema Overlay Dimmer inside page */}
+      {isLightsOff && isPlayerActive && (
+        <div
+          onClick={() => setIsLightsOff(false)}
+          className="absolute inset-0 z-20 bg-black/92 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
+          title="Click anywhere outside the player to turn lights back on"
+        />
+      )}
+
+      <div
+        className={`relative w-full mx-auto min-h-screen bg-[#050508] text-white pb-20 flex-1 flex flex-col transition-all duration-300 ${
+          isTheaterMode ? 'max-w-none' : 'max-w-[1600px]'
+        }`}
+      >
         {/* Top Hero Backdrop Banner — HIDDEN cleanly while Video Player is active so player takes over the very top */}
         {!isPlayerActive && (
-          <div className="relative w-full h-64 sm:h-80 shrink-0 overflow-hidden bg-zinc-950">
+          <div className="relative w-full h-72 sm:h-96 shrink-0 overflow-hidden bg-zinc-950 sm:rounded-b-2xl">
             <img
               src={drama.backdrop || drama.poster}
               alt={drama.title}
@@ -838,7 +829,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         e
                       )
                     }
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs font-black shadow-[0_0_25px_rgba(168,85,247,0.55)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/25"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#b20710] hover:from-[#f6121d] hover:to-[#e50914] text-white text-xs font-black shadow-[0_0_25px_rgba(229,9,20,0.5)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-red-400/35"
                   >
                     <Play className="w-4 h-4 fill-white" />
                     <span>
@@ -888,25 +879,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           </div>
         )}
 
-        {/* Modal Scrollable Body */}
+        {/* Page Body Container */}
         <div
-          ref={modalBodyRef}
-          className={`overflow-y-auto space-y-6 flex-1 ${isPlayerActive ? 'p-3 sm:p-5 pt-3' : 'p-4 sm:p-8'}`}
+          className={`space-y-6 flex-1 ${isPlayerActive ? 'p-3 sm:p-6 pt-4' : 'p-4 sm:p-8'}`}
         >
           {/* ============================================================
-              IMAX CYBER-CINEMA PROTECTED VIDEO PLAYER DECK (TOP OF MODAL)
+              NETFLIX CRIMSON + ROYAL GOLD + OBSIDIAN PROTECTED VIDEO PLAYER DECK
              ============================================================ */}
           {isPlayerActive && currentPlayingStream && (
-            <div className="relative z-30 p-[2px] rounded-3xl bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] shadow-[0_0_65px_rgba(229,9,20,0.4)] animate-fade-in">
-              <div className="rounded-[22px] bg-[#07070c]/95 backdrop-blur-2xl overflow-hidden flex flex-col">
-                {/* 1. Prominent Neon Episode Header Bar */}
-                <div className="px-4 py-3 pr-14 bg-gradient-to-r from-[#160a14] via-[#0e0c1a] to-[#071520] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+            <div className="relative z-30 rounded-2xl border border-white/15 bg-[#0a0b10] shadow-[0_20px_70px_rgba(0,0,0,0.95)] overflow-hidden animate-fade-in">
+              <div className="bg-[#0a0b10] overflow-hidden flex flex-col">
+                {/* 1. Prominent Obsidian & Crimson Episode Header Bar */}
+                <div className="px-4 py-3 bg-[#0f1018] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2.5 min-w-0">
-                    {/* Large Glowing Episode Pill + Animated Equalizer Bars */}
-                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#ff0f39] via-[#d946ef] to-[#7c3aed] text-white text-xs sm:text-sm font-black uppercase tracking-wider shadow-[0_0_24px_rgba(255,15,57,0.55)] border border-white/25 shrink-0">
+                    {/* Glowing Crimson Episode Pill + Animated Equalizer Bars */}
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#e50914] text-white text-xs sm:text-sm font-black uppercase tracking-wider shadow-[0_0_20px_rgba(229,9,20,0.45)] border border-red-400/40 shrink-0">
                       <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
                         <span className="w-[3px] h-2 bg-white rounded-full animate-pulse" />
-                        <span className="w-[3px] h-3.5 bg-cyan-200 rounded-full animate-bounce" />
+                        <span className="w-[3px] h-3.5 bg-amber-300 rounded-full animate-bounce" />
                         <span className="w-[3px] h-2.5 bg-white rounded-full animate-pulse" />
                       </span>
                       <span>
@@ -921,7 +911,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       <h3 className="text-sm sm:text-base font-black text-white truncate max-w-[280px] sm:max-w-[380px]">
                         {drama.title}
                       </h3>
-                      <span className="px-2.5 py-0.5 rounded-lg bg-white/[0.08] border border-white/15 text-[10px] font-black text-cyan-300 uppercase tracking-wider shrink-0">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[10px] font-black text-amber-300 uppercase tracking-wider shrink-0">
                         {activeAudioBadgeText}
                       </span>
                       <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 text-[10px] font-black uppercase tracking-wider shrink-0">
@@ -962,10 +952,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     ((drama.totalEpisodes ?? 0) > 1 || activeTrackStreamables.length > 1) &&
                     activeStreamEp !== null && (
                     <div className="absolute top-3.5 left-4 z-30 pointer-events-none select-none">
-                      <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-white/20 shadow-[0_4px_20px_rgba(0,0,0,0.8),0_0_15px_rgba(229,9,20,0.45)]">
+                      <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/20 shadow-[0_4px_20px_rgba(0,0,0,0.8)]">
                         <span className="relative flex items-center justify-center w-2 h-2">
-                          <span className="absolute inline-flex h-full w-full rounded-full bg-[#ff0f39] animate-ping opacity-85" />
-                          <span className="relative inline-flex rounded-full w-2 h-2 bg-[#ff0f39] shadow-[0_0_8px_#00f2fe]" />
+                          <span className="absolute inline-flex h-full w-full rounded-full bg-[#e50914] animate-ping opacity-85" />
+                          <span className="relative inline-flex rounded-full w-2 h-2 bg-[#e50914] shadow-[0_0_8px_#e50914]" />
                         </span>
                         <span className="text-white font-black text-xs sm:text-sm tracking-wide drop-shadow">
                           Episode {activeStreamEp}
@@ -974,10 +964,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* Center-Screen Animated Neon HUD Overlay (1.4s feedback for Seek, Speed & Quality Boost) */}
+                  {/* Center-Screen Animated Gold/Obsidian HUD Overlay (for native video seek/speed/quality) */}
                   {hudToast && (
                     <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-4">
-                      <div className="px-6 py-3 rounded-2xl bg-black/85 backdrop-blur-xl border border-cyan-400/60 text-white text-sm sm:text-base font-black tracking-wide shadow-[0_0_35px_rgba(0,242,254,0.55),0_0_20px_rgba(217,70,239,0.45)] animate-fade-in">
+                      <div className="px-6 py-3 rounded-2xl bg-black/90 backdrop-blur-xl border border-[#f59e0b]/60 text-white text-sm sm:text-base font-black tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.35)] animate-fade-in">
                         {hudToast}
                       </div>
                     </div>
@@ -1001,128 +991,139 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </p>
                         <button
                           onClick={handleUnlockPrivacyGate}
-                          className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(168,85,247,0.65)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/30"
+                          className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#b20710] hover:from-[#f6121d] hover:to-[#e50914] text-white text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(229,9,20,0.55)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-red-400/40"
                         >
                           🛡️ Click to Unlock &amp; Start Secure 1080p Stream (Anti-Bot Protected)
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <div
-                      className="w-full h-full transition-[filter] duration-300"
+                  ) : resolvedPlayerSource.type === 'video' ? (
+                    <video
+                      ref={videoRef}
+                      key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
+                      src={resolvedPlayerSource.src}
+                      poster={drama.backdrop || drama.poster}
+                      controls
+                      autoPlay
+                      playsInline
+                      {...({ referrerpolicy: 'origin' } as Record<string, string>)}
                       style={{
                         filter:
                           QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
                           'contrast(1.07) saturate(1.14) brightness(1.02)',
                       }}
-                    >
-                      {resolvedPlayerSource.type === 'video' ? (
-                        <video
-                          ref={videoRef}
-                          key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
-                          src={resolvedPlayerSource.src}
-                          poster={drama.backdrop || drama.poster}
-                          controls
-                          autoPlay
-                          playsInline
-                          {...({ referrerpolicy: 'origin' } as Record<string, string>)}
-                          className="w-full h-full object-contain bg-black"
-                        />
-                      ) : (
-                        <iframe
-                          ref={iframeRef}
-                          key={`${resolvedPlayerSource.src}-${activeMirrorIndex}-${streamReloadNonce}`}
-                          src={resolvedPlayerSource.src}
-                          title={`${drama.title} Ep ${activeStreamEp}`}
-                          className="w-full h-full border-0 bg-black"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                          allowFullScreen
-                          referrerPolicy="origin"
-                        />
-                      )}
-                    </div>
+                      className="w-full h-full object-contain bg-black transition-[filter] duration-300"
+                    />
+                  ) : (
+                    <iframe
+                      ref={iframeRef}
+                      key={`${resolvedPlayerSource.src}-${activeMirrorIndex}-${streamReloadNonce}`}
+                      src={resolvedPlayerSource.src}
+                      title={`${drama.title} Ep ${activeStreamEp}`}
+                      className="w-full h-full border-0 bg-black"
+                      allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
                   )}
                 </div>
 
-                {/* 3. ALWAYS-VISIBLE MULTI-COLOR NEON CYBER-GLASS CINEMA CONTROL DECK */}
-                <div className="bg-gradient-to-r from-[#0d0718] via-[#130a24] to-[#081526] border-t border-b border-fuchsia-500/30 p-3.5 sm:p-4 shadow-[inset_0_1px_25px_rgba(168,85,247,0.18)] flex flex-wrap items-center justify-between gap-3">
-                  {/* Seek, Skip Intro & Reload Group */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
-                      className="bg-gradient-to-r from-cyan-500/20 to-blue-600/25 border border-cyan-400/50 text-cyan-200 hover:from-cyan-500 hover:to-blue-600 hover:text-white shadow-[0_0_15px_rgba(6,182,212,0.3)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                    >
-                      ⏪ -10s
-                    </button>
-                    <button
-                      onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
-                      className="bg-gradient-to-r from-cyan-500/20 to-blue-600/25 border border-cyan-400/50 text-cyan-200 hover:from-cyan-500 hover:to-blue-600 hover:text-white shadow-[0_0_15px_rgba(6,182,212,0.3)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                    >
-                      +10s ⏩
-                    </button>
-                    <button
-                      onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
-                      className="bg-gradient-to-r from-[#ff0f39] via-[#d946ef] to-[#f59e0b] text-white border border-pink-400/60 shadow-[0_0_20px_rgba(255,15,57,0.45)] hover:brightness-110 font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                    >
-                      ⚡ Skip Intro (+85s)
-                    </button>
-                    <button
-                      onClick={handleReloadStream}
-                      className="bg-gradient-to-r from-emerald-500/20 to-teal-600/25 border border-emerald-400/50 text-emerald-200 hover:from-emerald-500 hover:to-teal-600 hover:text-white shadow-[0_0_15px_rgba(16,185,129,0.28)] font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                      title="Reload current video stream"
-                    >
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>🔄 Reload Stream</span>
-                    </button>
+                {/* 3. ALWAYS-VISIBLE MATTE CARBON-BLACK CINEMA CONTROL DECK */}
+                <div className="bg-[#0a0b10] border-t border-b border-white/10 p-4 flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    {/* Seek, Skip Intro & Reload Group */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
+                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                      >
+                        ⏪ -10s
+                      </button>
+                      <button
+                        onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
+                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                      >
+                        +10s ⏩
+                      </button>
+                      <button
+                        onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
+                        className="bg-[#e50914] hover:bg-[#f6121d] text-white border border-red-400/40 shadow-[0_0_16px_rgba(229,9,20,0.4)] font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                      >
+                        ⚡ Skip Intro (+85s)
+                      </button>
+                      <button
+                        onClick={handleReloadStream}
+                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                        title="Reload current video stream"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>🔄 Reload Stream</span>
+                      </button>
+                    </div>
+
+                    {/* SPEED Pod (0.5x – 2x) */}
+                    <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
+                      <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-wider flex items-center gap-1 mr-1">
+                        <Gauge className="w-3.5 h-3.5 text-[#f59e0b]" />
+                        <span>⚡ SPEED</span>
+                      </span>
+                      {SPEED_OPTIONS.map((spd) => {
+                        const active = playbackSpeed === spd;
+                        return (
+                          <button
+                            key={`spd-${spd}`}
+                            onClick={() => handleSpeedChange(spd)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
+                              active
+                                ? 'bg-[#f59e0b] text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]'
+                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                            }`}
+                          >
+                            {spd}x
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* QUALITY Pod */}
+                    <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
+                      <span className="text-[10px] font-black text-red-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+                        <Gem className="w-3.5 h-3.5 text-[#e50914]" />
+                        <span>💎 QUALITY</span>
+                      </span>
+                      {QUALITY_OPTIONS.map((q) => {
+                        const active = selectedQuality === q.id;
+                        return (
+                          <button
+                            key={q.id}
+                            onClick={() => handleQualityChange(q.id)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                              active
+                                ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.45)]'
+                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                            }`}
+                          >
+                            {q.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  {/* SPEED Pod (0.5x – 2x) */}
-                  <div className="flex flex-wrap items-center gap-1.5 bg-[#090612]/90 border border-fuchsia-500/35 rounded-2xl px-3 py-1.5">
-                    <span className="text-[10px] font-black text-fuchsia-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                      <Gauge className="w-3.5 h-3.5 text-fuchsia-400" />
-                      <span>⚡ SPEED</span>
-                    </span>
-                    {SPEED_OPTIONS.map((spd) => {
-                      const active = playbackSpeed === spd;
-                      return (
-                        <button
-                          key={`spd-${spd}`}
-                          onClick={() => handleSpeedChange(spd)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
-                            active
-                              ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white font-black shadow-[0_0_18px_rgba(217,70,239,0.65)] scale-105'
-                              : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                          }`}
-                        >
-                          {spd}x
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* QUALITY Pod (GPU Visual Boost & HDR Engine) */}
-                  <div className="flex flex-wrap items-center gap-1.5 bg-[#090612]/90 border border-amber-500/35 rounded-2xl px-3 py-1.5">
-                    <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                      <Gem className="w-3.5 h-3.5 text-amber-400" />
-                      <span>💎 QUALITY</span>
-                    </span>
-                    {QUALITY_OPTIONS.map((q) => {
-                      const active = selectedQuality === q.id;
-                      return (
-                        <button
-                          key={q.id}
-                          onClick={() => handleQualityChange(q.id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
-                            active
-                              ? 'bg-gradient-to-r from-[#7c3aed] via-[#ec4899] to-[#00f2fe] text-white font-black shadow-[0_0_20px_rgba(0,242,254,0.55)] scale-105'
-                              : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                          }`}
-                        >
-                          {q.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {/* Honest 1-line Cloud Embed Mode helper whenever stream is a third-party iframe */}
+                  {resolvedPlayerSource?.type === 'iframe' && (
+                    <div
+                      className={`px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
+                        iframeControlNotice
+                          ? 'bg-[#f59e0b]/15 border-[#f59e0b]/50 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                          : 'bg-white/[0.03] border-white/10 text-zinc-400'
+                      }`}
+                    >
+                      <span>
+                        ℹ️ Cloud Embed Mode: Use the timeline bar &amp; ⚙️ icon inside the video frame to seek or change speed (or use Direct MP4 links for external button control)
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* 4. Cloud Servers (India No-VPN) + Episode Navigation, Audio Switcher & Utility Modes */}
@@ -1143,8 +1144,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               onClick={() => handleMirrorSelect(idx, mirror.label)}
                               className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer whitespace-nowrap ${
                                 isMirrorActive
-                                  ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white border-white/35 shadow-[0_0_16px_rgba(0,242,254,0.45)]'
-                                  : 'bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border-white/10'
+                                  ? 'bg-emerald-600 text-white border-emerald-400/50 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 hover:text-white border-white/15'
                               }`}
                             >
                               {mirror.label}
@@ -1152,7 +1153,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           );
                         })}
                       </div>
-                      <span className="text-[11px] font-semibold text-sky-300/90">
+                      <span className="text-[11px] font-semibold text-zinc-400">
                         💡 No VPN needed on Server 1/2 in India
                       </span>
                     </div>
@@ -1237,7 +1238,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onClick={() => setIsTheaterMode((prev) => !prev)}
                         className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                           isTheaterMode
-                            ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
+                            ? 'bg-[#f59e0b] text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
                             : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
                         }`}
                       >
@@ -1285,8 +1286,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             onClick={(e) => handleOpenStream(item.epNum, activeAudio, item.episodeKey, e)}
                             className={`px-2.5 py-1 rounded-lg text-[11px] font-black shrink-0 border transition-all cursor-pointer ${
                               isPlayingThis
-                                ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white border-white/40 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
-                                : 'bg-white/[0.05] hover:bg-white/[0.12] text-zinc-300 border-white/10'
+                                ? 'bg-[#e50914] text-white border-red-400/50 shadow-[0_0_14px_rgba(229,9,20,0.45)]'
+                                : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
                             }`}
                           >
                             {item.label}
@@ -1365,9 +1366,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
-          {/* AD SLOT 2: EPISODE MODAL BANNER */}
-          {adConfig && <AdBannerSlot slot="modal" adConfig={adConfig} />}
-
           {/* TELEGRAM & ONLINE STREAM TRACK SELECTOR */}
           <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1438,7 +1436,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 e
                               );
                             }}
-                            className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#a855f7] to-[#38bdf8] text-white text-[11px] font-black flex items-center gap-1 shadow cursor-pointer"
+                            className="px-2.5 py-1 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-[11px] font-black flex items-center gap-1 shadow cursor-pointer"
                           >
                             <Play className="w-3 h-3 fill-white" />
                             <span>Stream</span>
@@ -1519,7 +1517,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         e
                       )
                     }
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs font-black shadow-[0_0_20px_rgba(168,85,247,0.45)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#b20710] hover:from-[#f6121d] hover:to-[#e50914] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.45)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer border border-red-400/35"
                   >
                     <Play className="w-4 h-4 fill-white" />
                     <span>
@@ -1647,7 +1645,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       track.key === 't1'
                         ? 'bg-red-500/15 border-red-500/35 text-red-200'
                         : track.key === 't2'
-                        ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
+                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-200'
                         : 'bg-sky-500/15 border-sky-500/35 text-sky-200';
                     const icon = track.key === 't1' ? '🔊' : track.key === 't2' ? '🎙️' : '💬';
                     const progressLabel = track.isComingSoon
@@ -1783,7 +1781,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           hasStreamLink ? 'cursor-pointer' : ''
                         } ${
                           isCurrentlyPlaying
-                            ? 'bg-gradient-to-r from-[#e50914]/20 via-[#a855f7]/15 to-[#38bdf8]/15 border-[#a855f7]/70 shadow-[0_0_20px_rgba(168,85,247,0.25)]'
+                            ? 'bg-[#e50914]/15 border-[#e50914]/60 shadow-[0_0_20px_rgba(229,9,20,0.2)]'
                             : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06]'
                         }`}
                       >
@@ -1834,7 +1832,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                   e.stopPropagation();
                                   handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e);
                                 }}
-                                className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#ff2b54] hover:brightness-110 text-white text-xs font-black shadow-[0_0_15px_rgba(168,85,247,0.45)] transition-all flex items-center gap-1.5 cursor-pointer"
+                                className="px-3.5 py-1.5 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
                               >
                                 <Play className="w-3.5 h-3.5 fill-white" />
                                 <span>Stream</span>
@@ -1856,7 +1854,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 e.stopPropagation();
                                 handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e);
                               }}
-                              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] hover:brightness-110 text-white text-xs font-black shadow-[0_0_15px_rgba(168,85,247,0.45)] transition-all flex items-center gap-1.5 cursor-pointer"
+                              className="px-3.5 py-1.5 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
                             >
                               <Play className="w-3.5 h-3.5 fill-white" />
                               <span>Watch Online</span>
@@ -1928,7 +1926,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               e
                             )
                           }
-                          className="px-3.5 py-2 rounded-lg bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs font-black shadow-[0_0_15px_rgba(168,85,247,0.5)] transition-all flex items-center gap-1.5 cursor-pointer"
+                          className="px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black border border-red-400/35 shadow-[0_0_15px_rgba(229,9,20,0.45)] transition-all flex items-center gap-1.5 cursor-pointer"
                         >
                           <Play className="w-3.5 h-3.5 fill-white" />
                           <span>Watch Online</span>

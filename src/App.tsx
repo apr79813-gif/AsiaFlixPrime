@@ -5,7 +5,8 @@ import { SakuraCanvas, ParticleMode } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
 import { AudienceNotificationBanner } from './components/AudienceNotificationBanner';
 import { Navbar } from './components/Navbar';
-import { Home, Search, X, Play, Star, Clock, Film } from 'lucide-react';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { Search, X, Play, Star, Clock, Film } from 'lucide-react';
 import { HeroBanner } from './components/HeroBanner';
 import { SpotlightBar } from './components/SpotlightBar';
 import { LiveIssueBoard } from './components/LiveIssueBoard';
@@ -482,6 +483,23 @@ export default function App() {
 
   // --- MODAL STATES ---
   const [selectedDrama, setSelectedDrama] = useState<DramaItem | null>(null);
+  const savedScrollYRef = useRef<number>(0);
+
+  const handleOpenDrama = (drama: DramaItem) => {
+    if (!selectedDrama) {
+      savedScrollYRef.current = window.scrollY;
+    }
+    setSelectedDrama(drama);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  };
+
+  const handleCloseDrama = () => {
+    const restoreY = savedScrollYRef.current;
+    setSelectedDrama(null);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: restoreY, behavior: 'auto' });
+    });
+  };
   const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isRequestOpen, setIsRequestOpen] = useState(false);
@@ -2231,7 +2249,7 @@ export default function App() {
     markNotificationIdsAsRead([notif.id]);
     if (notif.dramaId) {
       const drama = dramas.find((d) => d.id === notif.dramaId);
-      if (drama) setSelectedDrama(drama);
+      if (drama) handleOpenDrama(drama);
     }
   };
 
@@ -2518,14 +2536,36 @@ export default function App() {
       {/* Crisp Falling Particle Ambience Canvas */}
       <SakuraCanvas enabled={particleMode !== 'off'} mode={particleMode} />
 
-      {/* Top Notice Running Marquee */}
-      <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
+      {selectedDrama ? (
+        <div className="w-full min-w-full min-h-screen bg-[#050508] relative z-50">
+          <DramaDetailModal
+            drama={selectedDrama}
+            onClose={handleCloseDrama}
+            onToggleWatchlist={handleToggleWatchlist}
+            isWatchlisted={isDramaWatchlisted(selectedDrama.id)}
+            watchlistStatus={getDramaWatchlistStatus(selectedDrama.id)}
+            watchedEpisodes={watchedEpisodesMap[selectedDrama.id] || []}
+            onToggleEpisodeWatched={handleToggleEpisodeWatched}
+            onMoveToFront={handleMoveDramaToFront}
+            isAdminAuthenticated={isAdminAuthenticated}
+            isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
+            onSubscribeDubAlert={handleSubscribeDubAlert}
+            onReportIssue={() => {
+              setSelectedDrama(null);
+              setIsSupportOpen(true);
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Top Notice Running Marquee */}
+          <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
 
-      {/* Audience Instant Push & Telegram Bot Alerts Banner (Clean & Non-overlapping) */}
-      <AudienceNotificationBanner
-        botUsername={telegramBotSettings.botUsername}
-        onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
-      />
+          {/* Audience Instant Push & Telegram Bot Alerts Banner (Clean & Non-overlapping) */}
+          <AudienceNotificationBanner
+            botUsername={telegramBotSettings.botUsername}
+            onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
+          />
 
       {/* Header / Navbar */}
       <Navbar
@@ -2551,33 +2591,33 @@ export default function App() {
       />
 
       {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
-      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 px-4 sm:px-6 lg:px-8 relative z-30">
+      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-3 px-4 sm:px-6 lg:px-8 relative z-30">
         <div className="max-w-[1600px] mx-auto flex items-center justify-center sm:justify-between gap-3 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-2.5 sm:gap-3 mx-auto flex-nowrap shrink-0">
+          <div className="flex items-center gap-3 sm:gap-3.5 mx-auto flex-nowrap shrink-0">
             {/* Perk 1: 100% Free Access */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.3)] transition-all shrink-0">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
-              <span className="text-xs font-black text-white tracking-wide whitespace-nowrap">100% Free Access</span>
+            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all shrink-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
+              <span className="text-[14px] font-black text-white tracking-wide whitespace-nowrap">100% Free Access</span>
             </div>
 
             {/* Perk 2: Fast Cloud Stream */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.3)] transition-all shrink-0">
-              <span className="text-xs">⚡</span>
-              <span className="text-xs font-black text-white tracking-wide whitespace-nowrap">Fast Cloud Stream</span>
+            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all shrink-0">
+              <span className="text-sm">⚡</span>
+              <span className="text-[14px] font-black text-white tracking-wide whitespace-nowrap">Fast Cloud Stream</span>
             </div>
 
             {/* Perk 3: Zero Ads / Direct Cloud Links */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-red-500/10 to-pink-500/10 hover:from-red-500/20 hover:to-pink-500/20 border border-red-500/25 backdrop-blur-md shadow-[0_2px_10px_rgba(229,9,20,0.2)] transition-all shrink-0">
-              <span className="text-xs">{adConfig.enabled ? '⚡' : '🛡️'}</span>
-              <span className="text-xs font-black text-red-200 tracking-wide whitespace-nowrap">
+            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-gradient-to-r from-red-500/15 to-pink-500/15 hover:from-red-500/25 hover:to-pink-500/25 border border-red-500/30 backdrop-blur-md shadow-md transition-all shrink-0">
+              <span className="text-sm">{adConfig.enabled ? '⚡' : '🛡️'}</span>
+              <span className="text-[14px] font-black text-red-200 tracking-wide whitespace-nowrap">
                 {adConfig.enabled ? 'Direct Cloud Links' : 'Zero Ads / No Token'}
               </span>
             </div>
 
             {/* Perk 4: Weekend Drops */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 backdrop-blur-md shadow-[0_2px_10px_rgba(245,158,11,0.2)] transition-all shrink-0">
-              <span className="text-xs">🌸</span>
-              <span className="text-xs font-black text-amber-300 tracking-wide whitespace-nowrap">Weekend Drops 7 PM</span>
+            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 backdrop-blur-md shadow-md transition-all shrink-0">
+              <span className="text-sm">🌸</span>
+              <span className="text-[14px] font-black text-amber-300 tracking-wide whitespace-nowrap">Weekend Drops 7 PM</span>
             </div>
           </div>
         </div>
@@ -2587,7 +2627,7 @@ export default function App() {
       <HeroBanner
         featuredDramas={featuredDramas}
         banners={heroBanners}
-        onSelectDrama={(drama) => setSelectedDrama(drama)}
+        onSelectDrama={handleOpenDrama}
         onToggleWatchlist={handleToggleWatchlist}
         isWatchlisted={isDramaWatchlisted}
         onOpenAdminBanners={() => handleOpenAdminWithTab('banners')}
@@ -2597,7 +2637,7 @@ export default function App() {
       {/* Top Trending Spotlight Strip */}
       <SpotlightBar
         spotlightDramas={spotlightDramas}
-        onSelectDrama={(drama) => setSelectedDrama(drama)}
+        onSelectDrama={handleOpenDrama}
         onOpenAdminSpotlight={() => handleOpenAdminWithTab('trending')}
         isAdminAuthenticated={isAdminAuthenticated}
         isPhoneDevice={isPhoneDevice}
@@ -2606,7 +2646,7 @@ export default function App() {
       {/* Live Issue & Issue Fixed Notice Board (Directly Powered by Sheet Column T & U) */}
       <LiveIssueBoard
         dramas={dramas}
-        onSelectDrama={(drama) => setSelectedDrama(drama)}
+        onSelectDrama={handleOpenDrama}
         onOpenSupport={() => setIsSupportOpen(true)}
         isPhoneDevice={isPhoneDevice}
       />
@@ -2614,7 +2654,7 @@ export default function App() {
       {/* Weekend Mega Lineup Special Section */}
       <WeekendMegaLineupSection
         weekendDramas={weekendDramas}
-        onSelectDrama={(drama) => setSelectedDrama(drama)}
+        onSelectDrama={handleOpenDrama}
         onToggleWatchlist={handleToggleWatchlist}
         isWatchlisted={isDramaWatchlisted}
         onOpenAdminWeekend={() => handleOpenAdminWithTab('weekend')}
@@ -2700,8 +2740,8 @@ export default function App() {
                   isPhoneDevice
                     ? {
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                        gap: '20px',
+                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        gap: '22px',
                       }
                     : undefined
                 }
@@ -2710,7 +2750,7 @@ export default function App() {
                   <DramaCard
                     key={drama.id}
                     drama={drama}
-                    onSelect={(d) => setSelectedDrama(d)}
+                    onSelect={handleOpenDrama}
                     onToggleWatchlist={handleToggleWatchlist}
                     isWatchlisted={isDramaWatchlisted(drama.id)}
                     rank={idx + 1}
@@ -2735,7 +2775,7 @@ export default function App() {
           </section>
         ) : (
           /* STANDARD CURATED OTT ROWS */
-          <div className="space-y-4">
+          <div className={isPhoneDevice ? 'space-y-12' : 'space-y-4'}>
             {/* 1. Continue Watching (if user has active progress) */}
             {continueWatchingDramas.length > 0 && (
               <DramaRow
@@ -2744,7 +2784,7 @@ export default function App() {
                 subtitle="Pick up where you left off"
                 icon="▶️"
                 dramas={continueWatchingDramas}
-                onSelectDrama={(d) => setSelectedDrama(d)}
+                onSelectDrama={handleOpenDrama}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 isPhoneDevice={isPhoneDevice}
@@ -2758,7 +2798,7 @@ export default function App() {
               subtitle="Personalized VIP picks tailored to your taste"
               icon="🎯"
               dramas={recommendedDramas}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2771,7 +2811,7 @@ export default function App() {
               subtitle="Upcoming Asian blockbuster premieres for 2026"
               icon="🌸🔥"
               dramas={comingSoonDramas}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isComingSoonContext={true}
@@ -2785,7 +2825,7 @@ export default function App() {
               subtitle="Curated popular series with high bit-rate audio"
               icon="🐰🔥"
               dramas={trendingDramas}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2799,7 +2839,7 @@ export default function App() {
                 subtitle="Clean studio dubbing in crystal clear 1080p FHD"
                 icon="🔊✨"
                 dramas={hindiDubbedList}
-                onSelectDrama={(d) => setSelectedDrama(d)}
+                onSelectDrama={handleOpenDrama}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Dubbed"
@@ -2816,7 +2856,7 @@ export default function App() {
                 subtitle="Community voice projects and fast releases in Hindi audio"
                 icon="🎙️🌸"
                 dramas={fanDubbedList}
-                onSelectDrama={(d) => setSelectedDrama(d)}
+                onSelectDrama={handleOpenDrama}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Hindi Fan Dubbed"
@@ -2833,7 +2873,7 @@ export default function App() {
                 subtitle="Authentic native audio with high quality English subtitles in 1080p FHD"
                 icon="💬🌐"
                 dramas={origEngSubList}
-                onSelectDrama={(d) => setSelectedDrama(d)}
+                onSelectDrama={handleOpenDrama}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 activeAudioContext="Original / Eng Sub"
@@ -2849,7 +2889,7 @@ export default function App() {
               subtitle="Fresh episodes uploaded every Saturday & Sunday 7:00 PM"
               icon="✨🆕"
               dramas={ongoingDramas}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2862,7 +2902,7 @@ export default function App() {
               subtitle="Heartwarming romances, thrilling revenge, and comedy in clean Hindi audio"
               icon="🇰🇷🌸"
               dramas={kdramaList}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2875,7 +2915,7 @@ export default function App() {
               subtitle="Top sweet romance, wuxia, and modern acoustic series"
               icon="🇨🇳✨"
               dramas={cdramaList}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2889,7 +2929,7 @@ export default function App() {
                 subtitle="Captivating Japanese, Taiwanese, Thai, and regional Asian dramas"
                 icon="🌐✨"
                 dramas={otherSeriesList}
-                onSelectDrama={(d) => setSelectedDrama(d)}
+                onSelectDrama={handleOpenDrama}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 isPhoneDevice={isPhoneDevice}
@@ -2903,7 +2943,7 @@ export default function App() {
               subtitle="Complete full-length cinematic experiences"
               icon="🎬🍿"
               dramas={asianMoviesList.length > 0 ? asianMoviesList : dramas.filter((d) => !isHollyBollyTitle(d) && d.totalEpisodes === 1)}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2916,7 +2956,7 @@ export default function App() {
               subtitle="Epic action and supernatural adventures"
               icon="🍿🎬"
               dramas={hollyBollyList}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2929,7 +2969,7 @@ export default function App() {
               subtitle="All episodes available for non-stop weekend marathon"
               icon="🟢✨"
               dramas={completedList}
-              onSelectDrama={(d) => setSelectedDrama(d)}
+              onSelectDrama={handleOpenDrama}
               onToggleWatchlist={handleToggleWatchlist}
               isWatchlisted={isDramaWatchlisted}
               isPhoneDevice={isPhoneDevice}
@@ -2951,29 +2991,15 @@ export default function App() {
         onOpenAdmin={() => setIsAdminOpen(true)}
       />
 
-      {/* --- MODALS & DRAWERS --- */}
-
-      {/* 1. Drama Detail Modal */}
-      {selectedDrama && (
-        <DramaDetailModal
-          drama={selectedDrama}
-          onClose={() => setSelectedDrama(null)}
-          onToggleWatchlist={handleToggleWatchlist}
-          isWatchlisted={isDramaWatchlisted(selectedDrama.id)}
-          watchlistStatus={getDramaWatchlistStatus(selectedDrama.id)}
-          watchedEpisodes={watchedEpisodesMap[selectedDrama.id] || []}
-          onToggleEpisodeWatched={handleToggleEpisodeWatched}
-          onMoveToFront={handleMoveDramaToFront}
-          isAdminAuthenticated={isAdminAuthenticated}
-          isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
-          onSubscribeDubAlert={handleSubscribeDubAlert}
-          onReportIssue={() => {
-            setSelectedDrama(null);
-            setIsSupportOpen(true);
-          }}
-          adConfig={adConfig}
-        />
+      {/* ALWAYS-VISIBLE FLOATING QUICK ACTION DOCK (HOME FEED ONLY) */}
+      <MobileBottomNav
+        onGoHome={handleGoHome}
+        onFocusSearch={() => setIsInstantSearchOpen(true)}
+      />
+        </>
       )}
+
+      {/* --- MODALS & DRAWERS --- */}
 
       {/* 2. Watchlist Drawer */}
       <WatchlistDrawer
@@ -2981,7 +3007,7 @@ export default function App() {
         onClose={() => setIsWatchlistOpen(false)}
         watchlist={watchlist}
         allDramas={dramas}
-        onSelectDrama={(d) => setSelectedDrama(d)}
+        onSelectDrama={handleOpenDrama}
         onRemoveFromWatchlist={handleRemoveFromWatchlist}
         onUpdateStatus={handleUpdateWatchlistStatus}
         supabaseUser={supabaseUser}
@@ -3020,7 +3046,7 @@ export default function App() {
         isOpen={isArcadeOpen}
         onClose={() => setIsArcadeOpen(false)}
         dramas={dramas}
-        onSelectDrama={(d) => setSelectedDrama(d)}
+        onSelectDrama={handleOpenDrama}
       />
 
       {/* 7. Admin Studio Modal */}
@@ -3052,31 +3078,7 @@ export default function App() {
         />
       )}
 
-      {/* 8. ALWAYS-VISIBLE FLOATING QUICK ACTION DOCK (HOME & SEARCH - ALL DEVICES) */}
-      <aside 
-        aria-label="Quick Navigation Dock" 
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 p-2 rounded-2xl bg-[#111218]/95 backdrop-blur-xl border border-white/15 shadow-[0_10px_35px_rgba(0,0,0,0.85)]"
-      >
-        {/* Floating Home Button */}
-        <button
-          onClick={handleGoHome}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-[#e50914] text-white text-xs font-black transition-all hover:scale-105 active:scale-95 shadow-md cursor-pointer group"
-          title="Return to Home & Reset All Filters"
-        >
-          <Home className="w-4 h-4 text-zinc-300 group-hover:text-white" />
-          <span className="font-bold">Home</span>
-        </button>
-
-        {/* Floating Search Button */}
-        <button
-          onClick={() => setIsInstantSearchOpen(true)}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-xs font-black shadow-[0_0_15px_rgba(229,9,20,0.4)] transition-all hover:scale-105 active:scale-95 cursor-pointer"
-          title="Instant Search Dramas, Movies, and Cast"
-        >
-          <Search className="w-4 h-4" />
-          <span className="font-bold">Search</span>
-        </button>
-      </aside>
+      {/* 8. Instant Search Popup Modal */}
 
       {/* 9. INSTANT SEARCH POPUP MODAL (ALWAYS ACCESSIBLE ACROSS ALL DEVICES) */}
       {isInstantSearchOpen && (
@@ -3234,7 +3236,7 @@ export default function App() {
                         <div
                           key={`search-res-${d.id}`}
                           onClick={() => {
-                            setSelectedDrama(d);
+                            handleOpenDrama(d);
                             setIsInstantSearchOpen(false);
                           }}
                           className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-red-500/40 transition-all cursor-pointer flex items-center justify-between gap-3 group"
@@ -3303,7 +3305,7 @@ export default function App() {
               ) || null
             : null
         }
-        onOpenDrama={(drama) => setSelectedDrama(drama)}
+        onOpenDrama={handleOpenDrama}
         onDismiss={handleDismissToast}
       />
 
@@ -3311,6 +3313,7 @@ export default function App() {
       <FloatingPopupAd
         adConfig={adConfig}
         isDramaModalOpen={Boolean(selectedDrama)}
+        isPlayerOpen={Boolean(selectedDrama)}
         isAdminOpen={isAdminOpen}
         isPhoneDevice={isPhoneDevice}
       />

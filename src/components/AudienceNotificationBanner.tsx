@@ -49,27 +49,27 @@ export const AudienceNotificationBanner: React.FC<AudienceNotificationBannerProp
   }
 
   return (
-    <div className="bg-gradient-to-r from-[#170e12]/95 via-[#1c0e14]/95 to-[#101320]/95 border-b border-[#e50914]/25 px-4 py-2 relative z-30 shadow-md">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 flex-wrap">
+    <div className="bg-gradient-to-r from-[#170e12]/95 via-[#1c0e14]/95 to-[#101320]/95 border-b border-[#e50914]/25 px-4 py-2.5 relative z-30 shadow-md w-full overflow-hidden">
+      <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2 w-full">
         {justEnabled ? (
-          <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+          <div className="flex items-center gap-2.5 text-emerald-400 font-bold text-[14px]">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-bounce shrink-0" />
             <span>VIP Push Alerts Activated! You will receive instant notifications on this device.</span>
           </div>
         ) : (
           <div className="flex items-center gap-2 min-w-0">
-            <span className="p-1 rounded-md bg-[#e50914]/20 text-[#ff2b54] shrink-0">
-              <Bell className="w-3.5 h-3.5 animate-pulse" />
+            <span className="p-1.5 rounded-lg bg-[#e50914]/20 text-[#ff2b54] shrink-0">
+              <Bell className="w-4 h-4 animate-pulse" />
             </span>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-black text-white whitespace-nowrap">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <span className="text-[14px] font-black text-white whitespace-nowrap">
                 Never Miss a Hindi Dubbed Episode Drop!
               </span>
-              <span className="text-[10px] font-black uppercase tracking-wider bg-red-600/30 text-red-300 px-1.5 py-0.5 rounded border border-red-500/30 whitespace-nowrap">
+              <span className="text-[11px] font-black uppercase tracking-wider bg-red-600/30 text-red-300 px-2 py-0.5 rounded-md border border-red-500/30 whitespace-nowrap">
                 Instant VIP Alerts
               </span>
-              <span className="text-[11px] text-zinc-400 hidden md:inline">
-                • Push alerts & Telegram bot updates
+              <span className="text-[13px] font-bold text-zinc-300 hidden md:inline whitespace-nowrap">
+                • Push alerts &amp; Telegram bot updates
               </span>
             </div>
           </div>
@@ -80,9 +80,9 @@ export const AudienceNotificationBanner: React.FC<AudienceNotificationBannerProp
             {/* Native Web Push Button */}
             <button
               onClick={handleEnablePush}
-              className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-[11px] font-black shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-[13px] font-black shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <Bell className="w-3 h-3" />
+              <Bell className="w-3.5 h-3.5" />
               <span>Allow Phone Alerts</span>
             </button>
 
@@ -91,20 +91,20 @@ export const AudienceNotificationBanner: React.FC<AudienceNotificationBannerProp
               href={`https://t.me/${botUsername}?start=site_alerts`}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-2.5 py-1 rounded-lg bg-[#0088cc]/20 hover:bg-[#0088cc]/30 border border-[#0088cc]/50 text-sky-300 text-[11px] font-bold transition-all flex items-center gap-1.5 whitespace-nowrap"
+              className="px-3.5 py-1.5 rounded-xl bg-[#0088cc]/20 hover:bg-[#0088cc]/30 border border-[#0088cc]/50 text-sky-300 text-[13px] font-black transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
-              <Send className="w-3 h-3" />
+              <Send className="w-3.5 h-3.5" />
               <span>Telegram Bot Alerts</span>
             </a>
 
             {/* Dismiss */}
             <button
               onClick={handleDismiss}
-              className="p-1 text-zinc-400 hover:text-white rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+              className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer shrink-0"
               title="Dismiss"
               aria-label="Dismiss banner"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}

@@ -97,33 +97,38 @@ export const DramaRow: React.FC<DramaRowProps> = ({
   if (!uniqueDramas || uniqueDramas.length === 0) return null;
 
   return (
-    <section id={id} className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12 w-full">
+    <section
+      id={id}
+      className={`max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full ${
+        effectiveIsPhone ? 'py-5 my-3 mb-12' : 'mb-12'
+      }`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between gap-4 mb-5">
         <div className="flex items-center gap-3 min-w-0">
           <div
             className={`rounded-full bg-gradient-to-b from-[#e50914] to-[#ff2b54] shadow-[0_0_12px_#e50914] shrink-0 ${
-              effectiveIsPhone ? 'w-1.5 h-8' : 'w-1 h-6'
+              effectiveIsPhone ? 'w-1.5 h-9' : 'w-1 h-6'
             }`}
           />
           <div className="min-w-0">
             <h2
-              className={`font-black text-white tracking-tight flex items-center gap-2 flex-wrap ${
-                effectiveIsPhone ? 'text-2xl' : 'text-lg sm:text-xl'
+              className={`font-black text-white tracking-tight flex items-center gap-2.5 flex-wrap ${
+                effectiveIsPhone ? 'text-[26px]' : 'text-lg sm:text-xl'
               }`}
             >
               {icon && <span className="shrink-0">{icon}</span>}
               <span className="truncate">{title}</span>
               <span
                 className={`font-bold text-zinc-200 bg-white/[0.06] backdrop-blur-md border border-white/10 rounded-full shrink-0 ${
-                  effectiveIsPhone ? 'text-xs px-3 py-1' : 'text-[11px] px-2.5 py-0.5'
+                  effectiveIsPhone ? 'text-[14px] px-3.5 py-1' : 'text-[11px] px-2.5 py-0.5'
                 }`}
               >
                 {uniqueDramas.length} Titles
               </span>
             </h2>
             {subtitle && (
-              <p className={`mt-0.5 truncate ${effectiveIsPhone ? 'text-sm text-zinc-300' : 'text-xs text-zinc-400'}`}>
+              <p className={`mt-1 truncate ${effectiveIsPhone ? 'text-[15px] text-zinc-300 font-semibold' : 'text-xs text-zinc-400'}`}>
                 {subtitle}
               </p>
             )}
@@ -136,14 +141,14 @@ export const DramaRow: React.FC<DramaRowProps> = ({
             <div className="hidden sm:flex items-center gap-1.5">
               <button
                 onClick={() => scroll('left')}
-                className="p-2 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
+                className="p-2.5 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
                 aria-label="Scroll row left"
               >
                 <ChevronLeft className={effectiveIsPhone ? 'w-5 h-5' : 'w-4 h-4'} />
               </button>
               <button
                 onClick={() => scroll('right')}
-                className="p-2 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
+                className="p-2.5 rounded-xl bg-white/[0.05] hover:bg-[#e50914]/20 border border-white/10 hover:border-[#e50914]/50 backdrop-blur-md text-zinc-300 hover:text-white transition-all cursor-pointer shadow-sm"
                 aria-label="Scroll row right"
               >
                 <ChevronRight className={effectiveIsPhone ? 'w-5 h-5' : 'w-4 h-4'} />
@@ -154,18 +159,18 @@ export const DramaRow: React.FC<DramaRowProps> = ({
           {/* View All Toggle */}
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className={`flex items-center gap-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] backdrop-blur-md border border-white/10 text-zinc-200 hover:text-white transition-all cursor-pointer whitespace-nowrap ${
-              effectiveIsPhone ? 'text-sm px-4 py-2 font-black' : 'text-xs px-3.5 py-2 font-bold'
+            className={`flex items-center gap-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-md border border-white/15 text-zinc-100 hover:text-white transition-all cursor-pointer whitespace-nowrap ${
+              effectiveIsPhone ? 'text-[15px] px-5 py-2.5 font-black' : 'text-xs px-3.5 py-2 font-bold'
             }`}
           >
             {isExpanded ? (
               <>
-                <List className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3.5 h-3.5'} text-[#ff2b54]`} />
+                <List className={`${effectiveIsPhone ? 'w-5 h-5' : 'w-3.5 h-3.5'} text-[#ff2b54]`} />
                 <span>Carousel View</span>
               </>
             ) : (
               <>
-                <Grid className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3.5 h-3.5'} text-zinc-400`} />
+                <Grid className={`${effectiveIsPhone ? 'w-5 h-5' : 'w-3.5 h-3.5'} text-zinc-300`} />
                 <span>View All ({uniqueDramas.length})</span>
               </>
             )}
@@ -185,8 +190,8 @@ export const DramaRow: React.FC<DramaRowProps> = ({
             effectiveIsPhone
               ? {
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                  gap: '20px',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: '22px',
                 }
               : undefined
           }
@@ -212,7 +217,7 @@ export const DramaRow: React.FC<DramaRowProps> = ({
         <div
           ref={rowRef}
           className={`flex overflow-x-auto scroll-smooth pb-3 scrollbar-thin scrollbar-thumb-zinc-700 -mx-4 px-4 sm:mx-0 sm:px-0 ${
-            effectiveIsPhone ? 'gap-5' : 'gap-4'
+            effectiveIsPhone ? 'gap-[22px]' : 'gap-4'
           }`}
         >
           {uniqueDramas.map((drama, idx) =>

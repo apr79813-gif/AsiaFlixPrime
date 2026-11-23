@@ -17,6 +17,9 @@ export interface EpisodeItem {
   title: string;
   audio: AudioType;
   telegramUrl: string;
+  streamLink?: string;
+  hindiFanDubStreamLink?: string;
+  engSubStreamLink?: string;
   duration?: string;
   quality?: string;
   isMerged?: boolean;
@@ -50,6 +53,9 @@ export interface DramaItem {
   totalEpisodes?: number;
   episodes: EpisodeItem[];
   telegramUrl: string; // Direct Telegram post URL (primary)
+  movieStreamLink?: string;
+  movieFanDubStreamLink?: string;
+  movieEngSubStreamLink?: string;
   qualityBadge: string; // "1080p FHD"
   
   // --- GOOGLE SHEET COLUMNS (TELEGRAM 1, 2, 3 & NEW SECTIONS) ---

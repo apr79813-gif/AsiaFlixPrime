@@ -824,34 +824,73 @@ export default function App() {
     return rows;
   };
 
-  // Helper to parse multi-line or single episode links from Telegram columns into separate EpisodeItem objects
-  const parseTelegramEpisodeLinks = (
+  // Helper to parse multi-line or single episode links + Es1/Es2/Es3 stream links from T1/T2/T3 columns
+  const parseTrackEpisodesAndStreams = (
     rawText: string,
     audio: AudioType,
     dramaId: string,
     cleanTitle: string,
     isFilm: boolean,
     detailsRaw?: string
-  ): EpisodeItem[] => {
-    if (!rawText || !rawText.trim()) return [];
-
-    const rawLines = rawText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
-    if (rawLines.length === 0) return [];
+  ): { episodes: EpisodeItem[]; movieStreamUrl?: string } => {
+    if (!rawText || !rawText.trim()) return { episodes: [] };
 
     const audioLabel = audio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : audio;
+    const isT1 = audio === 'Hindi Dubbed';
+    const isT2 = audio === 'Hindi Fan Dubbed' || audio === 'Fan Dubbed';
+    const isT3 = audio === 'Original / Eng Sub';
 
+    const assignStream = (ep: EpisodeItem, url: string) => {
+      if (!url) return;
+      if (isT1) ep.streamLink = url;
+      else if (isT2) ep.hindiFanDubStreamLink = url;
+      else if (isT3) ep.engSubStreamLink = url;
+    };
+
+    // 1. Extract numbered Es1, Es2, Es 1, ES1, Es-1, Stream1, Stream 1 links across entire cell
+    const streamMap = new Map<number, string>();
+    const numberedStreamRegex = /\b(?:es|stream)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+    let sm: RegExpExecArray | null;
+    while ((sm = numberedStreamRegex.exec(rawText)) !== null) {
+      const epNum = parseInt(sm[1], 10);
+      const sUrl = sm[2].trim();
+      if (!Number.isNaN(epNum) && sUrl && !streamMap.has(epNum)) {
+        streamMap.set(epNum, sUrl);
+      }
+    }
+
+    // 2. Extract unnumbered single-cell / movie stream link (e.g. "Es = https://..." or "Stream: https://...")
+    const textWithoutNumberedStreams = rawText.replace(
+      /\b(?:es|stream)\s*[-_#]?\s*\d+\s*[:=\-|]?\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+      ' '
+    );
+    const unnumberedStreamMatch = textWithoutNumberedStreams.match(
+      /\b(?:es|stream)\b\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/i
+    );
+    const unnumberedStreamUrl = unnumberedStreamMatch ? unnumberedStreamMatch[1].trim() : undefined;
+
+    const rawLines = rawText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
     const episodes: EpisodeItem[] = [];
 
     rawLines.forEach((line, idx) => {
-      const urlMatch = line.match(/https?:\/\/[^\s"',]+/);
+      // Strip Es/Stream clauses from line before extracting Telegram URL so Es URLs are never misread as Telegram URLs
+      const lineForTelegram = line
+        .replace(/\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+        .trim();
+
+      if (!lineForTelegram) return;
+
+      const urlMatch = lineForTelegram.match(/https?:\/\/[^\s"',|<>]+/);
       if (!urlMatch) return;
       const url = urlMatch[0];
 
       // Match explicit episode range or episode number (e.g. "Ep 1-3", "Episodes 7-10", "Ep 4", "Part 2", "E05")
-      const rangeMatch = line.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+\s*-\s*\d+)/i) ||
-                         line.match(/^(\d+\s*-\s*\d+)\s*[:=\.\-]/);
-      const singleMatch = line.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+)/i) || 
-                          line.match(/^(\d+)\s*[:=\.\-]/);
+      const rangeMatch =
+        lineForTelegram.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+\s*-\s*\d+)/i) ||
+        lineForTelegram.match(/^(\d+\s*-\s*\d+)\s*[:=\.\-]/);
+      const singleMatch =
+        lineForTelegram.match(/(?:ep|episode|part|e)\s*[:=\.\-]?\s*(\d+)/i) ||
+        lineForTelegram.match(/^(\d+)\s*[:=\.\-]/);
 
       if (rangeMatch) {
         const epRange = rangeMatch[1].replace(/\s+/g, '');
@@ -881,8 +920,14 @@ export default function App() {
         });
       } else {
         // Direct link without explicit Ep label (e.g. "https://t.me/c/...") -> Master Pack / Full Series / Movie
-        const isMulti = rawLines.length > 1;
-        const fallbackEp = isFilm ? 'Full Movie' : isMulti ? (idx + 1) : 'Full Series Batch';
+        const telegramOnlyLineCount = rawLines.filter(
+          (l) =>
+            l
+              .replace(/\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+              .match(/https?:\/\/[^\s"',|<>]+/) !== null
+        ).length;
+        const isMulti = telegramOnlyLineCount > 1;
+        const fallbackEp = isFilm ? 'Full Movie' : isMulti ? idx + 1 : 'Full Series Batch';
         episodes.push({
           id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${isMulti ? idx + 1 : 'batch'}`,
           episodeNumber: fallbackEp,
@@ -901,7 +946,70 @@ export default function App() {
       }
     });
 
-    return episodes;
+    // 3. Merge Es<N> stream links into matching episodes or create stream-only episode entries
+    streamMap.forEach((sUrl, epNum) => {
+      const targetEp =
+        episodes.find((ep) => ep.episodeNumber === epNum) ||
+        (isFilm && epNum === 1 && episodes.length === 1 ? episodes[0] : undefined);
+
+      if (targetEp) {
+        assignStream(targetEp, sUrl);
+      } else {
+        const newEp: EpisodeItem = {
+          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
+          episodeNumber: epNum,
+          title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} — Episode ${epNum} (${audioLabel})`,
+          audio,
+          telegramUrl: '',
+          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+          quality: '1080p FHD',
+          isMerged: false,
+          format: isFilm ? 'movie' : 'single',
+        };
+        assignStream(newEp, sUrl);
+        episodes.push(newEp);
+      }
+    });
+
+    // 4. Attach unnumbered movie/single stream URL (e.g. Es = https://...) to Episode 1 / Full Movie
+    if (unnumberedStreamUrl) {
+      const targetEp =
+        episodes.find((ep) => ep.episodeNumber === 1 || ep.episodeNumber === 'Full Movie') || episodes[0];
+      if (targetEp) {
+        assignStream(targetEp, unnumberedStreamUrl);
+      } else {
+        const newEp: EpisodeItem = {
+          id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${isFilm ? 'movie' : '1'}`,
+          episodeNumber: isFilm ? 'Full Movie' : 1,
+          title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} — Episode 1 (${audioLabel})`,
+          audio,
+          telegramUrl: '',
+          duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+          quality: '1080p FHD',
+          isMerged: false,
+          format: isFilm ? 'movie' : 'single',
+        };
+        assignStream(newEp, unnumberedStreamUrl);
+        episodes.push(newEp);
+      }
+    }
+
+    // 5. Sort numeric episodes cleanly in ascending order
+    episodes.sort((a, b) => {
+      const aNum = typeof a.episodeNumber === 'number' ? a.episodeNumber : parseInt(String(a.episodeNumber), 10);
+      const bNum = typeof b.episodeNumber === 'number' ? b.episodeNumber : parseInt(String(b.episodeNumber), 10);
+      if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) return aNum - bNum;
+      if (!Number.isNaN(aNum)) return -1;
+      if (!Number.isNaN(bNum)) return 1;
+      return 0;
+    });
+
+    const movieStreamUrl =
+      unnumberedStreamUrl ||
+      streamMap.get(1) ||
+      (isFilm ? Array.from(streamMap.values())[0] : undefined);
+
+    return { episodes, movieStreamUrl };
   };
 
   const fetchGoogleSheetData = async (targetUrl?: string): Promise<{ success: boolean; count?: number; error?: string }> => {
@@ -1140,8 +1248,14 @@ export default function App() {
         const defaultAudio: AudioType = availableAudios[0] || (comingSoonAudios[0] ? comingSoonAudios[0] : 'Hindi Dubbed');
 
         const extractFirstUrl = (text: string) => {
-          const m = text.match(/https?:\/\/[^\s"',]+/);
-          return m ? m[0] : text;
+          const withoutStreams = text.replace(
+            /\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+            ' '
+          );
+          const telegramM = withoutStreams.match(/https?:\/\/[^\s"',|<>]+/);
+          if (telegramM) return telegramM[0];
+          const anyM = text.match(/https?:\/\/[^\s"',|<>]+/);
+          return anyM ? anyM[0] : text;
         };
 
         const primaryLink = hasHindiHttp
@@ -1155,10 +1269,20 @@ export default function App() {
         const yearMatch = cleanTitle.match(/\b(20\d\d)\b/);
         const releaseYear = yearMatch ? parseInt(yearMatch[1], 10) : 2026;
 
-        // Parse multi-line or single episode links from all 3 Telegram columns
-        const hindiEpisodes = hasHindiHttp ? parseTelegramEpisodeLinks(tHindi, 'Hindi Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
-        const fanEpisodes = hasFanDubHttp ? parseTelegramEpisodeLinks(tFanDub, 'Hindi Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw) : [];
-        const origEpisodes = hasOrigHttp ? parseTelegramEpisodeLinks(tOrig, 'Original / Eng Sub', dramaId, cleanTitle, isFilm, detailsRaw) : [];
+        // Parse multi-line or single episode links + Es1/Es2/Es3 stream links from all 3 columns
+        const hindiParsed = hasHindiHttp
+          ? parseTrackEpisodesAndStreams(tHindi, 'Hindi Dubbed', dramaId, cleanTitle, isFilm, detailsRaw)
+          : { episodes: [] };
+        const fanParsed = hasFanDubHttp
+          ? parseTrackEpisodesAndStreams(tFanDub, 'Hindi Fan Dubbed', dramaId, cleanTitle, isFilm, detailsRaw)
+          : { episodes: [] };
+        const origParsed = hasOrigHttp
+          ? parseTrackEpisodesAndStreams(tOrig, 'Original / Eng Sub', dramaId, cleanTitle, isFilm, detailsRaw)
+          : { episodes: [] };
+
+        const hindiEpisodes = hindiParsed.episodes;
+        const fanEpisodes = fanParsed.episodes;
+        const origEpisodes = origParsed.episodes;
 
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
 
@@ -1376,14 +1500,23 @@ export default function App() {
           if (parsedTags.length > 0) {
             prev.hashtags = Array.from(new Set([...(prev.hashtags || []), ...parsedTags]));
           }
-          // Merge parsed episodes avoiding duplicates
-          const existingEpIds = new Set(prev.episodes.map((e) => e.id));
+          // Merge parsed episodes avoiding duplicates while combining Telegram & Stream links
+          const existingEpById = new Map(prev.episodes.map((e) => [e.id, e]));
           parsedEpisodes.forEach((ep) => {
-            if (!existingEpIds.has(ep.id)) {
+            const existing = existingEpById.get(ep.id);
+            if (!existing) {
               prev.episodes.push(ep);
-              existingEpIds.add(ep.id);
+              existingEpById.set(ep.id, ep);
+            } else {
+              if (ep.telegramUrl && !existing.telegramUrl) existing.telegramUrl = ep.telegramUrl;
+              if (ep.streamLink && !existing.streamLink) existing.streamLink = ep.streamLink;
+              if (ep.hindiFanDubStreamLink && !existing.hindiFanDubStreamLink) existing.hindiFanDubStreamLink = ep.hindiFanDubStreamLink;
+              if (ep.engSubStreamLink && !existing.engSubStreamLink) existing.engSubStreamLink = ep.engSubStreamLink;
             }
           });
+          if (hindiParsed.movieStreamUrl && !prev.movieStreamLink) prev.movieStreamLink = hindiParsed.movieStreamUrl;
+          if (fanParsed.movieStreamUrl && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = fanParsed.movieStreamUrl;
+          if (origParsed.movieStreamUrl && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = origParsed.movieStreamUrl;
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
           }
@@ -1469,6 +1602,9 @@ export default function App() {
           totalEpisodes: totalEpCount,
           qualityBadge: subCategory || '1080p FHD',
           telegramUrl: primaryLink,
+          movieStreamLink: hindiParsed.movieStreamUrl,
+          movieFanDubStreamLink: fanParsed.movieStreamUrl,
+          movieEngSubStreamLink: origParsed.movieStreamUrl,
           episodes: dramaEpisodes,
           
           // Google Sheet Fields

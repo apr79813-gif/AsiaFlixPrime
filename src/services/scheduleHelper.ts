@@ -107,10 +107,19 @@ export interface TrackEpisodeCounts {
   hasOrigLink: boolean;
 }
 
+function episodeHasAnyLink(ep: EpisodeItem): boolean {
+  return Boolean(
+    (ep.telegramUrl && ep.telegramUrl.toLowerCase().includes('http')) ||
+      (ep.streamLink && ep.streamLink.toLowerCase().includes('http')) ||
+      (ep.hindiFanDubStreamLink && ep.hindiFanDubStreamLink.toLowerCase().includes('http')) ||
+      (ep.engSubStreamLink && ep.engSubStreamLink.toLowerCase().includes('http'))
+  );
+}
+
 function getHighestEpisodeNumber(eps: EpisodeItem[]): number {
   let maxEp = 0;
   for (const ep of eps) {
-    if (!ep.telegramUrl || !ep.telegramUrl.toLowerCase().includes('http')) continue;
+    if (!episodeHasAnyLink(ep)) continue;
     if (typeof ep.episodeNumber === 'number') {
       if (ep.episodeNumber > maxEp) maxEp = ep.episodeNumber;
     } else if (typeof ep.episodeNumber === 'string') {
@@ -162,17 +171,20 @@ export function getTrackEpisodeCounts(drama: DramaItem): TrackEpisodeCounts {
 
   const hasHindiLink = Boolean(
     (drama.telegramHindi && drama.telegramHindi.toLowerCase().includes('http')) ||
-      hindiEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      (drama.movieStreamLink && drama.movieStreamLink.toLowerCase().includes('http')) ||
+      hindiEps.some((e) => episodeHasAnyLink(e)) ||
       drama.availableAudios?.some((a) => a.toLowerCase().includes('hindi') && !a.toLowerCase().includes('fan'))
   );
   const hasFanDubLink = Boolean(
     (drama.telegramFanDub && drama.telegramFanDub.toLowerCase().includes('http')) ||
-      fanEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      (drama.movieFanDubStreamLink && drama.movieFanDubStreamLink.toLowerCase().includes('http')) ||
+      fanEps.some((e) => episodeHasAnyLink(e)) ||
       drama.availableAudios?.some((a) => a.toLowerCase().includes('fan'))
   );
   const hasOrigLink = Boolean(
     (drama.telegramOrig && drama.telegramOrig.toLowerCase().includes('http')) ||
-      origEps.some((e) => e.telegramUrl?.toLowerCase().includes('http')) ||
+      (drama.movieEngSubStreamLink && drama.movieEngSubStreamLink.toLowerCase().includes('http')) ||
+      origEps.some((e) => episodeHasAnyLink(e)) ||
       drama.availableAudios?.some((a) => a.toLowerCase().includes('orig') || a.toLowerCase().includes('sub'))
   );
 

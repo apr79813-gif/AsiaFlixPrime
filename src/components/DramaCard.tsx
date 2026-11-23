@@ -122,16 +122,51 @@ export const DramaCard: React.FC<DramaCardProps> = ({
     ? Math.min(96, Math.max(8, Math.round((effectiveMaxEp / totalEp) * 100)))
     : 0;
 
+  const hasOnlineStream = Boolean(
+    (drama.movieStreamLink && drama.movieStreamLink.startsWith('http')) ||
+      (drama.movieFanDubStreamLink && drama.movieFanDubStreamLink.startsWith('http')) ||
+      (drama.movieEngSubStreamLink && drama.movieEngSubStreamLink.startsWith('http')) ||
+      drama.episodes?.some(
+        (ep) =>
+          (ep.streamLink && ep.streamLink.startsWith('http')) ||
+          (ep.hindiFanDubStreamLink && ep.hindiFanDubStreamLink.startsWith('http')) ||
+          (ep.engSubStreamLink && ep.engSubStreamLink.startsWith('http'))
+      )
+  );
+
+  // Extract a clean single Telegram URL (never dump raw multiline Ep/Es text into href)
+  const extractCleanTelegram = (raw?: string, audioFilter?: string): string => {
+    const epMatch = drama.episodes?.find(
+      (e) =>
+        e.telegramUrl &&
+        e.telegramUrl.startsWith('http') &&
+        (!audioFilter ||
+          (audioFilter === 'fandub' && e.audio.toLowerCase().includes('fan')) ||
+          (audioFilter === 'hindi' && e.audio === 'Hindi Dubbed') ||
+          (audioFilter === 'orig' && e.audio === 'Original / Eng Sub'))
+    );
+    if (epMatch?.telegramUrl) return epMatch.telegramUrl;
+    if (raw) {
+      const stripped = raw.replace(
+        /\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+        ' '
+      );
+      const m = stripped.match(/https?:\/\/[^\s"',|<>]+/);
+      if (m) return m[0];
+    }
+    return '';
+  };
+
   // Determine active telegram URL based on row context or available links
   const primaryTelegram =
-    (effectiveRowAudio === 'fandub' && drama.telegramFanDub) ||
-    (effectiveRowAudio === 'hindi' && drama.telegramHindi) ||
-    (effectiveRowAudio === 'orig' && drama.telegramOrig) ||
-    drama.telegramHindi ||
-    drama.telegramFanDub ||
-    drama.telegramOrig ||
-    drama.telegramUrl ||
-    'https://t.me/+yJH68LvfrT9hZDVl';
+    (effectiveRowAudio === 'fandub' && extractCleanTelegram(drama.telegramFanDub, 'fandub')) ||
+    (effectiveRowAudio === 'hindi' && extractCleanTelegram(drama.telegramHindi, 'hindi')) ||
+    (effectiveRowAudio === 'orig' && extractCleanTelegram(drama.telegramOrig, 'orig')) ||
+    extractCleanTelegram(drama.telegramHindi, 'hindi') ||
+    extractCleanTelegram(drama.telegramFanDub, 'fandub') ||
+    extractCleanTelegram(drama.telegramOrig, 'orig') ||
+    extractCleanTelegram(drama.telegramUrl) ||
+    (!hasOnlineStream ? 'https://t.me/+yJH68LvfrT9hZDVl' : '');
 
   // Top-left audio badge determination
   let displayAudio: 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' = 'Hindi Dubbed';
@@ -332,6 +367,15 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           >
             {audioBadgeConfig.label}
           </span>
+          {hasOnlineStream && (
+            <span
+              className={`bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 text-black font-black uppercase tracking-wider rounded border border-emerald-200/70 shadow-[0_0_12px_rgba(16,185,129,0.75)] flex items-center gap-1 ${
+                effectiveIsPhone ? 'text-[11px] px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
+              }`}
+            >
+              ▶ ONLINE STREAM
+            </span>
+          )}
         </div>
 
         {/* Top-Right: Watchlist Bookmark Button + Automatic 18+ Seal directly below */}
@@ -572,19 +616,32 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             <span>{isMovie ? 'Details' : 'Episodes'}</span>
           </button>
 
-          <a
-            href={primaryTelegram}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 truncate cursor-pointer ${
-              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
-            }`}
-            title="Stream / Open Telegram Link"
-          >
-            <Send className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} shrink-0`} />
-            <span className="truncate">{isMovie ? 'Movie' : 'Stream'}</span>
-          </a>
+          {primaryTelegram ? (
+            <a
+              href={primaryTelegram}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 truncate cursor-pointer ${
+                effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+              }`}
+              title="Stream / Open Telegram Link"
+            >
+              <Send className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} shrink-0`} />
+              <span className="truncate">{isMovie ? 'Movie' : 'Stream'}</span>
+            </a>
+          ) : (
+            <button
+              onClick={() => onSelect(drama)}
+              className={`w-full bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] hover:brightness-110 text-white text-center shadow-[0_0_14px_rgba(168,85,247,0.45)] transition-all flex items-center justify-center gap-1.5 truncate cursor-pointer ${
+                effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+              }`}
+              title="Watch Online in HD Cinema Player"
+            >
+              <Play className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} fill-white shrink-0`} />
+              <span className="truncate">Watch HD</span>
+            </button>
+          )}
         </div>
       </div>
     </article>

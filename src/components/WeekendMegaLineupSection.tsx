@@ -278,6 +278,30 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                   ? activeEpTracks[0].singleLabel
                   : drama.statusText || 'Now Streaming';
 
+                const hasOnlineStream = Boolean(
+                  (drama.movieStreamLink && drama.movieStreamLink.startsWith('http')) ||
+                    (drama.movieFanDubStreamLink && drama.movieFanDubStreamLink.startsWith('http')) ||
+                    (drama.movieEngSubStreamLink && drama.movieEngSubStreamLink.startsWith('http')) ||
+                    drama.episodes?.some(
+                      (ep) =>
+                        (ep.streamLink && ep.streamLink.startsWith('http')) ||
+                        (ep.hindiFanDubStreamLink && ep.hindiFanDubStreamLink.startsWith('http')) ||
+                        (ep.engSubStreamLink && ep.engSubStreamLink.startsWith('http'))
+                    )
+                );
+
+                const cleanWeekendTg = (() => {
+                  const epTg = drama.episodes?.find((e) => e.telegramUrl && e.telegramUrl.startsWith('http'))?.telegramUrl;
+                  if (epTg) return epTg;
+                  const raw = drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl || '';
+                  const stripped = raw.replace(
+                    /\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+                    ' '
+                  );
+                  const m = stripped.match(/https?:\/\/[^\s"',|<>]+/);
+                  return m ? m[0] : '';
+                })();
+
                 return (
                   <article
                     key={drama.id}
@@ -336,6 +360,11 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         <span className={`${audioBadgeColor} font-black uppercase tracking-wider rounded shadow border ${effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-1.5 py-0.5'}`}>
                           {audioLabel}
                         </span>
+                        {hasOnlineStream && (
+                          <span className={`bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 text-black font-black uppercase tracking-wider rounded border border-emerald-200/70 shadow-[0_0_12px_rgba(16,185,129,0.75)] flex items-center gap-1 ${effectiveIsPhone ? 'text-[11px] px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'}`}>
+                            ▶ ONLINE STREAM
+                          </span>
+                        )}
                       </div>
 
                       {/* Top Right of Poster: Watchlist Bookmark + Automatic 18+ Seal directly below */}
@@ -575,17 +604,29 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                           <span>Episodes</span>
                         </button>
 
-                        <a
-                          href={drama.telegramHindi || drama.telegramFanDub || drama.telegramOrig || drama.telegramUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                            effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
-                          }`}
-                        >
-                          <Send className={effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} />
-                          <span>Telegram</span>
-                        </a>
+                        {cleanWeekendTg ? (
+                          <a
+                            href={cleanWeekendTg}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`w-full bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-center shadow-[0_0_12px_rgba(229,9,20,0.4)] hover:shadow-[0_0_16px_rgba(229,9,20,0.65)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+                            }`}
+                          >
+                            <Send className={effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} />
+                            <span>Telegram</span>
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => onSelectDrama(drama)}
+                            className={`w-full bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] hover:brightness-110 text-white text-center shadow-[0_0_14px_rgba(168,85,247,0.45)] transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                              effectiveIsPhone ? 'py-3.5 px-3 rounded-xl text-[15px] font-black' : 'py-1.5 px-2 rounded-lg text-xs font-black'
+                            }`}
+                          >
+                            <Play className={`${effectiveIsPhone ? 'w-4 h-4' : 'w-3 h-3'} fill-white`} />
+                            <span>Watch HD</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </article>

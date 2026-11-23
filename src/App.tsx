@@ -842,6 +842,16 @@ export default function App() {
     return rows;
   };
 
+  // Normalize direct video/audio media URLs (e.g. convert HuggingFace /blob/ pages into direct /resolve/ media streams)
+  const normalizeDirectMediaUrl = (rawUrl: string): string => {
+    const trimmed = (rawUrl || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.includes('huggingface.co') && trimmed.includes('/blob/')) {
+      return trimmed.replace('/blob/', '/resolve/');
+    }
+    return trimmed;
+  };
+
   // Helper to parse multi-line or single episode links + Es1/Es2/Es3 stream links from T1/T2/T3 columns
   const parseTrackEpisodesAndStreams = (
     rawText: string,
@@ -871,7 +881,7 @@ export default function App() {
     let sm: RegExpExecArray | null;
     while ((sm = numberedStreamRegex.exec(rawText)) !== null) {
       const epNum = parseInt(sm[1], 10);
-      const sUrl = sm[2].trim();
+      const sUrl = normalizeDirectMediaUrl(sm[2]);
       if (!Number.isNaN(epNum) && sUrl && !streamMap.has(epNum)) {
         streamMap.set(epNum, sUrl);
       }
@@ -885,7 +895,7 @@ export default function App() {
     const unnumberedStreamMatch = textWithoutNumberedStreams.match(
       /\b(?:es|stream)\b\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/i
     );
-    const unnumberedStreamUrl = unnumberedStreamMatch ? unnumberedStreamMatch[1].trim() : undefined;
+    const unnumberedStreamUrl = unnumberedStreamMatch ? normalizeDirectMediaUrl(unnumberedStreamMatch[1]) : undefined;
 
     const rawLines = rawText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
     const episodes: EpisodeItem[] = [];
@@ -1091,12 +1101,19 @@ export default function App() {
       const countryIdx = findHeaderCol([(h) => h === 'country' || h === 'origin', (h) => h.includes('country')]);
       const ageRatingIdx = findHeaderCol([(h) => h.includes('age')]);
       const posterIdx = findHeaderCol([(h) => h.includes('poster') || h === 'image' || h.includes('cover')]);
+      const audioIdx = findHeaderCol(
+        [
+          (h) => h === 'audio' || h === 'custom audio' || h.includes('audio track'),
+          (h) => h.includes('audio') && !h.includes('sub'),
+        ],
+        !header[13] || header[13].includes('audio') ? 13 : -1
+      );
       const thumbnailIdx = findHeaderCol(
         [
           (h) => h === 'thumbnail' || h === 'thumb',
           (h) => h.includes('thumbnail') || h.includes('thumb url'),
         ],
-        header[13] && (header[13].includes('thumbnail') || header[13] === 'thumb') ? 13 : -1
+        header[14] && (header[14].includes('thumbnail') || header[14] === 'thumb') ? 14 : -1
       );
       const subCategoryIdx = findHeaderCol([
         (h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'),
@@ -1231,7 +1248,78 @@ export default function App() {
         const countryVal = countryIdx >= 0 ? row[countryIdx]?.trim() || '' : '';
         const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
         const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
+        const rawAudioCell = audioIdx >= 0 ? row[audioIdx]?.trim() || '' : '';
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
+
+        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub)
+        const hindiAudioMap = new Map<number, string>();
+        const fanDubAudioMap = new Map<number, string>();
+        const origAudioMap = new Map<number, string>();
+
+        if (rawAudioCell) {
+          const hdRegex = /\bhd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          let am: RegExpExecArray | null;
+          while ((am = hdRegex.exec(rawAudioCell)) !== null) {
+            const epNum = parseInt(am[1], 10);
+            const aUrl = normalizeDirectMediaUrl(am[2]);
+            if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+              hindiAudioMap.set(epNum, aUrl);
+            }
+          }
+
+          const fdRegex = /\bfd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          while ((am = fdRegex.exec(rawAudioCell)) !== null) {
+            const epNum = parseInt(am[1], 10);
+            const aUrl = normalizeDirectMediaUrl(am[2]);
+            if (!Number.isNaN(epNum) && aUrl && !fanDubAudioMap.has(epNum)) {
+              fanDubAudioMap.set(epNum, aUrl);
+            }
+          }
+
+          const osRegex = /\bos\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          while ((am = osRegex.exec(rawAudioCell)) !== null) {
+            const epNum = parseInt(am[1], 10);
+            const aUrl = normalizeDirectMediaUrl(am[2]);
+            if (!Number.isNaN(epNum) && aUrl && !origAudioMap.has(epNum)) {
+              origAudioMap.set(epNum, aUrl);
+            }
+          }
+
+          // Generic Ep1/Ep2 fallback inside Audio column (only after stripping HD/FD/OS tokens) -> Hindi Dubbed
+          const withoutTrackAudio = rawAudioCell.replace(
+            /\b(?:hd|fd|os)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+            ' '
+          );
+          const epAudioRegex = /\b(?:ep|episode|e)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          while ((am = epAudioRegex.exec(withoutTrackAudio)) !== null) {
+            const epNum = parseInt(am[1], 10);
+            const aUrl = normalizeDirectMediaUrl(am[2]);
+            if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+              hindiAudioMap.set(epNum, aUrl);
+            }
+          }
+
+          // Unnumbered track prefixes or single direct movie/episode URL
+          const hdUnnumbered = rawAudioCell.match(/\bhd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          if (hdUnnumbered && !hindiAudioMap.has(1)) {
+            hindiAudioMap.set(1, normalizeDirectMediaUrl(hdUnnumbered[1]));
+          }
+          const fdUnnumbered = rawAudioCell.match(/\bfd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          if (fdUnnumbered && !fanDubAudioMap.has(1)) {
+            fanDubAudioMap.set(1, normalizeDirectMediaUrl(fdUnnumbered[1]));
+          }
+          const osUnnumbered = rawAudioCell.match(/\bos\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          if (osUnnumbered && !origAudioMap.has(1)) {
+            origAudioMap.set(1, normalizeDirectMediaUrl(osUnnumbered[1]));
+          }
+
+          if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0) {
+            const singleRawAudio = rawAudioCell.match(/https?:\/\/[^\s,\n|"'<>]+/);
+            if (singleRawAudio) {
+              hindiAudioMap.set(1, normalizeDirectMediaUrl(singleRawAudio[0]));
+            }
+          }
+        }
 
         let parsedDefaultThumbnail: string | undefined;
         let parsedEpisodeThumbnails: Record<number, string> | undefined;
@@ -1337,14 +1425,6 @@ export default function App() {
           return normalizedKey === t || normalizedKey.includes(t) || t.includes(normalizedKey);
         });
 
-        // Available audios strictly from which of T1, T2, T3 have http links
-        const availableAudios: AudioType[] = [];
-        if (hasHindiHttp) availableAudios.push('Hindi Dubbed');
-        if (hasFanDubHttp) availableAudios.push('Hindi Fan Dubbed');
-        if (hasOrigHttp) availableAudios.push('Original / Eng Sub');
-
-        const defaultAudio: AudioType = availableAudios[0] || (comingSoonAudios[0] ? comingSoonAudios[0] : 'Hindi Dubbed');
-
         const extractFirstUrl = (text: string) => {
           const withoutStreams = text.replace(
             /\b(?:es|stream)\s*(?:[-_#]?\s*\d+)?\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
@@ -1381,6 +1461,148 @@ export default function App() {
         const hindiEpisodes = hindiParsed.episodes;
         const fanEpisodes = fanParsed.episodes;
         const origEpisodes = origParsed.episodes;
+
+        // Smart Video + Audio Pairing across Track 1 (HD), Track 2 (FD), Track 3 (OS)
+        const getEpNumValue = (ep: EpisodeItem): number | null => {
+          if (typeof ep.episodeNumber === 'number') return ep.episodeNumber;
+          if (ep.episodeNumber === 'Full Movie' || (isFilm && String(ep.episodeNumber).toLowerCase().includes('movie'))) {
+            return 1;
+          }
+          const m = String(ep.episodeNumber).match(/(\d+)/);
+          return m ? parseInt(m[1], 10) : null;
+        };
+
+        const findEpByNum = (list: EpisodeItem[], epNum: number): EpisodeItem | undefined =>
+          list.find((ep) => getEpNumValue(ep) === epNum) ||
+          (isFilm && epNum === 1 && list.length === 1 ? list[0] : undefined);
+
+        const allPairableEpNums = new Set<number>();
+        hindiEpisodes.forEach((ep) => { const n = getEpNumValue(ep); if (n !== null) allPairableEpNums.add(n); });
+        fanEpisodes.forEach((ep) => { const n = getEpNumValue(ep); if (n !== null) allPairableEpNums.add(n); });
+        origEpisodes.forEach((ep) => { const n = getEpNumValue(ep); if (n !== null) allPairableEpNums.add(n); });
+        hindiAudioMap.forEach((_, n) => allPairableEpNums.add(n));
+        fanDubAudioMap.forEach((_, n) => allPairableEpNums.add(n));
+        origAudioMap.forEach((_, n) => allPairableEpNums.add(n));
+
+        const createBorrowedEpisode = (audio: AudioType, epNum: number): EpisodeItem => {
+          const audioLabel = audio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : audio;
+          return {
+            id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${isFilm ? 'movie' : epNum}`,
+            episodeNumber: isFilm ? 'Full Movie' : epNum,
+            title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} — Episode ${epNum} (${audioLabel})`,
+            audio,
+            telegramUrl: '',
+            duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
+            quality: '1080p FHD',
+            isMerged: false,
+            format: isFilm ? 'movie' : 'single',
+          };
+        };
+
+        Array.from(allPairableEpNums)
+          .sort((a, b) => a - b)
+          .forEach((epNum) => {
+            let hEp = findEpByNum(hindiEpisodes, epNum);
+            let fEp = findEpByNum(fanEpisodes, epNum);
+            let oEp = findEpByNum(origEpisodes, epNum);
+
+            const fallbackVideoForEp =
+              oEp?.engSubStreamLink ||
+              hEp?.streamLink ||
+              fEp?.hindiFanDubStreamLink ||
+              (isFilm && epNum === 1
+                ? origParsed.movieStreamUrl || hindiParsed.movieStreamUrl || fanParsed.movieStreamUrl
+                : undefined);
+
+            const hdAudioUrl = hindiAudioMap.get(epNum);
+            if (hdAudioUrl) {
+              if (!hEp) {
+                hEp = createBorrowedEpisode('Hindi Dubbed', epNum);
+                hindiEpisodes.push(hEp);
+              }
+              hEp.hindiCustomAudioLink = hdAudioUrl;
+              if (!hEp.streamLink && fallbackVideoForEp) {
+                hEp.streamLink = fallbackVideoForEp;
+              }
+            }
+
+            const fdAudioUrl = fanDubAudioMap.get(epNum);
+            if (fdAudioUrl) {
+              if (!fEp) {
+                fEp = createBorrowedEpisode('Hindi Fan Dubbed', epNum);
+                fanEpisodes.push(fEp);
+              }
+              fEp.fanDubCustomAudioLink = fdAudioUrl;
+              if (!fEp.hindiFanDubStreamLink && fallbackVideoForEp) {
+                fEp.hindiFanDubStreamLink = fallbackVideoForEp;
+              }
+            }
+
+            const osAudioUrl = origAudioMap.get(epNum);
+            if (osAudioUrl) {
+              if (!oEp) {
+                oEp = createBorrowedEpisode('Original / Eng Sub', epNum);
+                origEpisodes.push(oEp);
+              }
+              oEp.origCustomAudioLink = osAudioUrl;
+              if (!oEp.engSubStreamLink && fallbackVideoForEp) {
+                oEp.engSubStreamLink = fallbackVideoForEp;
+              }
+            }
+          });
+
+        const sortTrackEpisodes = (list: EpisodeItem[]) => {
+          list.sort((a, b) => {
+            const aNum = typeof a.episodeNumber === 'number' ? a.episodeNumber : parseInt(String(a.episodeNumber), 10);
+            const bNum = typeof b.episodeNumber === 'number' ? b.episodeNumber : parseInt(String(b.episodeNumber), 10);
+            if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) return aNum - bNum;
+            if (!Number.isNaN(aNum)) return -1;
+            if (!Number.isNaN(bNum)) return 1;
+            return 0;
+          });
+        };
+        sortTrackEpisodes(hindiEpisodes);
+        sortTrackEpisodes(fanEpisodes);
+        sortTrackEpisodes(origEpisodes);
+
+        const resolvedMovieHindiStream =
+          hindiParsed.movieStreamUrl ||
+          (isFilm && hindiAudioMap.size > 0
+            ? hindiEpisodes[0]?.streamLink || origParsed.movieStreamUrl || fanParsed.movieStreamUrl
+            : undefined);
+        const resolvedMovieFanDubStream =
+          fanParsed.movieStreamUrl ||
+          (isFilm && fanDubAudioMap.size > 0
+            ? fanEpisodes[0]?.hindiFanDubStreamLink || origParsed.movieStreamUrl || hindiParsed.movieStreamUrl
+            : undefined);
+        const resolvedMovieOrigStream =
+          origParsed.movieStreamUrl ||
+          (isFilm && origAudioMap.size > 0
+            ? origEpisodes[0]?.engSubStreamLink || hindiParsed.movieStreamUrl || fanParsed.movieStreamUrl
+            : undefined);
+
+        // Available audios strictly from T1/T2/T3 http links OR playable paired streams with Column N custom audio
+        const hasHindiPlayable =
+          hasHindiHttp || hindiEpisodes.some((ep) => Boolean(ep.streamLink)) || Boolean(resolvedMovieHindiStream);
+        const hasFanDubPlayable =
+          hasFanDubHttp || fanEpisodes.some((ep) => Boolean(ep.hindiFanDubStreamLink)) || Boolean(resolvedMovieFanDubStream);
+        const hasOrigPlayable =
+          hasOrigHttp || origEpisodes.some((ep) => Boolean(ep.engSubStreamLink)) || Boolean(resolvedMovieOrigStream);
+
+        const availableAudios: AudioType[] = [];
+        if (hasHindiPlayable) availableAudios.push('Hindi Dubbed');
+        if (hasFanDubPlayable) availableAudios.push('Hindi Fan Dubbed');
+        if (hasOrigPlayable) availableAudios.push('Original / Eng Sub');
+
+        const filteredComingSoonAudios = comingSoonAudios.filter((a) => {
+          if (a === 'Hindi Dubbed' && hasHindiPlayable) return false;
+          if ((a === 'Hindi Fan Dubbed' || a === 'Fan Dubbed') && hasFanDubPlayable) return false;
+          if (a === 'Original / Eng Sub' && hasOrigPlayable) return false;
+          return true;
+        });
+
+        const defaultAudio: AudioType =
+          availableAudios[0] || (filteredComingSoonAudios[0] ? filteredComingSoonAudios[0] : 'Hindi Dubbed');
 
         const applyEpisodeThumbnails = (eps: EpisodeItem[]) => {
           eps.forEach((ep) => {
@@ -1604,11 +1826,11 @@ export default function App() {
           availableAudios.forEach((a) => {
             if (!prev.availableAudios.includes(a)) prev.availableAudios.push(a);
           });
-          if (comingSoonAudios.length > 0) {
-            const filteredCs = comingSoonAudios.filter((a) => {
-              if (a === 'Hindi Dubbed' && prev.telegramHindi) return false;
-              if ((a === 'Hindi Fan Dubbed' || a === 'Fan Dubbed') && prev.telegramFanDub) return false;
-              if (a === 'Original / Eng Sub' && prev.telegramOrig) return false;
+          if (filteredComingSoonAudios.length > 0) {
+            const filteredCs = filteredComingSoonAudios.filter((a) => {
+              if (a === 'Hindi Dubbed' && (prev.telegramHindi || prev.episodes.some((e) => e.audio === 'Hindi Dubbed' && Boolean(e.streamLink)))) return false;
+              if ((a === 'Hindi Fan Dubbed' || a === 'Fan Dubbed') && (prev.telegramFanDub || prev.episodes.some((e) => (e.audio === 'Hindi Fan Dubbed' || e.audio === 'Fan Dubbed') && Boolean(e.hindiFanDubStreamLink)))) return false;
+              if (a === 'Original / Eng Sub' && (prev.telegramOrig || prev.episodes.some((e) => e.audio === 'Original / Eng Sub' && Boolean(e.engSubStreamLink)))) return false;
               return true;
             });
             prev.comingSoonAudios = Array.from(new Set([...(prev.comingSoonAudios || []), ...filteredCs]));
@@ -1619,7 +1841,7 @@ export default function App() {
           if (parsedTags.length > 0) {
             prev.hashtags = Array.from(new Set([...(prev.hashtags || []), ...parsedTags]));
           }
-          // Merge parsed episodes avoiding duplicates while combining Telegram & Stream links
+          // Merge parsed episodes avoiding duplicates while combining Telegram, Stream & Custom Audio links
           const existingEpById = new Map(prev.episodes.map((e) => [e.id, e]));
           parsedEpisodes.forEach((ep) => {
             const existing = existingEpById.get(ep.id);
@@ -1631,6 +1853,9 @@ export default function App() {
               if (ep.streamLink && !existing.streamLink) existing.streamLink = ep.streamLink;
               if (ep.hindiFanDubStreamLink && !existing.hindiFanDubStreamLink) existing.hindiFanDubStreamLink = ep.hindiFanDubStreamLink;
               if (ep.engSubStreamLink && !existing.engSubStreamLink) existing.engSubStreamLink = ep.engSubStreamLink;
+              if (ep.hindiCustomAudioLink && !existing.hindiCustomAudioLink) existing.hindiCustomAudioLink = ep.hindiCustomAudioLink;
+              if (ep.fanDubCustomAudioLink && !existing.fanDubCustomAudioLink) existing.fanDubCustomAudioLink = ep.fanDubCustomAudioLink;
+              if (ep.origCustomAudioLink && !existing.origCustomAudioLink) existing.origCustomAudioLink = ep.origCustomAudioLink;
               if (ep.thumbnailUrl && !existing.thumbnailUrl) existing.thumbnailUrl = ep.thumbnailUrl;
             }
           });
@@ -1646,9 +1871,9 @@ export default function App() {
               }
             });
           }
-          if (hindiParsed.movieStreamUrl && !prev.movieStreamLink) prev.movieStreamLink = hindiParsed.movieStreamUrl;
-          if (fanParsed.movieStreamUrl && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = fanParsed.movieStreamUrl;
-          if (origParsed.movieStreamUrl && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = origParsed.movieStreamUrl;
+          if (resolvedMovieHindiStream && !prev.movieStreamLink) prev.movieStreamLink = resolvedMovieHindiStream;
+          if (resolvedMovieFanDubStream && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = resolvedMovieFanDubStream;
+          if (resolvedMovieOrigStream && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = resolvedMovieOrigStream;
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
           }
@@ -1698,7 +1923,7 @@ export default function App() {
           hasHindiHttp ? tHindi : undefined,
           hasFanDubHttp ? tFanDub : undefined,
           hasOrigHttp ? tOrig : undefined,
-          comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
+          filteredComingSoonAudios.length > 0 ? filteredComingSoonAudios : undefined,
           plannedTotal,
           isFilm
         );
@@ -1726,7 +1951,7 @@ export default function App() {
           scheduleInfo: scheduleRaw || detailsRaw || '2026 VIP Release',
           availableAudios,
           defaultAudio,
-          comingSoonAudios: comingSoonAudios.length > 0 ? comingSoonAudios : undefined,
+          comingSoonAudios: filteredComingSoonAudios.length > 0 ? filteredComingSoonAudios : undefined,
           activeTrackSchedules,
           isFeatured: isTrendingInSheet,
           isTrending: isTrendingInSheet || true,
@@ -1737,9 +1962,9 @@ export default function App() {
           totalEpisodes: totalEpCount,
           qualityBadge: subCategory || '1080p FHD',
           telegramUrl: primaryLink,
-          movieStreamLink: hindiParsed.movieStreamUrl,
-          movieFanDubStreamLink: fanParsed.movieStreamUrl,
-          movieEngSubStreamLink: origParsed.movieStreamUrl,
+          movieStreamLink: resolvedMovieHindiStream,
+          movieFanDubStreamLink: resolvedMovieFanDubStream,
+          movieEngSubStreamLink: resolvedMovieOrigStream,
           episodes: dramaEpisodes,
           
           // Google Sheet Fields

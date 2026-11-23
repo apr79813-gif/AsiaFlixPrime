@@ -20,6 +20,9 @@ export interface EpisodeItem {
   streamLink?: string;
   hindiFanDubStreamLink?: string;
   engSubStreamLink?: string;
+  hindiCustomAudioLink?: string;
+  fanDubCustomAudioLink?: string;
+  origCustomAudioLink?: string;
   duration?: string;
   quality?: string;
   thumbnailUrl?: string;

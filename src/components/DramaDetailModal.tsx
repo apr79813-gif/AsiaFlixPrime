@@ -10,6 +10,8 @@ import {
   Share2,
   Sparkles,
   Volume2,
+  VolumeX,
+  Headphones,
   Clock,
   Calendar,
   Film,
@@ -58,7 +60,10 @@ export interface ResolvedVideoSource {
 }
 
 export function resolveVideoPlayerSource(rawUrl: string, mirrorIndex = 0): ResolvedVideoSource {
-  const trimmed = (rawUrl || '').trim();
+  let trimmed = (rawUrl || '').trim();
+  if (trimmed.includes('huggingface.co') && trimmed.includes('/blob/')) {
+    trimmed = trimmed.replace('/blob/', '/resolve/');
+  }
   if (!/^https?:\/\//i.test(trimmed)) {
     return { type: 'iframe', src: 'about:blank', mirrors: [] };
   }
@@ -242,8 +247,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 }) => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hudTimerRef = useRef<number | null>(null);
+  const pendingRestoreTimeRef = useRef<{ time: number; shouldPlay: boolean } | null>(null);
 
   // Extract a clean single Telegram URL per audio track (excluding Es/Stream links)
   const extractCleanTrackTelegram = (track: AudioType): string | undefined => {
@@ -392,6 +399,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [iframeControlNotice, setIframeControlNotice] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
   const [isVideoLoading, setIsVideoLoading] = useState<boolean>(true);
+  const [audioVolume, setAudioVolume] = useState<number>(1);
+  const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
+  const [audioSyncOffset, setAudioSyncOffset] = useState<number>(0);
+  const [forceBuiltinAudio, setForceBuiltinAudio] = useState<boolean>(false);
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
@@ -406,13 +417,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }, 1400);
   };
 
-  // Reset server mirror index, embed notice & video overlay state whenever episode, track, or drama changes
+  // Reset server mirror index, embed notice & video overlay state whenever episode or drama changes
   useEffect(() => {
     setActiveMirrorIndex(0);
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
-  }, [activeStreamEp, activeAudio, drama?.id]);
+    setForceBuiltinAudio(false);
+  }, [activeStreamEp, drama?.id]);
+
+  // Reset mirror & custom audio override when switching audio tracks without dropping playback if same video source
+  useEffect(() => {
+    setActiveMirrorIndex(0);
+    setIframeControlNotice(false);
+    setForceBuiltinAudio(false);
+  }, [activeAudio]);
 
   // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
   useEffect(() => {
@@ -428,6 +447,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
+    setAudioSyncOffset(0);
+    setForceBuiltinAudio(false);
+    pendingRestoreTimeRef.current = null;
     if (drama) {
       if (
         audioLinkMap['Hindi Dubbed']?.startsWith('http') ||
@@ -450,12 +472,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [drama?.id]);
 
-  // Apply playbackRate to native <video> element whenever speed or active video changes
+  // Apply playbackRate to native <video> & synced <audio> whenever speed or active video changes
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
     }
-  }, [playbackSpeed, activeStreamEp, isStreamUnlocked, streamReloadNonce, activeMirrorIndex]);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed, activeStreamEp, activeAudio, isStreamUnlocked, streamReloadNonce, activeMirrorIndex]);
 
   useEffect(() => {
     return () => {
@@ -527,14 +552,96 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     (activeStreamEp !== null ? drama.episodeThumbnails?.[activeStreamEp] : undefined) ||
     drama.thumbnailUrl;
 
+  const activeEpNumForLookup = currentPlayingStream?.epNum ?? activeStreamEp;
+  const trackCustomAudio = (() => {
+    if (activeEpNumForLookup === null) return undefined;
+    const lookupField =
+      activeAudio === 'Hindi Dubbed'
+        ? 'hindiCustomAudioLink'
+        : activeAudio === 'Hindi Fan Dubbed' || activeAudio === 'Fan Dubbed'
+        ? 'fanDubCustomAudioLink'
+        : 'origCustomAudioLink';
+    if (currentEpObj?.[lookupField]) return currentEpObj[lookupField];
+    const fallbackEp = drama.episodes.find(
+      (ep) => extractNumericEp(ep.episodeNumber) === activeEpNumForLookup && Boolean(ep[lookupField])
+    );
+    return fallbackEp?.[lookupField];
+  })();
+
   const resolvedPlayerSource =
     isStreamUnlocked && currentPlayingStream
       ? resolveVideoPlayerSource(currentPlayingStream.streamUrl, activeMirrorIndex)
       : null;
 
+  const isExternalAudioActive =
+    Boolean(trackCustomAudio) && !forceBuiltinAudio && resolvedPlayerSource?.type === 'video';
+
   const currentSourceMeta = currentPlayingStream
     ? resolveVideoPlayerSource(currentPlayingStream.streamUrl, activeMirrorIndex)
     : null;
+
+  const syncAudioToVideo = (forcePlay = false) => {
+    const vid = videoRef.current;
+    const aud = audioRef.current;
+    if (!vid || !aud || !isExternalAudioActive) return;
+
+    aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+    aud.muted = isAudioMuted;
+    aud.playbackRate = vid.playbackRate || playbackSpeed;
+
+    const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
+    if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.28) {
+      try {
+        aud.currentTime = targetTime;
+      } catch {
+        // Audio metadata not ready yet; onLoadedMetadata/onCanPlay will sync
+      }
+    }
+
+    if (forcePlay || !vid.paused) {
+      if (aud.paused) {
+        aud.play().catch(() => {});
+      }
+    } else if (!aud.paused) {
+      aud.pause();
+    }
+  };
+
+  // Keep master audio volume, mute & lip-sync offset synchronized in real time
+  useEffect(() => {
+    const aud = audioRef.current;
+    const vid = videoRef.current;
+
+    if (isExternalAudioActive) {
+      if (vid && !vid.muted) {
+        vid.muted = true;
+      }
+      if (aud && vid) {
+        aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        aud.muted = isAudioMuted;
+        aud.playbackRate = vid.playbackRate || playbackSpeed;
+        const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
+        if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.15) {
+          try {
+            aud.currentTime = targetTime;
+          } catch {
+            // Audio not loaded yet
+          }
+        }
+        if (!vid.paused && aud.paused) {
+          aud.play().catch(() => {});
+        }
+      }
+    } else {
+      if (aud && !aud.paused) {
+        aud.pause();
+      }
+      if (vid) {
+        vid.muted = isAudioMuted;
+        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
+    }
+  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, trackCustomAudio, activeAudio]);
 
   const currentStreamIndex = currentPlayingStream
     ? activeTrackStreamables.findIndex((item) => item.epNum === currentPlayingStream.epNum)
@@ -573,12 +680,44 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? '🎙️ FAN DUBBED'
       : '💬 ORIGINAL';
 
+  const handleSwitchPlayerTrack = (nextTrack: AudioType) => {
+    if (nextTrack === activeAudio) return;
+    const vid = videoRef.current;
+    const currentTime = vid && Number.isFinite(vid.currentTime) ? vid.currentTime : 0;
+    const wasPlaying = vid ? !vid.paused : false;
+
+    const nextList =
+      streamablesByTrack[
+        nextTrack === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : (nextTrack as keyof typeof streamablesByTrack)
+      ] || [];
+    const nextEpEntry =
+      activeStreamEp !== null
+        ? nextList.find((item) => item.epNum === activeStreamEp) || nextList[0]
+        : nextList[0];
+    const nextResolved = nextEpEntry ? resolveVideoPlayerSource(nextEpEntry.streamUrl, 0) : null;
+    const isDifferentVideoSrc =
+      Boolean(nextResolved?.src) && resolvedPlayerSource?.src !== nextResolved?.src;
+
+    if (currentTime > 0.5 && isDifferentVideoSrc) {
+      pendingRestoreTimeRef.current = { time: currentTime, shouldPlay: wasPlaying };
+    } else {
+      pendingRestoreTimeRef.current = null;
+    }
+
+    if (isDifferentVideoSrc) {
+      setIsVideoLoading(true);
+    }
+    setActiveAudio(nextTrack);
+    showHudFeedback(`🎧 Audio: ${nextTrack}`);
+  };
+
   const handleOpenStream = (
     epNum: number,
     trackOverride?: AudioType,
     epKey?: number | string,
     clickEvent?: React.MouseEvent
   ) => {
+    pendingRestoreTimeRef.current = null;
     if (trackOverride) {
       setActiveAudio(trackOverride);
     }
@@ -607,6 +746,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleClosePlayer = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    pendingRestoreTimeRef.current = null;
     setActiveStreamEp(null);
     setActiveMirrorIndex(0);
     setIsStreamUnlocked(false);
@@ -624,7 +767,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
 
     if (videoRef.current) {
-      videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
+      const nextTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
+      videoRef.current.currentTime = nextTime;
+      if (isExternalAudioActive && audioRef.current) {
+        try {
+          audioRef.current.currentTime = Math.max(0, nextTime + audioSyncOffset);
+        } catch {
+          // Ignore if audio metadata not ready
+        }
+      }
       showHudFeedback(feedbackLabel);
     }
   };
@@ -639,6 +790,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
+      if (isExternalAudioActive && audioRef.current) {
+        audioRef.current.playbackRate = rate;
+      }
       showHudFeedback(`⚡ Speed: ${rate}x`);
     }
   };
@@ -1029,16 +1183,81 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         controls
                         autoPlay
                         playsInline
+                        muted={isExternalAudioActive ? true : isAudioMuted}
                         onLoadStart={() => setIsVideoLoading(true)}
-                        onCanPlay={() => setIsVideoLoading(false)}
+                        onLoadedMetadata={(e) => {
+                          const vid = e.currentTarget;
+                          vid.playbackRate = playbackSpeed;
+                          if (!isExternalAudioActive) {
+                            vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                            vid.muted = isAudioMuted;
+                          } else {
+                            vid.muted = true;
+                          }
+                          const pending = pendingRestoreTimeRef.current;
+                          if (pending) {
+                            try {
+                              vid.currentTime = pending.time;
+                            } catch {
+                              // Ignore
+                            }
+                            if (pending.shouldPlay) {
+                              vid.play().catch(() => {});
+                            }
+                            pendingRestoreTimeRef.current = null;
+                          }
+                          syncAudioToVideo();
+                        }}
+                        onCanPlay={() => {
+                          setIsVideoLoading(false);
+                          syncAudioToVideo();
+                        }}
+                        onPlay={() => syncAudioToVideo(true)}
                         onPlaying={() => {
                           setIsVideoPlaying(true);
                           setIsVideoLoading(false);
+                          syncAudioToVideo(true);
+                        }}
+                        onPause={() => {
+                          if (audioRef.current && !audioRef.current.paused) {
+                            audioRef.current.pause();
+                          }
+                        }}
+                        onWaiting={() => {
+                          if (audioRef.current && !audioRef.current.paused) {
+                            audioRef.current.pause();
+                          }
+                        }}
+                        onSeeking={() => syncAudioToVideo(!videoRef.current?.paused)}
+                        onSeeked={() => syncAudioToVideo(!videoRef.current?.paused)}
+                        onRateChange={(e) => {
+                          if (audioRef.current) {
+                            audioRef.current.playbackRate = e.currentTarget.playbackRate;
+                          }
                         }}
                         onTimeUpdate={(e) => {
-                          if (e.currentTarget.currentTime > 0.1) {
+                          const vid = e.currentTarget;
+                          if (vid.currentTime > 0.1) {
                             setIsVideoPlaying(true);
                             setIsVideoLoading(false);
+                          }
+                          if (isExternalAudioActive && audioRef.current) {
+                            const aud = audioRef.current;
+                            if (!vid.paused) {
+                              const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
+                              if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.28) {
+                                try {
+                                  aud.currentTime = targetTime;
+                                } catch {
+                                  // Ignore
+                                }
+                              }
+                              if (aud.paused) {
+                                aud.play().catch(() => {});
+                              }
+                            } else if (!aud.paused) {
+                              aud.pause();
+                            }
                           }
                         }}
                         {...({ referrerpolicy: 'origin' } as Record<string, string>)}
@@ -1049,6 +1268,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         }}
                         className="w-full h-full object-contain bg-black transition-[filter] duration-300"
                       />
+
+                      {/* Track-Specific Synced External Dubbed Audio Element (Hindi / FanDub / Orig) */}
+                      {isExternalAudioActive && trackCustomAudio && (
+                        <audio
+                          ref={audioRef}
+                          key={`${activeAudio}-${activeStreamEp}-${trackCustomAudio}`}
+                          src={trackCustomAudio}
+                          preload="auto"
+                          onLoadedMetadata={() => syncAudioToVideo()}
+                          onCanPlay={() => syncAudioToVideo()}
+                          className="hidden"
+                        />
+                      )}
 
                       {/* 16:9 Full-Widescreen Custom Thumbnail Overlay before playback begins (ZERO black sidebars) */}
                       {!isVideoPlaying && (
@@ -1189,6 +1421,109 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   </div>
 
+                  {/* Compact Master Audio Sync Bar (Volume, Mute, Lip-Sync Offset & External/Built-in Toggle) */}
+                  {(resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
+                    <div className="px-3.5 py-2.5 rounded-xl bg-[#11131d] border border-white/10 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                            isExternalAudioActive
+                              ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300'
+                              : 'bg-white/[0.05] border-white/10 text-zinc-300'
+                          }`}
+                        >
+                          <Headphones className="w-3.5 h-3.5" />
+                          <span>
+                            {isExternalAudioActive
+                              ? `Custom ${activeAudio} Synced`
+                              : 'Built-in Stream Audio'}
+                          </span>
+                        </span>
+
+                        <button
+                          onClick={() => setIsAudioMuted((m) => !m)}
+                          className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                            isAudioMuted
+                              ? 'bg-red-500/20 border-red-400/40 text-red-300'
+                              : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/10 text-white'
+                          }`}
+                          title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
+                        >
+                          {isAudioMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={isAudioMuted ? 0 : audioVolume}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              setAudioVolume(val);
+                              if (val > 0 && isAudioMuted) setIsAudioMuted(false);
+                            }}
+                            aria-label="Master Audio Volume"
+                            className="w-24 sm:w-28 accent-[#e50914] cursor-pointer h-1.5"
+                          />
+                          <span className="text-[11px] font-black text-zinc-300 w-9 tabular-nums">
+                            {Math.round((isAudioMuted ? 0 : audioVolume) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {Boolean(trackCustomAudio) && resolvedPlayerSource?.type === 'video' && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider mr-1">
+                            Lip-Sync:
+                          </span>
+                          <button
+                            onClick={() => {
+                              setAudioSyncOffset((prev) => Number((prev - 0.2).toFixed(1)));
+                              showHudFeedback('🎧 Audio Sync -0.2s');
+                            }}
+                            className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
+                          >
+                            -0.2s
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAudioSyncOffset(0);
+                              showHudFeedback('🎧 Audio Sync Reset (0.0s)');
+                            }}
+                            className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-amber-300 text-[11px] font-black tabular-nums cursor-pointer"
+                            title="Reset Lip-Sync Offset to 0.0s"
+                          >
+                            {audioSyncOffset > 0 ? `+${audioSyncOffset.toFixed(1)}s` : `${audioSyncOffset.toFixed(1)}s`}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAudioSyncOffset((prev) => Number((prev + 0.2).toFixed(1)));
+                              showHudFeedback('🎧 Audio Sync +0.2s');
+                            }}
+                            className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
+                          >
+                            +0.2s
+                          </button>
+                          <button
+                            onClick={() => {
+                              setForceBuiltinAudio((prev) => !prev);
+                              showHudFeedback(forceBuiltinAudio ? '🎧 External Dub Active' : '🔊 Built-in Audio Active');
+                            }}
+                            className={`ml-1 px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
+                              forceBuiltinAudio
+                                ? 'bg-amber-500/20 border-amber-400/45 text-amber-200'
+                                : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/15 text-zinc-300'
+                            }`}
+                          >
+                            {forceBuiltinAudio ? 'Use External Dub' : 'Use Built-in Audio'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Honest 1-line Cloud Embed Mode helper whenever stream is a third-party iframe */}
                   {resolvedPlayerSource?.type === 'iframe' && (
                     <div
@@ -1284,7 +1619,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             return (
                               <button
                                 key={item.track}
-                                onClick={() => setActiveAudio(item.track)}
+                                onClick={() => handleSwitchPlayerTrack(item.track)}
                                 className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
                                   isTrackActive
                                     ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow'

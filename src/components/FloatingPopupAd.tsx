@@ -16,19 +16,14 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
   isPhoneDevice = false,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
+  const [dismissedForThisVisit, setDismissedForThisVisit] = useState(false);
   const [popupStyle, setPopupStyle] = useState<'center' | 'floating'>('center');
   const [renderCycle, setRenderCycle] = useState(0);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const showCountRef = useRef(0);
-  const lastShownAtRef = useRef(0);
-  const prevDramaModalOpenRef = useRef(isDramaModalOpen);
+  const hasShownThisVisitRef = useRef(false);
 
   const isEnabled = Boolean(adConfig?.enabled && adConfig?.showPopupAd !== false);
-  const intervalMs = useMemo(() => {
-    const secs = Number(adConfig?.popupIntervalSeconds) || DEFAULT_AD_CONFIG.popupIntervalSeconds;
-    return Math.max(15, Math.min(3600, secs)) * 1000;
-  }, [adConfig?.popupIntervalSeconds]);
 
   const safeBannerKey = useMemo(() => {
     const raw = (adConfig?.banner728Key || DEFAULT_AD_CONFIG.banner728Key).trim();
@@ -80,63 +75,35 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
 </html>`;
   }, [adConfig?.customBannerHtml, safeBannerKey, safeAdDomain]);
 
-  const triggerPopup = React.useCallback(() => {
-    if (!isEnabled || isDramaModalOpen || isAdminOpen) return;
-    showCountRef.current += 1;
-    const nextStyle: 'center' | 'floating' = showCountRef.current % 2 === 1 ? 'center' : 'floating';
-    lastShownAtRef.current = Date.now();
-    setPopupStyle(nextStyle);
-    setRenderCycle((c) => c + 1);
-    setIsVisible(true);
-  }, [isEnabled, isDramaModalOpen, isAdminOpen]);
-
-  // Hide immediately if disabled or while Admin Studio is open
+  // Hide immediately if disabled, dismissed, or while Admin Studio is open
   useEffect(() => {
-    if (!isEnabled || isAdminOpen) {
+    if (!isEnabled || dismissedForThisVisit || isAdminOpen) {
       setIsVisible(false);
     }
-  }, [isEnabled, isAdminOpen]);
+  }, [isEnabled, dismissedForThisVisit, isAdminOpen]);
 
-  // 1. Trigger 8 seconds after entering website + 2. Periodic interval every popupIntervalSeconds
+  // Trigger ONCE per page visit after initial 8-second delay (never repeats once closed)
   useEffect(() => {
-    if (!isEnabled) return;
+    if (!isEnabled || dismissedForThisVisit || hasShownThisVisitRef.current) return;
 
     const initialTimer = window.setTimeout(() => {
-      triggerPopup();
-    }, 8000);
-
-    const periodicTimer = window.setInterval(() => {
-      if (!isVisible && Date.now() - lastShownAtRef.current >= intervalMs - 1000) {
-        triggerPopup();
+      if (hasShownThisVisitRef.current || dismissedForThisVisit || isDramaModalOpen || isAdminOpen) {
+        return;
       }
-    }, intervalMs);
+      hasShownThisVisitRef.current = true;
+      setPopupStyle('center');
+      setRenderCycle((c) => c + 1);
+      setIsVisible(true);
+    }, 8000);
 
     return () => {
       window.clearTimeout(initialTimer);
-      window.clearInterval(periodicTimer);
     };
-  }, [isEnabled, intervalMs, isVisible, triggerPopup]);
-
-  // Trigger when user closes a drama modal (respecting cooldown of at least 25s or intervalMs)
-  useEffect(() => {
-    const wasOpen = prevDramaModalOpenRef.current;
-    prevDramaModalOpenRef.current = isDramaModalOpen;
-
-    if (wasOpen && !isDramaModalOpen && isEnabled && !isAdminOpen) {
-      const elapsed = Date.now() - lastShownAtRef.current;
-      const cooldown = Math.min(intervalMs, 35000);
-      if (elapsed >= cooldown) {
-        const delayTimer = window.setTimeout(() => {
-          triggerPopup();
-        }, 600);
-        return () => window.clearTimeout(delayTimer);
-      }
-    }
-  }, [isDramaModalOpen, isEnabled, isAdminOpen, intervalMs, triggerPopup]);
+  }, [isEnabled, dismissedForThisVisit, isDramaModalOpen, isAdminOpen]);
 
   // Inject Adsterra HTML via contentWindow.document.write (preserves real site origin)
   useEffect(() => {
-    if (!isVisible || !isEnabled) return;
+    if (!isVisible || !isEnabled || dismissedForThisVisit) return;
 
     const iframe = iframeRef.current;
     const doc = iframe?.contentWindow?.document;
@@ -152,6 +119,7 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
         const body = iframeRef.current?.contentWindow?.document?.body;
         if (!body || body.querySelectorAll('iframe, img, a, ins, div, span, canvas').length === 0) {
           setIsVisible(false);
+          setDismissedForThisVisit(true);
         }
       } catch {
         // Cross-origin frame populated cleanly
@@ -161,14 +129,14 @@ export const FloatingPopupAd: React.FC<FloatingPopupAdProps> = ({
     return () => {
       window.clearTimeout(emptyCheckTimer);
     };
-  }, [isVisible, isEnabled, renderCycle, adHtmlString]);
+  }, [isVisible, isEnabled, dismissedForThisVisit, renderCycle, adHtmlString]);
 
   const handleClose = () => {
-    lastShownAtRef.current = Date.now();
     setIsVisible(false);
+    setDismissedForThisVisit(true);
   };
 
-  if (!isEnabled || !isVisible) return null;
+  if (!isEnabled || dismissedForThisVisit || !isVisible) return null;
 
   if (popupStyle === 'center') {
     return (

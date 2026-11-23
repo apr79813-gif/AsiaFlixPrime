@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { AdConfig, DEFAULT_AD_CONFIG } from '../services/supabaseService';
 
 interface AdBannerSlotProps {
@@ -29,14 +30,16 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
   const nativeIframeRef = useRef<HTMLIFrameElement>(null);
   const nativeContainerRef = useRef<HTMLDivElement>(null);
   const [adUnavailable, setAdUnavailable] = useState(false);
+  const [isBannerClosed, setIsBannerClosed] = useState(false);
 
   const isSlotVisible = useMemo(() => {
+    if (isBannerClosed) return false;
     if (!adConfig || !adConfig.enabled) return false;
     if (slot === 'home' && !adConfig.showHomeBanner) return false;
     if (slot === 'modal' && !adConfig.showModalBanner) return false;
     if (slot === 'footer' && !adConfig.showFooterNative) return false;
     return true;
-  }, [adConfig, slot]);
+  }, [isBannerClosed, adConfig, slot]);
 
   const safeBannerKey = useMemo(() => {
     const raw = (adConfig?.banner728Key || DEFAULT_AD_CONFIG.banner728Key).trim();
@@ -301,7 +304,7 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
     safeNativeContainerId,
   ]);
 
-  if (!isSlotVisible || adUnavailable) return null;
+  if (isBannerClosed || !isSlotVisible || adUnavailable) return null;
 
   const wrapperClass =
     slot === 'modal'
@@ -330,13 +333,24 @@ export const AdBannerSlot: React.FC<AdBannerSlotProps> = ({
             >
               <span>🔥 VIP PARTNER SPOTLIGHT • SPECIAL OFFER</span>
             </span>
-            <span
-              className={`font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-white/[0.06] text-amber-300 border border-amber-400/25 ${
-                isPhoneDevice ? 'text-[10px]' : 'text-[9px]'
-              }`}
-            >
-              SPONSORED SHOWCASE
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-white/[0.06] text-amber-300 border border-amber-400/25 ${
+                  isPhoneDevice ? 'text-[10px]' : 'text-[9px]'
+                }`}
+              >
+                SPONSORED SHOWCASE
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsBannerClosed(true)}
+                className="p-1 rounded-lg bg-white/[0.06] hover:bg-[#e50914] text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                aria-label="Close Sponsored Banner"
+                title="Close Banner"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Ad Content Body */}

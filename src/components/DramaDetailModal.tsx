@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { DramaItem, EpisodeItem, AudioType, WatchlistStatus } from '../types/drama';
 import {
   X,
@@ -21,6 +21,10 @@ import {
   SkipForward,
   AlertTriangle,
   ShieldCheck,
+  RotateCw,
+  ArrowLeft,
+  Gauge,
+  Gem,
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
@@ -49,16 +53,43 @@ export function resolveVideoPlayerSource(rawUrl: string): { type: 'video' | 'ifr
     return { type: 'iframe', src: 'about:blank' };
   }
 
-  const lowerUrl = trimmed.toLowerCase();
-  const pathWithoutQuery = trimmed.split(/[?#]/)[0].toLowerCase();
+  // 1. CLOUD HOST EMBED RULES ALWAYS RUN FIRST (before extension checks, e.g. streamtape slugs ending in .mp4)
 
-  // Direct HTML5 video files & Cloudflare Workers direct streams
-  if (
-    /\.(mp4|m3u8|webm|ogg|mkv)$/i.test(pathWithoutQuery) ||
-    lowerUrl.includes('/direct/') ||
-    lowerUrl.includes('workers.dev')
-  ) {
-    return { type: 'video', src: trimmed };
+  // Streamtape (streamtape.com, strtape.cloud, strcloud.in, shavetape.cash)
+  const streamtapeMatch = trimmed.match(
+    /(?:streamtape\.com|strtape\.cloud|strcloud\.in|shavetape\.cash)\/(?:v|e)\/([a-zA-Z0-9_-]+)/i
+  );
+  if (streamtapeMatch) {
+    return { type: 'iframe', src: `https://streamtape.com/e/${streamtapeMatch[1]}/` };
+  }
+
+  // Filemoon (filemoon.sx, filemoon.in, filemoon.to)
+  const filemoonMatch = trimmed.match(/(?:filemoon\.\w+)\/(?:d|e)\/([a-zA-Z0-9_-]+)/i);
+  if (filemoonMatch) {
+    return { type: 'iframe', src: `https://filemoon.sx/e/${filemoonMatch[1]}` };
+  }
+
+  // Doodstream (dood.wf, dood.to, dood.la, dood.pm, dood.re, dood.ws, doodstream.com, ds2play.com)
+  const doodMatch = trimmed.match(/(?:dood\w*\.\w+|ds2play\.com)\/(?:d|e)\/([a-zA-Z0-9_-]+)/i);
+  if (doodMatch) {
+    return { type: 'iframe', src: `https://dood.wf/e/${doodMatch[1]}` };
+  }
+
+  // Voe (voe.sx)
+  const voeMatch = trimmed.match(/voe\.sx\/(?:e\/)?([a-zA-Z0-9_-]+)/i);
+  if (voeMatch) {
+    return { type: 'iframe', src: `https://voe.sx/e/${voeMatch[1]}` };
+  }
+
+  // Mixdrop (mixdrop.co, mixdrop.to, mixdrop.ag)
+  const mixdropMatch = trimmed.match(/mixdrop\.\w+\/(?:f|e)\/([a-zA-Z0-9_-]+)/i);
+  if (mixdropMatch) {
+    return { type: 'iframe', src: `https://mixdrop.ag/e/${mixdropMatch[1]}` };
+  }
+
+  // Abyss / Hydrax (abyss.to, abysscdn.com)
+  if (/(?:abyss\.to|abysscdn\.com)\//i.test(trimmed)) {
+    return { type: 'iframe', src: trimmed };
   }
 
   // Google Drive share link -> /preview
@@ -93,7 +124,19 @@ export function resolveVideoPlayerSource(rawUrl: string): { type: 'video' | 'ifr
     return { type: 'iframe', src: `https://www.dailymotion.com/embed/video/${dmMatch[1]}?autoplay=1` };
   }
 
-  // All other third-party cloud players (Streamtape, Filemoon, Doodstream, Voe, Mixdrop, Abyss, custom embed links)
+  // 2. ONLY AFTER cloud host rules: check genuine direct media streams
+  const lowerUrl = trimmed.toLowerCase();
+  const pathWithoutQuery = trimmed.split(/[?#]/)[0].toLowerCase();
+  if (
+    /\.(mp4|m3u8|webm|ogg)$/i.test(pathWithoutQuery) ||
+    lowerUrl.includes('/direct/') ||
+    lowerUrl.includes('workers.dev') ||
+    lowerUrl.includes('r2.dev')
+  ) {
+    return { type: 'video', src: trimmed };
+  }
+
+  // 3. Fallback custom embed iframe
   return { type: 'iframe', src: trimmed };
 }
 
@@ -118,6 +161,14 @@ interface StreamableEpisodeEntry {
   episodeKey: number | string;
 }
 
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+const QUALITY_OPTIONS = [
+  { id: '1080p FHD', label: '1080p FHD (Ultra)' },
+  { id: '720p HD', label: '720p HD' },
+  { id: '480p Saver', label: '480p Saver' },
+  { id: 'Auto HDR', label: 'Auto HDR' },
+] as const;
+
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
   onClose,
@@ -133,6 +184,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   adConfig,
 }) => {
   const modalBodyRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hudTimerRef = useRef<number | null>(null);
 
   // Extract a clean single Telegram URL per audio track (excluding Es/Stream links)
   const extractCleanTrackTelegram = (track: AudioType): string | undefined => {
@@ -268,21 +321,39 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return availableTrackList[0] || drama.defaultAudio || 'Hindi Dubbed';
   });
 
-  // Protected Cinema Player State
+  // Protected IMAX Cyber-Cinema Player State
   const [activeStreamEp, setActiveStreamEp] = useState<number | null>(null);
   const [isStreamUnlocked, setIsStreamUnlocked] = useState<boolean>(false);
   const [isTheaterMode, setIsTheaterMode] = useState<boolean>(false);
   const [isLightsOff, setIsLightsOff] = useState<boolean>(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [selectedQuality, setSelectedQuality] = useState<string>('1080p FHD');
+  const [streamReloadNonce, setStreamReloadNonce] = useState<number>(0);
+  const [hudToast, setHudToast] = useState<string | null>(null);
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
 
+  const showHudFeedback = (msg: string) => {
+    setHudToast(msg);
+    if (hudTimerRef.current !== null) {
+      window.clearTimeout(hudTimerRef.current);
+    }
+    hudTimerRef.current = window.setTimeout(() => {
+      setHudToast(null);
+    }, 1700);
+  };
+
   // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
-  React.useEffect(() => {
+  useEffect(() => {
     setActiveStreamEp(null);
     setIsStreamUnlocked(false);
     setIsLightsOff(false);
     setIsTheaterMode(false);
+    setPlaybackSpeed(1);
+    setSelectedQuality('1080p FHD');
+    setStreamReloadNonce(0);
+    setHudToast(null);
     if (drama) {
       if (
         audioLinkMap['Hindi Dubbed']?.startsWith('http') ||
@@ -304,6 +375,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       }
     }
   }, [drama?.id]);
+
+  // Apply playbackRate to native <video> element whenever speed or active video changes
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed, activeStreamEp, isStreamUnlocked, streamReloadNonce]);
+
+  useEffect(() => {
+    return () => {
+      if (hudTimerRef.current !== null) {
+        window.clearTimeout(hudTimerRef.current);
+      }
+    };
+  }, []);
 
   // Precompute streamable lists per track
   const streamablesByTrack = useMemo(() => {
@@ -369,7 +455,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? activeTrackStreamables[currentStreamIndex + 1]
       : null;
 
-  // Quick audio tracks inside player that have stream link for the currently playing episode (or any stream)
+  const totalEpisodesNum =
+    drama.totalEpisodes ||
+    (() => {
+      const m = drama.details?.match(/(\d+)/);
+      return m ? parseInt(m[1], 10) : activeTrackStreamables.length || 16;
+    })();
+
+  // Quick audio tracks inside player that have stream link for the currently playing episode
   const playerTrackSwitcherList = (
     [
       { track: 'Hindi Dubbed' as AudioType, label: '🔊 Hindi Dub' },
@@ -382,6 +475,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (activeStreamEp === null) return true;
     return list.some((s) => s.epNum === activeStreamEp);
   });
+
+  const activeAudioBadgeText =
+    activeAudio === 'Hindi Dubbed'
+      ? '🔊 HINDI DUBBED'
+      : activeAudio.includes('Fan')
+      ? '🎙️ FAN DUBBED'
+      : '💬 ORIGINAL';
 
   const handleOpenStream = (
     epNum: number,
@@ -406,7 +506,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     setTimeout(() => {
       modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 40);
+    }, 30);
   };
 
   const handleUnlockPrivacyGate = (e: React.MouseEvent) => {
@@ -421,6 +521,35 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsStreamUnlocked(false);
     setIsLightsOff(false);
     setIsTheaterMode(false);
+    setHudToast(null);
+  };
+
+  const handleSeek = (deltaSeconds: number, feedbackLabel: string) => {
+    if (videoRef.current && resolvedPlayerSource?.type === 'video') {
+      const nextTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
+      videoRef.current.currentTime = nextTime;
+      showHudFeedback(feedbackLabel);
+    } else {
+      showHudFeedback(`${feedbackLabel} • Native HTML5/Player Control`);
+    }
+  };
+
+  const handleSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+    showHudFeedback(`⚡ Speed: ${speed}x`);
+  };
+
+  const handleQualityChange = (qualityId: string) => {
+    setSelectedQuality(qualityId);
+    showHudFeedback(`💎 Quality: ${qualityId}`);
+  };
+
+  const handleReloadStream = () => {
+    setStreamReloadNonce((n) => n + 1);
+    showHudFeedback('🔄 Stream Reloaded');
   };
 
   const handleShare = () => {
@@ -444,10 +573,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         Boolean(getStreamLinkForTrack(ep, activeAudio)?.startsWith('http')) || typeof ep.episodeNumber === 'number'
     );
 
+  const isPlayerActive = activeStreamEp !== null && Boolean(currentPlayingStream);
+
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 overflow-y-auto backdrop-blur-md animate-fade-in transition-colors duration-300 ${
-        isLightsOff && activeStreamEp !== null ? 'bg-black/95' : 'bg-black/85'
+        isLightsOff && isPlayerActive ? 'bg-black/95' : 'bg-black/85'
       }`}
     >
       <div
@@ -456,17 +587,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           isTheaterMode ? 'max-w-6xl' : 'max-w-4xl'
         } bg-[#111218] rounded-2xl border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden my-auto max-h-[92vh] flex flex-col transition-all duration-300`}
       >
-        {/* Close Button */}
+        {/* Close Modal Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-40 p-2.5 rounded-full bg-black/70 hover:bg-[#e50914] text-zinc-300 hover:text-white transition-all border border-white/10 cursor-pointer"
+          className="absolute top-3.5 right-3.5 z-40 p-2.5 rounded-full bg-black/75 hover:bg-[#e50914] text-zinc-300 hover:text-white transition-all border border-white/15 cursor-pointer shadow-lg"
           aria-label="Close modal"
         >
           <X className="w-4 h-4" />
         </button>
 
         {/* Lights-Off Cinema Overlay Dimmer inside modal */}
-        {isLightsOff && activeStreamEp !== null && (
+        {isLightsOff && isPlayerActive && (
           <div
             onClick={() => setIsLightsOff(false)}
             className="fixed inset-0 z-20 bg-black/90 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
@@ -474,227 +605,213 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           />
         )}
 
-        {/* Hero Backdrop Banner */}
-        <div className="relative w-full h-64 sm:h-80 shrink-0 overflow-hidden bg-zinc-950">
-          <img
-            src={drama.backdrop || drama.poster}
-            alt={drama.title}
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover object-center filter brightness-[0.4]"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src =
-                'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200';
-            }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#111218] via-[#111218]/50 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#111218] via-transparent to-transparent" />
+        {/* Top Hero Backdrop Banner — HIDDEN cleanly while Video Player is active so player takes over the very top */}
+        {!isPlayerActive && (
+          <div className="relative w-full h-64 sm:h-80 shrink-0 overflow-hidden bg-zinc-950">
+            <img
+              src={drama.backdrop || drama.poster}
+              alt={drama.title}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover object-center filter brightness-[0.4]"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src =
+                  'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200';
+              }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#111218] via-[#111218]/50 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#111218] via-transparent to-transparent" />
 
-          {/* Banner Content Overlay */}
-          <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div className="max-w-2xl">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="bg-[#e50914] text-white text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow">
-                  {drama.category}
-                </span>
+            {/* Banner Content Overlay */}
+            <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div className="max-w-2xl">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="bg-[#e50914] text-white text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow">
+                    {drama.category}
+                  </span>
 
-                {/* Color-Coded Age Rating Badge */}
-                {drama.ageRating &&
-                  (() => {
-                    const ageInfo = getAgeRatingMeta(drama.ageRating);
-                    return (
-                      <span className={`text-xs font-black px-2.5 py-0.5 rounded ${ageInfo.pillClass}`}>
-                        {ageInfo.label}
-                      </span>
-                    );
-                  })()}
+                  {/* Color-Coded Age Rating Badge */}
+                  {drama.ageRating &&
+                    (() => {
+                      const ageInfo = getAgeRatingMeta(drama.ageRating);
+                      return (
+                        <span className={`text-xs font-black px-2.5 py-0.5 rounded ${ageInfo.pillClass}`}>
+                          {ageInfo.label}
+                        </span>
+                      );
+                    })()}
 
-                {/* Sub-Category / Content Type Badge */}
-                {drama.subCategory && (
+                  {/* Sub-Category / Content Type Badge */}
+                  {drama.subCategory && (
+                    <span className="bg-white/10 text-zinc-200 text-xs font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
+                      {drama.subCategory}
+                    </span>
+                  )}
+
                   <span className="bg-white/10 text-zinc-200 text-xs font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
-                    {drama.subCategory}
+                    {drama.releaseYear}
                   </span>
-                )}
 
-                <span className="bg-white/10 text-zinc-200 text-xs font-semibold px-2 py-0.5 rounded backdrop-blur-sm">
-                  {drama.releaseYear}
-                </span>
-
-                <div className="flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-black">
-                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                  <span>{drama.rating}</span>
-                </div>
-
-                {/* Exact Details Pill (Episode Count or Runtime) */}
-                {drama.details && (
-                  <span className="bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
-                    {isMovie ? <Film className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                    <span>{drama.details}</span>
-                  </span>
-                )}
-
-                {/* Status Pill (Exact Status Text) */}
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>{drama.statusText || drama.status}</span>
-                </span>
-
-                {/* Schedule Pill if ongoing */}
-                {drama.schedule && drama.schedule.trim() ? (
-                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    <span>{drama.schedule}</span>
-                  </span>
-                ) : null}
-
-                {isTopOne || drama.spotlightTag === 'TOP #1' ? (
-                  <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black px-2.5 py-0.5 rounded text-xs font-black flex items-center gap-1 shadow-lg shadow-amber-500/30 animate-pulse">
-                    <span>👑</span>
-                    <span>TOP 1 IN ASIAFLIX</span>
-                  </span>
-                ) : null}
-              </div>
-
-              <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight">
-                {drama.title}
-              </h2>
-              {drama.originalTitle && (
-                <p className="text-zinc-400 text-xs font-semibold mt-0.5">{drama.originalTitle}</p>
-              )}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {heroStreamTarget && (
-                <button
-                  onClick={(e) =>
-                    handleOpenStream(
-                      heroStreamTarget.ep.epNum,
-                      heroStreamTarget.track,
-                      heroStreamTarget.ep.episodeKey,
-                      e
-                    )
-                  }
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs font-black shadow-[0_0_25px_rgba(168,85,247,0.55)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/25"
-                >
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>
-                    {isMovie
-                      ? 'Stream Movie Online in HD'
-                      : `Stream Online in HD (Ep ${heroStreamTarget.ep.epNum})`}
-                  </span>
-                </button>
-              )}
-
-              {currentAudioLink && (
-                <a
-                  href={currentAudioLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] hover:scale-105 active:scale-95 transition-all"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>Open in Telegram ({activeAudio})</span>
-                </a>
-              )}
-
-              {/* Sabse Aage (#1) Button: STRICTLY visible only when admin is authenticated */}
-              {isAdminAuthenticated && onMoveToFront && (
-                <button
-                  onClick={() => {
-                    onMoveToFront(drama.id);
-                    setFrontSuccess(true);
-                    setTimeout(() => setFrontSuccess(false), 3500);
-                  }}
-                  className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-red-500/20 hover:from-amber-500 hover:to-red-600 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-black transition-all shadow-sm cursor-pointer"
-                  title="Admin Control: Is drama ko portal par sabse aage (#1 position) par set karein"
-                >
-                  <span>👑 Set #1 Front</span>
-                </button>
-              )}
-
-              <button
-                onClick={handleShare}
-                className="p-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-white transition-all cursor-pointer"
-                title="Share Drama Link"
-              >
-                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Modal Scrollable Body */}
-        <div ref={modalBodyRef} className="p-4 sm:p-8 overflow-y-auto space-y-6 flex-1">
-          {/* ============================================================
-              PROTECTED ASIAFLIX VIP CINEMA PLAYER DECK
-             ============================================================ */}
-          {activeStreamEp !== null && currentPlayingStream && (
-            <div className="relative z-30 p-[2px] rounded-2xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] shadow-[0_0_50px_rgba(229,9,20,0.35)] animate-fade-in">
-              <div className="rounded-[14px] bg-[#07080d] overflow-hidden flex flex-col">
-                {/* Top Security & Audio Bar */}
-                <div className="px-3.5 py-2.5 bg-gradient-to-r from-[#140d18] via-[#0d0e17] to-[#0b131d] border-b border-white/10 flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/45 text-emerald-300 text-[10px] font-black uppercase tracking-wider shrink-0">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                      <span>🔒 PRIVACY-SHIELDED CLOUD STREAM</span>
-                    </span>
-                    <span className="text-xs sm:text-sm font-black text-white truncate">
-                      {isMovie ? `Full Movie • ${drama.title}` : `Ep ${activeStreamEp} • ${drama.title}`}
-                    </span>
+                  <div className="flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-black">
+                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    <span>{drama.rating}</span>
                   </div>
 
-                  {/* Center: 1-Click Audio Track Switcher + Right: Lights / Theater / Close */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {playerTrackSwitcherList.length > 0 && (
-                      <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/10 mr-1">
-                        {playerTrackSwitcherList.map((item) => {
-                          const isTrackActive = activeAudio === item.track;
-                          return (
-                            <button
-                              key={item.track}
-                              onClick={() => setActiveAudio(item.track)}
-                              className={`px-2 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
-                                isTrackActive
-                                  ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow'
-                                  : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                              }`}
-                            >
-                              {item.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                  {/* Exact Details Pill (Episode Count or Runtime) */}
+                  {drama.details && (
+                    <span className="bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
+                      {isMovie ? <Film className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                      <span>{drama.details}</span>
+                    </span>
+                  )}
 
-                    <button
-                      onClick={() => setIsLightsOff((prev) => !prev)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                        isLightsOff
-                          ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                          : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                      }`}
-                      title="Dim surrounding UI like a cinema theater"
-                    >
-                      <Lightbulb className="w-3.5 h-3.5" />
-                      <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
-                    </button>
+                  {/* Status Pill (Exact Status Text) */}
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>{drama.statusText || drama.status}</span>
+                  </span>
 
-                    <button
-                      onClick={() => setIsTheaterMode((prev) => !prev)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                        isTheaterMode
-                          ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
-                          : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                      }`}
-                      title="Expand player width"
-                    >
-                      {isTheaterMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                      <span>Theater</span>
-                    </button>
+                  {/* Schedule Pill if ongoing */}
+                  {drama.schedule && drama.schedule.trim() ? (
+                    <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      <span>{drama.schedule}</span>
+                    </span>
+                  ) : null}
 
+                  {isTopOne || drama.spotlightTag === 'TOP #1' ? (
+                    <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black px-2.5 py-0.5 rounded text-xs font-black flex items-center gap-1 shadow-lg shadow-amber-500/30 animate-pulse">
+                      <span>👑</span>
+                      <span>TOP 1 IN ASIAFLIX</span>
+                    </span>
+                  ) : null}
+                </div>
+
+                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight">
+                  {drama.title}
+                </h2>
+                {drama.originalTitle && (
+                  <p className="text-zinc-400 text-xs font-semibold mt-0.5">{drama.originalTitle}</p>
+                )}
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {heroStreamTarget && (
+                  <button
+                    onClick={(e) =>
+                      handleOpenStream(
+                        heroStreamTarget.ep.epNum,
+                        heroStreamTarget.track,
+                        heroStreamTarget.ep.episodeKey,
+                        e
+                      )
+                    }
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs font-black shadow-[0_0_25px_rgba(168,85,247,0.55)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/25"
+                  >
+                    <Play className="w-4 h-4 fill-white" />
+                    <span>
+                      {isMovie
+                        ? 'Stream Movie Online in HD'
+                        : `Stream Online in HD (Ep ${heroStreamTarget.ep.epNum})`}
+                    </span>
+                  </button>
+                )}
+
+                {currentAudioLink && (
+                  <a
+                    href={currentAudioLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] hover:scale-105 active:scale-95 transition-all"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>Open in Telegram ({activeAudio})</span>
+                  </a>
+                )}
+
+                {/* Sabse Aage (#1) Button: STRICTLY visible only when admin is authenticated */}
+                {isAdminAuthenticated && onMoveToFront && (
+                  <button
+                    onClick={() => {
+                      onMoveToFront(drama.id);
+                      setFrontSuccess(true);
+                      setTimeout(() => setFrontSuccess(false), 3500);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-red-500/20 hover:from-amber-500 hover:to-red-600 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-black transition-all shadow-sm cursor-pointer"
+                    title="Admin Control: Is drama ko portal par sabse aage (#1 position) par set karein"
+                  >
+                    <span>👑 Set #1 Front</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={handleShare}
+                  className="p-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-white transition-all cursor-pointer"
+                  title="Share Drama Link"
+                >
+                  {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Scrollable Body */}
+        <div
+          ref={modalBodyRef}
+          className={`overflow-y-auto space-y-6 flex-1 ${isPlayerActive ? 'p-3 sm:p-5 pt-3' : 'p-4 sm:p-8'}`}
+        >
+          {/* ============================================================
+              IMAX CYBER-CINEMA PROTECTED VIDEO PLAYER DECK (TOP OF MODAL)
+             ============================================================ */}
+          {isPlayerActive && currentPlayingStream && (
+            <div className="relative z-30 p-[2px] rounded-3xl bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] shadow-[0_0_65px_rgba(229,9,20,0.4)] animate-fade-in">
+              <div className="rounded-[22px] bg-[#07070c]/95 backdrop-blur-2xl overflow-hidden flex flex-col">
+                {/* 1. Prominent Neon Episode Header Bar */}
+                <div className="px-4 py-3 pr-14 bg-gradient-to-r from-[#160a14] via-[#0e0c1a] to-[#071520] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                    {/* Large Glowing Episode Pill + Animated Equalizer Bars */}
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#ff0f39] via-[#d946ef] to-[#7c3aed] text-white text-xs sm:text-sm font-black uppercase tracking-wider shadow-[0_0_24px_rgba(255,15,57,0.55)] border border-white/25 shrink-0">
+                      <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
+                        <span className="w-[3px] h-2 bg-white rounded-full animate-pulse" />
+                        <span className="w-[3px] h-3.5 bg-cyan-200 rounded-full animate-bounce" />
+                        <span className="w-[3px] h-2.5 bg-white rounded-full animate-pulse" />
+                      </span>
+                      <span>
+                        {isMovie
+                          ? '🎬 FULL MOVIE • HD STREAM'
+                          : `🎬 EPISODE ${String(activeStreamEp).padStart(2, '0')} / ${totalEpisodesNum}`}
+                      </span>
+                    </div>
+
+                    {/* Drama Title + Active Audio Badge */}
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <h3 className="text-sm sm:text-base font-black text-white truncate max-w-[280px] sm:max-w-[380px]">
+                        {drama.title}
+                      </h3>
+                      <span className="px-2.5 py-0.5 rounded-lg bg-white/[0.08] border border-white/15 text-[10px] font-black text-cyan-300 uppercase tracking-wider shrink-0">
+                        {activeAudioBadgeText}
+                      </span>
+                      <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 text-[10px] font-black uppercase tracking-wider shrink-0">
+                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                        <span>PRIVACY SHIELD</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right Action Buttons: Back to Drama Info + Close Player */}
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={handleClosePlayer}
-                      className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-[#e50914] text-red-200 hover:text-white border border-red-500/40 text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                      className="px-3 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/15 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Back to Drama Info</span>
+                      <span className="sm:hidden">Info</span>
+                    </button>
+                    <button
+                      onClick={handleClosePlayer}
+                      className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-[#e50914] text-red-200 hover:text-white border border-red-500/40 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
                     >
                       <X className="w-3.5 h-3.5" />
                       <span>Close Player</span>
@@ -702,8 +819,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   </div>
                 </div>
 
-                {/* 16:9 Protected Video Viewport */}
+                {/* 2. 16:9 Protected Video Viewport */}
                 <div className="aspect-video w-full bg-black relative overflow-hidden">
+                  {/* Live On-Screen Cyber HUD Overlay */}
+                  {hudToast && (
+                    <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-black/85 backdrop-blur-md border border-cyan-400/50 text-white text-xs font-black tracking-wide shadow-[0_0_25px_rgba(0,242,254,0.45)] animate-fade-in">
+                      {hudToast}
+                    </div>
+                  )}
+
                   {!isStreamUnlocked || !resolvedPlayerSource ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center overflow-hidden">
                       <img
@@ -722,116 +846,253 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </p>
                         <button
                           onClick={handleUnlockPrivacyGate}
-                          className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(168,85,247,0.65)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/30"
+                          className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(168,85,247,0.65)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/30"
                         >
-                          🛡️ Click to Unlock & Start Secure 1080p Stream (Anti-Bot Protected)
+                          🛡️ Click to Unlock &amp; Start Secure 1080p Stream (Anti-Bot Protected)
                         </button>
                       </div>
                     </div>
                   ) : resolvedPlayerSource.type === 'video' ? (
                     <video
-                      key={resolvedPlayerSource.src}
+                      ref={videoRef}
+                      key={`${resolvedPlayerSource.src}-${streamReloadNonce}-${selectedQuality}`}
                       src={resolvedPlayerSource.src}
                       poster={drama.backdrop || drama.poster}
                       controls
                       autoPlay
                       playsInline
-                      {...({ referrerpolicy: 'no-referrer' } as Record<string, string>)}
+                      {...({ referrerpolicy: 'origin' } as Record<string, string>)}
                       className="w-full h-full object-contain bg-black"
                     />
                   ) : (
                     <iframe
-                      key={resolvedPlayerSource.src}
+                      key={`${resolvedPlayerSource.src}-${streamReloadNonce}-${selectedQuality}`}
                       src={resolvedPlayerSource.src}
                       title={`${drama.title} Ep ${activeStreamEp}`}
                       className="w-full h-full border-0 bg-black"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowFullScreen
-                      referrerPolicy="no-referrer"
+                      referrerPolicy="origin"
                     />
                   )}
                 </div>
 
-                {/* Bottom Navigation & Episode Selector */}
-                <div className="px-3.5 py-2.5 bg-[#0a0b12] border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {!isMovie && (
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={(e) =>
-                            prevStreamItem &&
-                            handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
-                          }
-                          disabled={!prevStreamItem}
-                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                            prevStreamItem
-                              ? 'bg-white/[0.08] hover:bg-white/[0.15] text-white border-white/15 cursor-pointer'
-                              : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          <SkipBack className="w-3.5 h-3.5" />
-                          <span>Prev Ep</span>
-                        </button>
-
-                        <button
-                          onClick={(e) =>
-                            nextStreamItem &&
-                            handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
-                          }
-                          disabled={!nextStreamItem}
-                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                            nextStreamItem
-                              ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40 shadow cursor-pointer'
-                              : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          <span>Next Ep</span>
-                          <SkipForward className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Quick Episode Selector Pills */}
-                    {activeTrackStreamables.length > 0 && (
-                      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 min-w-0">
-                        {activeTrackStreamables.map((item) => {
-                          const isPlayingThis = item.epNum === currentPlayingStream.epNum;
-                          return (
-                            <button
-                              key={`quick-ep-${activeAudio}-${item.epNum}`}
-                              onClick={(e) => handleOpenStream(item.epNum, activeAudio, item.episodeKey, e)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black shrink-0 border transition-all cursor-pointer ${
-                                isPlayingThis
-                                  ? 'bg-gradient-to-r from-[#e50914] via-[#a855f7] to-[#38bdf8] text-white border-white/40 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
-                                  : 'bg-white/[0.05] hover:bg-white/[0.12] text-zinc-300 border-white/10'
-                              }`}
-                            >
-                              {item.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                {/* 3. Interactive IMAX Cyber-Cinema Control Deck (Seek/Skip, Speed Changer, Quality Changer) */}
+                <div className="px-4 py-3 bg-gradient-to-r from-[#0d0e17] via-[#100e1c] to-[#0b111b] border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+                  {/* Group 1: Skip & Seek Controls + Reload */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      onClick={() => handleSeek(-10, '⏪ Rewound -10s')}
+                      className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border border-white/10 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      ⏪ -10s
+                    </button>
+                    <button
+                      onClick={() => handleSeek(10, '⏩ Forwarded +10s')}
+                      className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-zinc-200 hover:text-white border border-white/10 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      +10s ⏩
+                    </button>
+                    <button
+                      onClick={() => handleSeek(85, '⚡ Intro Skipped +85s')}
+                      className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#ff0f39]/25 to-[#a855f7]/25 hover:from-[#ff0f39] hover:to-[#a855f7] text-rose-200 hover:text-white border border-rose-500/40 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      ⚡ Skip Intro (+85s)
+                    </button>
+                    <button
+                      onClick={handleReloadStream}
+                      className="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/30 text-sky-300 border border-sky-500/35 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                      title="Reload current video stream"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>Reload Stream</span>
+                    </button>
                   </div>
 
-                  {/* Right: Telegram Backup Link if episode also has Ep<N> */}
-                  {currentPlayingStream.telegramUrl && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <a
-                        href={currentPlayingStream.telegramUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-lg bg-[#e50914]/90 hover:bg-[#e50914] text-white text-[11px] font-black flex items-center gap-1.5 shadow whitespace-nowrap"
+                  {/* Group 2: Playback Speed Changer */}
+                  <div className="flex flex-wrap items-center gap-1 bg-black/50 px-2 py-1 rounded-xl border border-white/10">
+                    <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                      <Gauge className="w-3 h-3" />
+                      <span>⚡ Speed</span>
+                    </span>
+                    {SPEED_OPTIONS.map((spd) => {
+                      const active = playbackSpeed === spd;
+                      return (
+                        <button
+                          key={`spd-${spd}`}
+                          onClick={() => handleSpeedChange(spd)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-black transition-all cursor-pointer ${
+                            active
+                              ? 'bg-gradient-to-r from-[#ff0f39] to-[#00f2fe] text-white shadow-[0_0_12px_rgba(0,242,254,0.65)]'
+                              : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Group 3: Video Quality Changer */}
+                  <div className="flex flex-wrap items-center gap-1 bg-black/50 px-2 py-1 rounded-xl border border-white/10">
+                    <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                      <Gem className="w-3 h-3" />
+                      <span>💎 Quality</span>
+                    </span>
+                    {QUALITY_OPTIONS.map((q) => {
+                      const active = selectedQuality === q.id;
+                      return (
+                        <button
+                          key={q.id}
+                          onClick={() => handleQualityChange(q.id)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                            active
+                              ? 'bg-gradient-to-r from-[#a855f7] to-[#38bdf8] text-white shadow-[0_0_12px_rgba(168,85,247,0.6)]'
+                              : 'text-zinc-400 hover:text-white hover:bg-white/[0.08]'
+                          }`}
+                        >
+                          {q.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 4. Bottom Audio Switcher, Utility Modes, Prev/Next & Quick Episode Selector */}
+                <div className="px-4 py-3 bg-[#090a10] border-t border-white/10 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    {/* Left: Prev/Next Ep + 1-Click Audio Switcher */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!isMovie && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={(e) =>
+                              prevStreamItem &&
+                              handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
+                            }
+                            disabled={!prevStreamItem}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
+                              prevStreamItem
+                                ? 'bg-white/[0.08] hover:bg-white/[0.15] text-white border-white/15 cursor-pointer'
+                                : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                            }`}
+                          >
+                            <SkipBack className="w-3.5 h-3.5" />
+                            <span>Prev Ep</span>
+                          </button>
+
+                          <button
+                            onClick={(e) =>
+                              nextStreamItem &&
+                              handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
+                            }
+                            disabled={!nextStreamItem}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
+                              nextStreamItem
+                                ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40 shadow cursor-pointer'
+                                : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                            }`}
+                          >
+                            <span>Next Ep</span>
+                            <SkipForward className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {playerTrackSwitcherList.length > 0 && (
+                        <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/10">
+                          {playerTrackSwitcherList.map((item) => {
+                            const isTrackActive = activeAudio === item.track;
+                            return (
+                              <button
+                                key={item.track}
+                                onClick={() => setActiveAudio(item.track)}
+                                className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                                  isTrackActive
+                                    ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow'
+                                    : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                                }`}
+                              >
+                                {item.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: Lights Off, Theater, Telegram Backup Link */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        onClick={() => setIsLightsOff((prev) => !prev)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                          isLightsOff
+                            ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                        }`}
                       >
-                        <Send className="w-3 h-3" />
-                        <span>Telegram Backup Link</span>
-                      </a>
+                        <Lightbulb className="w-3.5 h-3.5" />
+                        <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
+                      </button>
+
+                      <button
+                        onClick={() => setIsTheaterMode((prev) => !prev)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                          isTheaterMode
+                            ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                        }`}
+                      >
+                        {isTheaterMode ? (
+                          <Minimize2 className="w-3.5 h-3.5" />
+                        ) : (
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>Theater</span>
+                      </button>
+
+                      {currentPlayingStream.telegramUrl && (
+                        <a
+                          href={currentPlayingStream.telegramUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-[#e50914]/90 hover:bg-[#e50914] text-white text-[11px] font-black flex items-center gap-1.5 shadow whitespace-nowrap"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>Telegram Backup Link</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Horizontal Quick Episode Selector Pills */}
+                  {activeTrackStreamables.length > 0 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-white/[0.06]">
+                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider shrink-0 mr-1">
+                        Episodes:
+                      </span>
+                      {activeTrackStreamables.map((item) => {
+                        const isPlayingThis = item.epNum === currentPlayingStream.epNum;
+                        return (
+                          <button
+                            key={`quick-ep-${activeAudio}-${item.epNum}`}
+                            onClick={(e) => handleOpenStream(item.epNum, activeAudio, item.episodeKey, e)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black shrink-0 border transition-all cursor-pointer ${
+                              isPlayingThis
+                                ? 'bg-gradient-to-r from-[#ff0f39] via-[#a855f7] to-[#00f2fe] text-white border-white/40 shadow-[0_0_12px_rgba(168,85,247,0.6)]'
+                                : 'bg-white/[0.05] hover:bg-white/[0.12] text-zinc-300 border-white/10'
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
 
-                {/* DMCA Safe-Harbor & Third-Party Host Disclaimer Bar */}
-                <div className="px-3.5 py-2.5 bg-[#06070b] border-t border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                {/* 5. DMCA Safe-Harbor & Third-Party Host Disclaimer Bar */}
+                <div className="px-4 py-2.5 bg-[#05060a] border-t border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <p className="text-[11px] text-zinc-400 leading-relaxed">
                     🛡️ Fair-Use &amp; DMCA Safe-Harbor Notice: AsiaFlix Prime does not host, upload, or store any video files on its servers. This player only embeds third-party cloud links provided by independent web hosts.
                   </p>
@@ -907,13 +1168,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               <div className="flex items-center gap-2">
                 <Volume2 className="w-4 h-4 text-[#e50914]" />
                 <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                  Audio Tracks & Direct Links ({Math.max(availableTrackList.length, drama.availableAudios.length || 1)} Audio{' '}
-                  {Math.max(availableTrackList.length, drama.availableAudios.length || 1) > 1 ? 'Tracks' : 'Track'} Ready)
+                  Audio Tracks &amp; Direct Links (
+                  {Math.max(availableTrackList.length, drama.availableAudios.length || 1)} Audio{' '}
+                  {Math.max(availableTrackList.length, drama.availableAudios.length || 1) > 1 ? 'Tracks' : 'Track'}{' '}
+                  Ready)
                 </h4>
               </div>
-              <span className="text-[11px] text-zinc-400">
-                Online HD Player + Direct private channel links
-              </span>
+              <span className="text-[11px] text-zinc-400">Online HD Player + Direct private channel links</span>
             </div>
 
             <div
@@ -1037,7 +1298,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 <p className="text-xs text-zinc-300 mt-1">
                   {isMovie
                     ? `Complete Full Movie in clean ${activeAudio} audio ready to stream or open on Telegram.`
-                    : `Watch online inside the Privacy-Shielded Cinema Player or open episodes directly on Telegram.`}
+                    : `Watch online inside the IMAX Cyber-Cinema Player or open episodes directly on Telegram.`}
                 </p>
               </div>
 
@@ -1143,7 +1404,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-1">
               <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
                 <Clock className="w-3 h-3 text-sky-400" />
-                <span>Details & Runtime</span>
+                <span>Details &amp; Runtime</span>
               </span>
               <p className="text-sm font-black text-white">
                 {drama.details || (isMovie ? 'Feature Film 1080p' : '16 Episodes')}
@@ -1259,7 +1520,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           {((drama.hashtags && drama.hashtags.length > 0) || (drama.tags && drama.tags.length > 0)) && (
             <div>
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">
-                Series Hashtags & Topics
+                Series Hashtags &amp; Topics
               </h4>
               <div className="flex flex-wrap gap-1.5">
                 {Array.from(new Set(drama.hashtags && drama.hashtags.length > 0 ? drama.hashtags : drama.tags)).map(
@@ -1278,7 +1539,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
           {/* Synopsis & Storyline */}
           <div>
-            <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">Synopsis & Storyline</h4>
+            <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">
+              Synopsis &amp; Storyline
+            </h4>
             <p className="text-sm text-zinc-300 leading-relaxed">{drama.synopsis}</p>
           </div>
 
@@ -1287,7 +1550,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-black text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-                  <span>Episode Upload Packs & Online Stream Links</span>
+                  <span>Episode Upload Packs &amp; Online Stream Links</span>
                 </h4>
                 <span className="text-[11px] text-zinc-400">Watched: {watchedEpisodes.length} episodes</span>
               </div>

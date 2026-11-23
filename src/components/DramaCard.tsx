@@ -373,7 +373,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 effectiveIsPhone ? 'text-[11px] px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'
               }`}
             >
-              ▶ ONLINE STREAM
+              ▶ STREAM
             </span>
           )}
         </div>

@@ -362,7 +362,7 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
                         </span>
                         {hasOnlineStream && (
                           <span className={`bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 text-black font-black uppercase tracking-wider rounded border border-emerald-200/70 shadow-[0_0_12px_rgba(16,185,129,0.75)] flex items-center gap-1 ${effectiveIsPhone ? 'text-[11px] px-2.5 py-0.5' : 'text-[8.5px] px-1.5 py-0.5'}`}>
-                            ▶ ONLINE STREAM
+                            ▶ STREAM
                           </span>
                         )}
                       </div>

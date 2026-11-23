@@ -22,6 +22,7 @@ export interface EpisodeItem {
   engSubStreamLink?: string;
   duration?: string;
   quality?: string;
+  thumbnailUrl?: string;
   isMerged?: boolean;
   format?: 'single' | 'batch' | 'merged' | 'movie';
 }
@@ -36,6 +37,8 @@ export interface DramaItem {
   rating: number; // e.g. 9.3
   poster: string;
   backdrop: string;
+  thumbnailUrl?: string;
+  episodeThumbnails?: Record<number, string>;
   synopsis: string;
   cast: string[];
   tags: string[];

@@ -1075,41 +1075,89 @@ export default function App() {
       let headerRowIdx = rows.findIndex((row) => row.some((cell) => cell.trim().toLowerCase() === 'title'));
       if (headerRowIdx === -1) headerRowIdx = 0;
       const header = rows[headerRowIdx].map((h) => h.toLowerCase().trim());
-      
-      const titleIdx = header.findIndex((h) => h === 'title' || h === 'name');
-      const catIdx = header.findIndex((h) => h === 'category');
-      const countryIdx = header.findIndex((h) => h === 'country' || h.includes('country') || h === 'origin');
-      const ageRatingIdx = header.findIndex((h) => h.includes('age'));
-      const posterIdx = header.findIndex((h) => h.includes('poster') || h.includes('image'));
-      const subCategoryIdx = header.findIndex((h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'));
-      const synopsisIdx = header.findIndex((h) => h.includes('synopsis') || h.includes('desc') || h.includes('plot'));
-      const castIdx = header.findIndex((h) => h.includes('lead cast') || h.includes('cast') || h.includes('actor'));
-      const ratingIdx = header.findIndex((h) => h === 'rating' || h === 'score');
-      const tagsIdx = header.findIndex((h) => h.includes('hashtag') || h.includes('hastag') || h.includes('tags'));
-      const detailsIdx = header.findIndex((h) => h === 'details' || h.includes('detail'));
-      
-      // Telegram 1, 2, 3 indices
-      const telegramHindiIdx = header.findIndex((h) => h.includes('telegram 1') || h.includes('telegram1') || h === 't1' || h.includes('hindi'));
-      const telegramFanDubIdx = header.findIndex((h) => h.includes('telegram 2') || h.includes('telegram2') || h === 't2' || h.includes('fan'));
-      const telegramOrigIdx = header.findIndex((h) => h.includes('telegram 3') || h.includes('telegram3') || h === 't3' || h.includes('orig'));
-      
-      const scheduleIdx = header.findIndex((h) => h.includes('schedule') || h.includes('shedule'));
-      const statusIdx = header.findIndex((h) => h === 'status' || h.includes('status'));
-      const bannerIdx = header.findIndex((h) => h.includes('hero banner') || h.includes('banner'));
-      const noticeIdx = header.findIndex((h) => h.includes('notice'));
-      const trendingIdx = header.findIndex((h) => h.includes('top trending') || h.includes('trending now') || h.includes('trending'));
-      const logoIdx = header.findIndex((h) => h.includes('logo'));
-      const weekendIdx = header.findIndex((h) => h.includes('weekend') || h.includes('lineup') || h.includes('mega'));
-      const issueFixedHeaderIdx = header.findIndex(
-        (h) => h === 'issuefixed' || h === 'issue fixed' || h.includes('issue fixed') || h === 'fixed' || h === 'resolved'
+
+      const findHeaderCol = (matchers: Array<(h: string) => boolean>, fallbackIdx = -1): number => {
+        for (const matcher of matchers) {
+          const found = header.findIndex(matcher);
+          if (found >= 0) return found;
+        }
+        return fallbackIdx;
+      };
+
+      const isNotEpCol = (h: string) => !/\b(ep|eps|episode|episodes)\b/i.test(h);
+
+      const titleIdx = findHeaderCol([(h) => h === 'title' || h === 'name', (h) => h.includes('title')]);
+      const catIdx = findHeaderCol([(h) => h === 'category', (h) => !h.includes('sub') && h.includes('category')]);
+      const countryIdx = findHeaderCol([(h) => h === 'country' || h === 'origin', (h) => h.includes('country')]);
+      const ageRatingIdx = findHeaderCol([(h) => h.includes('age')]);
+      const posterIdx = findHeaderCol([(h) => h.includes('poster') || h === 'image' || h.includes('cover')]);
+      const thumbnailIdx = findHeaderCol(
+        [
+          (h) => h === 'thumbnail' || h === 'thumb',
+          (h) => h.includes('thumbnail') || h.includes('thumb url'),
+        ],
+        header[13] && (header[13].includes('thumbnail') || header[13] === 'thumb') ? 13 : -1
       );
-      const issueFixedIdx = issueFixedHeaderIdx >= 0 ? issueFixedHeaderIdx : 20;
-      const issueHeaderIdx = header.findIndex(
-        (h, idx) =>
-          idx !== issueFixedIdx &&
-          (h === 'issue' || h === 'reportedissue' || h === 'reported issue' || h === 'active issue' || h.includes('reported issue'))
-      );
-      const issueIdx = issueHeaderIdx >= 0 ? issueHeaderIdx : 19;
+      const subCategoryIdx = findHeaderCol([
+        (h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'),
+      ]);
+      const synopsisIdx = findHeaderCol([(h) => h.includes('synopsis') || h.includes('desc') || h.includes('plot')]);
+      const castIdx = findHeaderCol([(h) => h.includes('lead cast') || h.includes('cast') || h.includes('actor')]);
+      const ratingIdx = findHeaderCol([(h) => h === 'rating' || h === 'score']);
+      const tagsIdx = findHeaderCol([(h) => h.includes('hashtag') || h.includes('hastag') || h.includes('tags')]);
+      const detailsIdx = findHeaderCol([(h) => h === 'details' || h.includes('detail')]);
+
+      // Telegram / Stream 1, 2, 3 indices (header-aware so shifted columns never collide with T1 Ep / T2 Ep / T3 Ep)
+      const telegramHindiIdx = findHeaderCol([
+        (h) => h === 't1' || h === 'telegram 1' || h === 'telegram1',
+        (h) => isNotEpCol(h) && (h.includes('telegram 1') || h.includes('telegram1') || h.startsWith('t1 ')),
+        (h) => isNotEpCol(h) && h.includes('hindi') && !h.includes('fan'),
+      ]);
+      const telegramFanDubIdx = findHeaderCol([
+        (h) => h === 't2' || h === 'telegram 2' || h === 'telegram2',
+        (h) => isNotEpCol(h) && (h.includes('telegram 2') || h.includes('telegram2') || h.startsWith('t2 ')),
+        (h) => isNotEpCol(h) && h.includes('fan'),
+      ]);
+      const telegramOrigIdx = findHeaderCol([
+        (h) => h === 't3' || h === 'telegram 3' || h === 'telegram3',
+        (h) => isNotEpCol(h) && (h.includes('telegram 3') || h.includes('telegram3') || h.startsWith('t3 ')),
+        (h) => isNotEpCol(h) && (h.includes('orig') || h.includes('eng sub')),
+      ]);
+
+      const scheduleIdx = findHeaderCol([(h) => h.includes('schedule') || h.includes('shedule')]);
+      const statusIdx = findHeaderCol([(h) => h === 'status' || h.includes('status')]);
+      const bannerIdx = findHeaderCol([(h) => h.includes('hero banner') || h.includes('banner')]);
+      const noticeIdx = findHeaderCol([(h) => h.includes('notice')]);
+      const trendingIdx = findHeaderCol([
+        (h) => h.includes('top trending') || h.includes('trending now') || h.includes('trending'),
+      ]);
+      const logoIdx = findHeaderCol([(h) => h.includes('logo')]);
+      const weekendIdx = findHeaderCol([(h) => h.includes('weekend') || h.includes('lineup') || h.includes('mega')]);
+      const issueFixedIdx = findHeaderCol([
+        (h) => h === 'issuefixed' || h === 'issue fixed' || h.includes('issue fixed') || h === 'fixed' || h === 'resolved',
+      ]);
+      const issueIdx = findHeaderCol([
+        (h) =>
+          (h === 'issue' ||
+            h === 'issues' ||
+            h === 'reportedissue' ||
+            h === 'reported issue' ||
+            h === 'active issue' ||
+            (h.includes('issue') && !h.includes('fix'))) &&
+          header.indexOf(h) !== issueFixedIdx,
+      ]);
+
+      const normalizeSheetThumbnailUrl = (rawImgUrl: string): string => {
+        const trimmedUrl = (rawImgUrl || '').trim();
+        if (!/^https?:\/\//i.test(trimmedUrl)) return '';
+        const driveFileMatch =
+          trimmedUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i) ||
+          trimmedUrl.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:.*&)?id=([a-zA-Z0-9_-]+)/i);
+        if (driveFileMatch) {
+          return `https://drive.google.com/thumbnail?id=${driveFileMatch[1]}&sz=w1600`;
+        }
+        return trimmedUrl;
+      };
 
       // Global sheet settings (Notice, Trending list, Logo URL)
       let foundNotice = '';
@@ -1183,6 +1231,38 @@ export default function App() {
         const countryVal = countryIdx >= 0 ? row[countryIdx]?.trim() || '' : '';
         const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
         const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
+        const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
+
+        let parsedDefaultThumbnail: string | undefined;
+        let parsedEpisodeThumbnails: Record<number, string> | undefined;
+        if (rawThumbnailCell) {
+          const epThumbMap: Record<number, string> = {};
+          const epThumbRegex = /\b(?:ep|episode|es)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          let tm: RegExpExecArray | null;
+          let firstEpThumb: string | undefined;
+          while ((tm = epThumbRegex.exec(rawThumbnailCell)) !== null) {
+            const epNum = parseInt(tm[1], 10);
+            const normalizedThumb = normalizeSheetThumbnailUrl(tm[2]);
+            if (!Number.isNaN(epNum) && normalizedThumb) {
+              if (!epThumbMap[epNum]) epThumbMap[epNum] = normalizedThumb;
+              if (!firstEpThumb) firstEpThumb = normalizedThumb;
+            }
+          }
+
+          if (Object.keys(epThumbMap).length > 0) {
+            parsedEpisodeThumbnails = epThumbMap;
+            parsedDefaultThumbnail = firstEpThumb;
+          } else {
+            const directThumbMatch = rawThumbnailCell.match(/https?:\/\/[^\s"',|<>]+/);
+            if (directThumbMatch) {
+              const normalizedDirect = normalizeSheetThumbnailUrl(directThumbMatch[0]);
+              if (normalizedDirect) {
+                parsedDefaultThumbnail = normalizedDirect;
+              }
+            }
+          }
+        }
+
         const subCategory = subCategoryIdx >= 0 ? row[subCategoryIdx]?.trim() || '' : '';
         const synopsisVal = synopsisIdx >= 0 ? row[synopsisIdx]?.trim() || '' : '';
         const castRaw = castIdx >= 0 ? row[castIdx]?.trim() || '' : '';
@@ -1302,7 +1382,22 @@ export default function App() {
         const fanEpisodes = fanParsed.episodes;
         const origEpisodes = origParsed.episodes;
 
+        const applyEpisodeThumbnails = (eps: EpisodeItem[]) => {
+          eps.forEach((ep) => {
+            const epNum =
+              typeof ep.episodeNumber === 'number'
+                ? ep.episodeNumber
+                : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+            const matchedThumb =
+              (epNum > 0 && parsedEpisodeThumbnails?.[epNum]) || parsedDefaultThumbnail;
+            if (matchedThumb) {
+              ep.thumbnailUrl = matchedThumb;
+            }
+          });
+        };
+
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
+        applyEpisodeThumbnails(parsedEpisodes);
 
         // Parse total planned episodes from Details (e.g. "10 Episodes" -> 10, "24 Episodes" -> 24)
         let plannedTotal = 0;
@@ -1487,6 +1582,12 @@ export default function App() {
             prev.poster = poster;
             prev.backdrop = poster;
           }
+          if (parsedDefaultThumbnail && !prev.thumbnailUrl) {
+            prev.thumbnailUrl = parsedDefaultThumbnail;
+          }
+          if (parsedEpisodeThumbnails) {
+            prev.episodeThumbnails = { ...(prev.episodeThumbnails || {}), ...parsedEpisodeThumbnails };
+          }
           if (detailsRaw && !prev.details) prev.details = detailsRaw;
           if (scheduleRaw && !prev.schedule) prev.schedule = scheduleRaw;
           else if (scheduleRaw && prev.schedule && !prev.schedule.includes(scheduleRaw)) {
@@ -1530,8 +1631,21 @@ export default function App() {
               if (ep.streamLink && !existing.streamLink) existing.streamLink = ep.streamLink;
               if (ep.hindiFanDubStreamLink && !existing.hindiFanDubStreamLink) existing.hindiFanDubStreamLink = ep.hindiFanDubStreamLink;
               if (ep.engSubStreamLink && !existing.engSubStreamLink) existing.engSubStreamLink = ep.engSubStreamLink;
+              if (ep.thumbnailUrl && !existing.thumbnailUrl) existing.thumbnailUrl = ep.thumbnailUrl;
             }
           });
+          if (prev.thumbnailUrl || prev.episodeThumbnails) {
+            prev.episodes.forEach((ep) => {
+              if (!ep.thumbnailUrl) {
+                const epNum =
+                  typeof ep.episodeNumber === 'number'
+                    ? ep.episodeNumber
+                    : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+                const fallbackThumb = (epNum > 0 && prev.episodeThumbnails?.[epNum]) || prev.thumbnailUrl;
+                if (fallbackThumb) ep.thumbnailUrl = fallbackThumb;
+              }
+            });
+          }
           if (hindiParsed.movieStreamUrl && !prev.movieStreamLink) prev.movieStreamLink = hindiParsed.movieStreamUrl;
           if (fanParsed.movieStreamUrl && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = fanParsed.movieStreamUrl;
           if (origParsed.movieStreamUrl && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = origParsed.movieStreamUrl;
@@ -1570,6 +1684,7 @@ export default function App() {
                 title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} · Master Pack`,
                 audio: defaultAudio,
                 telegramUrl: primaryLink,
+                thumbnailUrl: parsedDefaultThumbnail || parsedEpisodeThumbnails?.[1],
                 duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
                 quality: '1080p FHD',
                 isMerged: !isFilm,
@@ -1601,6 +1716,8 @@ export default function App() {
           rating: ratingVal || 9.2,
           poster: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
           backdrop: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200',
+          thumbnailUrl: parsedDefaultThumbnail,
+          episodeThumbnails: parsedEpisodeThumbnails,
           synopsis: synopsisVal || `Watch ${cleanTitle} in high definition on AsiaFlix Prime Private Channel.`,
           cast: parsedCast.length > 0 ? Array.from(new Set(parsedCast)) : ['AsiaFlix Exclusive'],
           tags: parsedTags.length > 0 

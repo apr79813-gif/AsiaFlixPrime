@@ -390,6 +390,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [streamReloadNonce, setStreamReloadNonce] = useState<number>(0);
   const [hudToast, setHudToast] = useState<string | null>(null);
   const [iframeControlNotice, setIframeControlNotice] = useState<boolean>(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+  const [isVideoLoading, setIsVideoLoading] = useState<boolean>(true);
 
   const [copied, setCopied] = useState(false);
   const [frontSuccess, setFrontSuccess] = useState(false);
@@ -404,10 +406,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }, 1400);
   };
 
-  // Reset server mirror index & embed notice whenever episode, track, or drama changes
+  // Reset server mirror index, embed notice & video overlay state whenever episode, track, or drama changes
   useEffect(() => {
     setActiveMirrorIndex(0);
     setIframeControlNotice(false);
+    setIsVideoPlaying(false);
+    setIsVideoLoading(true);
   }, [activeStreamEp, activeAudio, drama?.id]);
 
   // Synchronize activeAudio & reset player + privacy unlock gate when drama changes
@@ -422,6 +426,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setStreamReloadNonce(0);
     setHudToast(null);
     setIframeControlNotice(false);
+    setIsVideoPlaying(false);
+    setIsVideoLoading(true);
     if (drama) {
       if (
         audioLinkMap['Hindi Dubbed']?.startsWith('http') ||
@@ -508,6 +514,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     activeStreamEp !== null
       ? activeTrackStreamables.find((item) => item.epNum === activeStreamEp) || activeTrackStreamables[0] || null
       : null;
+
+  const currentEpObj = drama.episodes.find(
+    (ep) =>
+      extractNumericEp(ep.episodeNumber) === (currentPlayingStream?.epNum ?? activeStreamEp) &&
+      (activeAudio === 'Hindi Fan Dubbed' || activeAudio === 'Fan Dubbed'
+        ? ep.audio === 'Hindi Fan Dubbed' || ep.audio === 'Fan Dubbed'
+        : ep.audio === activeAudio)
+  );
+  const activeCustomThumbnail =
+    currentEpObj?.thumbnailUrl ||
+    (activeStreamEp !== null ? drama.episodeThumbnails?.[activeStreamEp] : undefined) ||
+    drama.thumbnailUrl;
 
   const resolvedPlayerSource =
     isStreamUnlocked && currentPlayingStream
@@ -639,6 +657,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const handleMirrorSelect = (idx: number, label: string) => {
     setActiveMirrorIndex(idx);
     setIframeControlNotice(false);
+    setIsVideoPlaying(false);
+    setIsVideoLoading(true);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback(`Switched to ${label}`);
   };
@@ -655,6 +675,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   const handleReloadStream = () => {
     setIframeControlNotice(false);
+    setIsVideoPlaying(false);
+    setIsVideoLoading(true);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback('🔄 Stream Reloaded');
   };
@@ -976,7 +998,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {!isStreamUnlocked || !resolvedPlayerSource ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center overflow-hidden">
                       <img
-                        src={drama.backdrop || drama.poster}
+                        src={activeCustomThumbnail || drama.backdrop || drama.poster}
                         alt=""
                         referrerPolicy="no-referrer"
                         className="absolute inset-0 w-full h-full object-cover filter blur-md brightness-[0.28] scale-105 pointer-events-none"
@@ -998,22 +1020,79 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       </div>
                     </div>
                   ) : resolvedPlayerSource.type === 'video' ? (
-                    <video
-                      ref={videoRef}
-                      key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
-                      src={resolvedPlayerSource.src}
-                      poster={drama.backdrop || drama.poster}
-                      controls
-                      autoPlay
-                      playsInline
-                      {...({ referrerpolicy: 'origin' } as Record<string, string>)}
-                      style={{
-                        filter:
-                          QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
-                          'contrast(1.07) saturate(1.14) brightness(1.02)',
-                      }}
-                      className="w-full h-full object-contain bg-black transition-[filter] duration-300"
-                    />
+                    <div className="relative w-full h-full bg-black">
+                      <video
+                        ref={videoRef}
+                        key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
+                        src={resolvedPlayerSource.src}
+                        poster=""
+                        controls
+                        autoPlay
+                        playsInline
+                        onLoadStart={() => setIsVideoLoading(true)}
+                        onCanPlay={() => setIsVideoLoading(false)}
+                        onPlaying={() => {
+                          setIsVideoPlaying(true);
+                          setIsVideoLoading(false);
+                        }}
+                        onTimeUpdate={(e) => {
+                          if (e.currentTarget.currentTime > 0.1) {
+                            setIsVideoPlaying(true);
+                            setIsVideoLoading(false);
+                          }
+                        }}
+                        {...({ referrerpolicy: 'origin' } as Record<string, string>)}
+                        style={{
+                          filter:
+                            QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
+                            'contrast(1.07) saturate(1.14) brightness(1.02)',
+                        }}
+                        className="w-full h-full object-contain bg-black transition-[filter] duration-300"
+                      />
+
+                      {/* 16:9 Full-Widescreen Custom Thumbnail Overlay before playback begins (ZERO black sidebars) */}
+                      {!isVideoPlaying && (
+                        <div
+                          onClick={() => {
+                            videoRef.current?.play().catch(() => {});
+                          }}
+                          className="absolute inset-0 z-20 overflow-hidden cursor-pointer group bg-[#050508]"
+                        >
+                          {activeCustomThumbnail ? (
+                            <>
+                              <img
+                                src={activeCustomThumbnail}
+                                alt={drama.title}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/35" />
+                            </>
+                          ) : (
+                            <>
+                              <img
+                                src={drama.poster}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover scale-125 blur-2xl opacity-45"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-[#050508]/65 to-black/60" />
+                            </>
+                          )}
+
+                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center gap-3">
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#e50914]/90 group-hover:bg-[#f6121d] border-2 border-white/40 shadow-[0_0_35px_rgba(229,9,20,0.7)] flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+                              <Play className="w-7 h-7 sm:w-9 sm:h-9 text-white fill-white ml-1" />
+                            </div>
+                            <div className="px-4 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-[#f59e0b]/45 text-white text-xs sm:text-sm font-black tracking-wide shadow-[0_0_25px_rgba(0,0,0,0.85)]">
+                              {isVideoLoading
+                                ? `🎬 Loading 1080p FHD Stream • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp}`}`
+                                : `▶ Tap to Play 1080p FHD • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp}`}`}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <iframe
                       ref={iframeRef}
@@ -1768,6 +1847,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     const hasTelegramLink = Boolean(ep.telegramUrl && /^https?:\/\//i.test(ep.telegramUrl));
                     const numericEp = extractNumericEp(ep.episodeNumber);
                     const isCurrentlyPlaying = activeStreamEp === numericEp;
+                    const epCustomThumbnail =
+                      ep.thumbnailUrl || drama.episodeThumbnails?.[numericEp] || drama.thumbnailUrl;
 
                     return (
                       <div
@@ -1800,6 +1881,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               <Circle className="w-5 h-5 text-zinc-500 hover:text-zinc-300" />
                             )}
                           </button>
+
+                          {epCustomThumbnail && (
+                            <div className="relative w-28 sm:w-36 aspect-video rounded-lg overflow-hidden shrink-0 border border-white/15 bg-zinc-900">
+                              <img
+                                src={epCustomThumbnail}
+                                alt={ep.title}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover object-center"
+                              />
+                              {hasStreamLink && (
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                                  <div className="w-7 h-7 rounded-full bg-[#e50914]/90 flex items-center justify-center shadow">
+                                    <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">

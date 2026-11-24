@@ -40,6 +40,7 @@ export interface DanmakuCue {
 }
 
 export interface SubtitleCue {
+  id: number;
   start: number;
   end: number;
   text: string;
@@ -472,9 +473,11 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
       .trim();
 
     if (textLines) {
-      cues.push({ start, end, text: textLines });
+      cues.push({ id: cues.length + 1, start, end, text: textLines });
     }
   }
 
-  return cues.sort((a, b) => a.start - b.start);
+  return cues
+    .sort((a, b) => a.start - b.start)
+    .map((cue, idx) => ({ ...cue, id: idx + 1 }));
 }

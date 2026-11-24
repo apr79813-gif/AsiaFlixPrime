@@ -318,6 +318,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const studioAudioGraphRef = useRef<{
     el: HTMLMediaElement;
     ctx: AudioContext;
+    analyser: AnalyserNode;
     highpass: BiquadFilterNode;
     lowshelf: BiquadFilterNode;
     peaking: BiquadFilterNode;
@@ -526,17 +527,33 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama ? getSceneBookmarks(drama.id) : []
   );
 
-  // Multi-Language Subtitles (CC) & Smart Hard-Sub Eraser Shield
+  // Multi-Language Subtitles (CC), Smart Hard-Sub Eraser Shield & AI Voice-Dubbing Engine
   const [activeSubLang, setActiveSubLang] = useState<string>('off');
   const [uploadedSubCues, setUploadedSubCues] = useState<{ label: string; cues: SubtitleCue[] } | null>(null);
-  const [parsedSubCues, setParsedSubCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
-  const [activeCueText, setActiveCueText] = useState<string>('');
+  const [parsedSubCues, setParsedSubCues] = useState<Array<{ id: number; start: number; end: number; text: string }>>([]);
+  const [activeCue, setActiveCue] = useState<{ id: number; start: number; end: number; text: string } | null>(null);
   const [hardSubEraserMode, setHardSubEraserMode] = useState<'solid' | 'blur' | 'off'>('solid');
   const [eraserBottomOffset, setEraserBottomOffset] = useState<'low' | 'mid' | 'high'>('low');
   const [eraserWidthMode, setEraserWidthMode] = useState<'box' | 'fullbar'>('fullbar');
   const [subFontSize, setSubFontSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [subColor, setSubColor] = useState<'white' | 'yellow' | 'cyan'>('yellow');
   const [isSubLoading, setIsSubLoading] = useState<boolean>(false);
+  const [isAiVoiceDubOn, setIsAiVoiceDubOn] = useState<boolean>(true);
+  const [aiVoiceMuteMode, setAiVoiceMuteMode] = useState<'fullmute' | 'duck15'>('fullmute');
+  const [aiVoiceProfile, setAiVoiceProfile] = useState<'auto' | 'female' | 'male'>('auto');
+  const [detectedSpeakerGender, setDetectedSpeakerGender] = useState<'female' | 'male' | null>(null);
+  const [isAiSpeaking, setIsAiSpeaking] = useState<boolean>(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const lastSpokenCueIdRef = useRef<number | null>(null);
+  const isSpeakingCueRef = useRef<boolean>(false);
+  const lastProgrammaticAudioSetMsRef = useRef<number>(0);
+  const lastDetectedGenderRef = useRef<'female' | 'male'>('female');
+  const activeCueRef = useRef<{ id: number; start: number; end: number; text: string } | null>(null);
+  const latestAudioPrefRef = useRef<{ muted: boolean; volume: number; isExternal: boolean }>({
+    muted: false,
+    volume: 1,
+    isExternal: false,
+  });
 
   // Danmaku Live Hype & Watch Party
   const [isDanmakuOn, setIsDanmakuOn] = useState<boolean>(true);
@@ -590,7 +607,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setLoopPointB(null);
     setAutoNextCountdown(null);
     setFloatingDanmaku([]);
-    setActiveCueText('');
+    setActiveCue(null);
+    activeCueRef.current = null;
+    lastSpokenCueIdRef.current = null;
+    isSpeakingCueRef.current = false;
+    setIsAiSpeaking(false);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     preloadedNextUrlRef.current = null;
     lastPlaybackTickMsRef.current = null;
     if (drama && activeStreamEp !== null) {
@@ -629,7 +653,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setWatchPartyRoom(initialPartyRoom || null);
     setActiveSubLang('off');
     setParsedSubCues([]);
-    setActiveCueText('');
+    setActiveCue(null);
+    activeCueRef.current = null;
+    lastSpokenCueIdRef.current = null;
+    isSpeakingCueRef.current = false;
+    setIsAiSpeaking(false);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     setUploadedSubCues(null);
     setRevealedSpoilerEpKeys({});
     pendingRestoreTimeRef.current =
@@ -839,6 +870,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         items.push({
           code,
           label: legacy.label,
+          langTag: legacy.label.toLowerCase().includes('eng') ? 'en-US' : 'hi-IN',
           url: legacy.url,
           displayLabel: legacy.label,
         });
@@ -939,9 +971,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on the audible media element
+  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost + Vocal Pitch Analyser on the audible media element
   const activeAudibleUrl = isExternalAudioActive ? trackCustomAudio || '' : resolvedPlayerSource?.type === 'video' ? resolvedPlayerSource.src : '';
-  const wantsAudioStudio = audioEqMode !== 'normal' || volumeBoost > 100;
+  const wantsAudioStudio =
+    audioEqMode !== 'normal' ||
+    volumeBoost > 100 ||
+    (isAiVoiceDubOn && activeSubLang !== 'off' && aiVoiceProfile === 'auto');
 
   useEffect(() => {
     if (!wantsAudioStudio || !activeAudibleUrl || !/^https?:\/\//i.test(activeAudibleUrl)) {
@@ -999,6 +1034,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         if (!AudioCtx) return;
         const ctx = new AudioCtx();
         const source = ctx.createMediaElementSource(audibleEl);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.65;
+
         const highpass = ctx.createBiquadFilter();
         highpass.type = 'highpass';
         highpass.frequency.value = 10;
@@ -1022,6 +1061,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         const compressor = ctx.createDynamicsCompressor();
         const gain = ctx.createGain();
 
+        // Feed raw vocal signal into AnalyserNode upstream of GainNode mute/ducking
+        source.connect(analyser);
         source.connect(highpass);
         highpass.connect(lowshelf);
         lowshelf.connect(peaking);
@@ -1030,7 +1071,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         compressor.connect(gain);
         gain.connect(ctx.destination);
 
-        graph = { el: audibleEl, ctx, highpass, lowshelf, peaking, highshelf, compressor, gain };
+        graph = { el: audibleEl, ctx, analyser, highpass, lowshelf, peaking, highshelf, compressor, gain };
         studioAudioGraphRef.current = graph;
       }
 
@@ -1107,9 +1148,142 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio]);
 
+  useEffect(() => {
+    latestAudioPrefRef.current = {
+      muted: isAudioMuted,
+      volume: audioVolume,
+      isExternal: isExternalAudioActive,
+    };
+  }, [isAudioMuted, audioVolume, isExternalAudioActive]);
+
+  // Load browser speech synthesis voices & clean up on unmount
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        setAvailableVoices(voices);
+      }
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+      window.speechSynthesis.cancel();
+    };
+  }, []);
+
+  const applyProgrammaticVideoAudio = (muted: boolean, vol: number) => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    lastProgrammaticAudioSetMsRef.current = Date.now();
+    const clampedVol = Math.min(1, Math.max(0, vol));
+
+    // When Web Audio graph owns the stream (CORS-supported), mute/duck via GainNode so AnalyserNode stays active
+    const graph = studioAudioGraphRef.current;
+    if (!latestAudioPrefRef.current.isExternal && graph && graph.el === vid && audibleCorsSupported && wantsAudioStudio) {
+      try {
+        graph.gain.gain.value = muted ? 0 : Math.min(2.0, Math.max(0, clampedVol * (volumeBoost / 100)));
+        vid.muted = false;
+        vid.volume = 1;
+        return;
+      } catch {
+        // Fallback below
+      }
+    }
+
+    if (latestAudioPrefRef.current.isExternal) {
+      if (audioRef.current) {
+        audioRef.current.muted = muted;
+        audioRef.current.volume = clampedVol;
+      }
+      if (!isAudioCorsFallback) {
+        vid.muted = muted;
+        vid.volume = clampedVol;
+      }
+    } else {
+      vid.muted = muted;
+      vid.volume = clampedVol;
+    }
+  };
+
+  const detectSpeakerGender = (cueText: string): 'female' | 'male' => {
+    if (/^\s*(?:\[|\()?(?:female|woman|girl|she|lady|queen|princess|mom|mother|sister|unnie|noona|jiejie|meimei|f|w)(?:\]|\)|:|\s*-)/i.test(cueText)) {
+      lastDetectedGenderRef.current = 'female';
+      setDetectedSpeakerGender('female');
+      return 'female';
+    }
+    if (/^\s*(?:\[|\()?(?:male|man|boy|he|sir|king|prince|dad|father|brother|oppa|hyung|gege|m)(?:\]|\)|:|\s*-)/i.test(cueText)) {
+      lastDetectedGenderRef.current = 'male';
+      setDetectedSpeakerGender('male');
+      return 'male';
+    }
+
+    const analyser = studioAudioGraphRef.current?.analyser;
+    if (analyser) {
+      const bufferLen = analyser.frequencyBinCount;
+      const data = new Uint8Array(bufferLen);
+      analyser.getByteFrequencyData(data);
+      const sampleRate = analyser.context.sampleRate || 48000;
+      const binHz = sampleRate / analyser.fftSize;
+
+      const maleStart = Math.max(1, Math.floor(85 / binHz));
+      const maleEnd = Math.max(maleStart, Math.ceil(160 / binHz));
+      const femaleStart = Math.max(maleEnd + 1, Math.floor(165 / binHz));
+      const femaleEnd = Math.min(bufferLen - 1, Math.ceil(280 / binHz));
+
+      let maleSum = 0;
+      let malePeak = 0;
+      for (let i = maleStart; i <= maleEnd; i++) {
+        maleSum += data[i];
+        if (data[i] > malePeak) malePeak = data[i];
+      }
+      const maleAvg = maleSum / Math.max(1, maleEnd - maleStart + 1);
+
+      let femaleSum = 0;
+      let femalePeak = 0;
+      for (let i = femaleStart; i <= femaleEnd; i++) {
+        femaleSum += data[i];
+        if (data[i] > femalePeak) femalePeak = data[i];
+      }
+      const femaleAvg = femaleSum / Math.max(1, femaleEnd - femaleStart + 1);
+
+      if (Math.max(malePeak, femalePeak) >= 28) {
+        const classified: 'female' | 'male' =
+          femaleAvg * 1.06 + femalePeak * 0.25 >= maleAvg + malePeak * 0.25 ? 'female' : 'male';
+        lastDetectedGenderRef.current = classified;
+        setDetectedSpeakerGender(classified);
+        return classified;
+      }
+    }
+
+    const fallback = lastDetectedGenderRef.current || 'female';
+    setDetectedSpeakerGender(fallback);
+    return fallback;
+  };
+
+  const stopAiSpeechAndRestoreAudio = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    lastSpokenCueIdRef.current = null;
+    isSpeakingCueRef.current = false;
+    setIsAiSpeaking(false);
+    const { muted, volume } = latestAudioPrefRef.current;
+    applyProgrammaticVideoAudio(muted, volume);
+  };
+
+  useEffect(() => {
+    if (!isAiVoiceDubOn || activeSubLang === 'off') {
+      stopAiSpeechAndRestoreAudio();
+    }
+  }, [isAiVoiceDubOn, activeSubLang]);
+
   const handleSelectSubLang = (langCode: string) => {
+    stopAiSpeechAndRestoreAudio();
     setActiveSubLang(langCode);
-    setActiveCueText('');
+    setActiveCue(null);
+    activeCueRef.current = null;
     if (langCode !== 'off' && langCode !== 'eng' && langCode !== 'en') {
       setHardSubEraserMode('solid');
     }
@@ -1127,7 +1301,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   useEffect(() => {
     if (activeSubLang === 'off') {
       setParsedSubCues([]);
-      setActiveCueText('');
+      setActiveCue(null);
+      activeCueRef.current = null;
       setIsSubLoading(false);
       return;
     }
@@ -1151,6 +1326,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           if (!cancelled) {
             const cues = parseSrtOrVttContent(txt);
             setParsedSubCues(cues);
+            lastSpokenCueIdRef.current = null;
             setIsSubLoading(false);
             if (cues.length === 0) {
               showHudFeedback('⚠️ Subtitle file empty or unsupported format');
@@ -1161,7 +1337,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           if (!cancelled) {
             setParsedSubCues([]);
             setIsSubLoading(false);
-            showHudFeedback('⚠️ Unable to load subtitle URL (try Load .SRT File)');
+            showHudFeedback('⚠️ Unable to load subtitle URL (try Upload .SRT)');
           }
         });
       return () => {
@@ -1330,6 +1506,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleClosePlayer = () => {
+    stopAiSpeechAndRestoreAudio();
     if (audioRef.current) {
       audioRef.current.pause();
     }
@@ -1642,9 +1819,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     reader.onload = () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
       const cues = parseSrtOrVttContent(content);
+      stopAiSpeechAndRestoreAudio();
       setUploadedSubCues({ label: file.name.slice(0, 22), cues });
       setActiveSubLang('local');
       setHardSubEraserMode('solid');
+      setActiveCue(null);
+      activeCueRef.current = null;
       setParsedSubCues(cues);
       showHudFeedback(`💬 Loaded ${cues.length} CC lines`);
     };
@@ -2208,10 +2388,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* Smart Hard-Sub Eraser Shield + Live Multi-Language Subtitle Overlay */}
-                  {activeSubLang !== 'off' && !isMiniPlayer && (hardSubEraserMode !== 'off' || Boolean(activeCueText)) && (
+                  {/* Smart Hard-Sub Eraser Shield + Live Multi-Language Subtitle + AI Voice-Dubbing Overlay */}
+                  {activeSubLang !== 'off' && !isMiniPlayer && (hardSubEraserMode !== 'off' || Boolean(activeCue?.text)) && (
                     <div
-                      className={`pointer-events-none absolute inset-x-0 z-30 flex justify-center px-3 transition-all duration-200 ${
+                      className={`pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center gap-1.5 px-3 transition-all duration-200 ${
                         eraserBottomOffset === 'high'
                           ? 'bottom-[14%]'
                           : eraserBottomOffset === 'mid'
@@ -2219,6 +2399,20 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           : 'bottom-[5%]'
                       }`}
                     >
+                      {isAiVoiceDubOn && isAiSpeaking && (
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#e50914]/90 to-[#f59e0b]/90 text-white text-[10px] font-black shadow-[0_0_15px_rgba(245,158,11,0.55)] border border-amber-300/60">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                          <span>
+                            🗣️ AI Voice (
+                            {aiVoiceProfile === 'auto'
+                              ? `Auto: ${detectedSpeakerGender === 'male' ? 'Male' : 'Female'}`
+                              : aiVoiceProfile === 'male'
+                              ? 'Male'
+                              : 'Female'}
+                            )
+                          </span>
+                        </div>
+                      )}
                       <div
                         className={`flex items-center justify-center text-center transition-all duration-200 ${
                           eraserWidthMode === 'fullbar'
@@ -2232,7 +2426,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             : 'px-4 py-1.5 rounded-xl bg-black/80 backdrop-blur-sm shadow-lg'
                         }`}
                       >
-                        {activeCueText ? (
+                        {activeCue?.text ? (
                           <span
                             className={`font-extrabold leading-snug whitespace-pre-line drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] ${
                               subFontSize === 'sm'
@@ -2248,7 +2442,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 : 'text-white'
                             }`}
                           >
-                            {activeCueText}
+                            {activeCue.text}
                           </span>
                         ) : null}
                       </div>
@@ -2424,6 +2618,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onPause={() => {
                           setIsVideoPlaying(false);
                           lastPlaybackTickMsRef.current = null;
+                          stopAiSpeechAndRestoreAudio();
                           if (audioRef.current && !audioRef.current.paused) {
                             audioRef.current.pause();
                           }
@@ -2434,7 +2629,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             audioRef.current.pause();
                           }
                         }}
-                        onSeeking={() => syncAudioToVideo(!videoRef.current?.paused)}
+                        onSeeking={() => {
+                          stopAiSpeechAndRestoreAudio();
+                          syncAudioToVideo(!videoRef.current?.paused);
+                        }}
                         onSeeked={() => syncAudioToVideo(!videoRef.current?.paused)}
                         onRateChange={(e) => {
                           if (audioRef.current) {
@@ -2443,6 +2641,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         }}
                         onVolumeChange={(e) => {
                           const vid = e.currentTarget;
+                          if (Date.now() - lastProgrammaticAudioSetMsRef.current < 150) return;
                           if (isExternalAudioActive && isAudioCorsFallback) return;
                           setAudioVolume(vid.volume);
                           setIsAudioMuted(vid.muted);
@@ -2454,6 +2653,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onEnded={() => {
                           setIsVideoPlaying(false);
                           lastPlaybackTickMsRef.current = null;
+                          stopAiSpeechAndRestoreAudio();
                           recordEpisodeCompleted();
                           if (sleepTimerMode === 'end_of_ep') {
                             setSleepTimerMode('off');
@@ -2481,13 +2681,106 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             }
                           }
 
-                          // 2. Active Subtitle Cue Matcher
+                          // 2. Active Subtitle Cue Matcher + 🤖 Real-Time AI Subtitle Voice-Over & Smart Auto-Mute Engine
                           if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
                             const tNow = vid.currentTime;
-                            const cue = parsedSubCues.find((c) => tNow >= c.start && tNow <= c.end);
-                            setActiveCueText(cue ? cue.text : '');
-                          } else if (activeCueText) {
-                            setActiveCueText('');
+                            const matchedCue = parsedSubCues.find((c) => tNow >= c.start && tNow <= c.end) || null;
+                            if ((activeCueRef.current?.id ?? null) !== (matchedCue?.id ?? null)) {
+                              activeCueRef.current = matchedCue;
+                              setActiveCue(matchedCue);
+                            }
+
+                            if (isAiVoiceDubOn && !vid.paused) {
+                              if (matchedCue) {
+                                // Classify speaker pitch/gender right as cue starts (using Web Audio AnalyserNode + speaker tags)
+                                const resolvedGender: 'female' | 'male' =
+                                  aiVoiceProfile === 'auto'
+                                    ? lastSpokenCueIdRef.current !== matchedCue.id
+                                      ? detectSpeakerGender(matchedCue.text)
+                                      : detectedSpeakerGender || lastDetectedGenderRef.current
+                                    : aiVoiceProfile;
+
+                                // Mute or duck original video sound while dialogue subtitle is active
+                                if (aiVoiceMuteMode === 'fullmute') {
+                                  applyProgrammaticVideoAudio(true, audioVolume);
+                                } else {
+                                  applyProgrammaticVideoAudio(false, Math.min(audioVolume, 0.12));
+                                }
+
+                                if (
+                                  lastSpokenCueIdRef.current !== matchedCue.id &&
+                                  typeof window !== 'undefined' &&
+                                  'speechSynthesis' in window
+                                ) {
+                                  lastSpokenCueIdRef.current = matchedCue.id;
+                                  window.speechSynthesis.cancel();
+                                  const cleanText = matchedCue.text.replace(/\[.*?\]|\(.*?\)|♪/g, '').trim();
+                                  if (cleanText.length > 0) {
+                                    const utterance = new SpeechSynthesisUtterance(cleanText);
+                                    const targetLang =
+                                      currentEpObj?.subtitles?.[activeSubLang]?.langTag ||
+                                      availableSubLanguages.find((s) => s.code === activeSubLang)?.langTag ||
+                                      (activeSubLang === 'hin' || activeSubLang === 'hi' ? 'hi-IN' : 'en-US');
+                                    utterance.lang = targetLang;
+
+                                    const voicesList =
+                                      availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
+                                    const langPrefix = targetLang.split('-')[0].toLowerCase();
+                                    const langMatches = voicesList.filter(
+                                      (v) =>
+                                        v.lang.toLowerCase() === targetLang.toLowerCase() ||
+                                        v.lang.toLowerCase().startsWith(langPrefix)
+                                    );
+                                    const profileRegex =
+                                      resolvedGender === 'female'
+                                        ? /female|woman|lekha|swara|heera|kalpana|zira|samantha|aria|jenny|neerja/i
+                                        : /male|man|madhur|prabhat|hemant|ravi|david|mark|guy/i;
+                                    const chosenVoice =
+                                      langMatches.find((v) => profileRegex.test(v.name)) ||
+                                      langMatches.find((v) => /google|microsoft|natural/i.test(v.name)) ||
+                                      langMatches[0];
+                                    if (chosenVoice) utterance.voice = chosenVoice;
+
+                                    utterance.pitch = resolvedGender === 'female' ? 1.12 : 0.88;
+
+                                    const cueDuration = Math.max(1.2, matchedCue.end - matchedCue.start);
+                                    const wordCount = Math.max(1, cleanText.split(/\s+/).length);
+                                    const estSeconds = wordCount * 0.42;
+                                    const targetWindow = Math.max(0.8, cueDuration / (vid.playbackRate || 1));
+                                    const rawRate = estSeconds / targetWindow;
+                                    utterance.rate = Number(Math.min(1.45, Math.max(1.0, rawRate)).toFixed(2));
+
+                                    utterance.onstart = () => {
+                                      isSpeakingCueRef.current = true;
+                                      setIsAiSpeaking(true);
+                                    };
+                                    const handleSpeechDone = () => {
+                                      isSpeakingCueRef.current = false;
+                                      setIsAiSpeaking(false);
+                                      if (!activeCueRef.current) {
+                                        const pref = latestAudioPrefRef.current;
+                                        applyProgrammaticVideoAudio(pref.muted, pref.volume);
+                                      }
+                                    };
+                                    utterance.onend = handleSpeechDone;
+                                    utterance.onerror = handleSpeechDone;
+                                    window.speechSynthesis.speak(utterance);
+                                  }
+                                }
+                              } else {
+                                // Sample ambient/pre-cue pitch softly when unmuted & restore normal video audio between cues
+                                if (aiVoiceProfile === 'auto' && studioAudioGraphRef.current?.analyser) {
+                                  detectSpeakerGender('');
+                                }
+                                const lastEnd = activeCueRef.current?.end ?? 0;
+                                if (!isSpeakingCueRef.current || tNow > lastEnd + 0.15) {
+                                  applyProgrammaticVideoAudio(isAudioMuted, audioVolume);
+                                }
+                              }
+                            }
+                          } else if (activeCueRef.current) {
+                            activeCueRef.current = null;
+                            setActiveCue(null);
                           }
 
                           // 3. Live Danmaku Matching
@@ -2809,12 +3102,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </div>
                       </div>
 
-                      {/* 💬 SUBTITLES (CC) & SMART HARD-SUB ERASER CAPSULE */}
-                      <div className="rounded-xl bg-[#0e1019] border border-sky-400/20 px-3.5 py-2.5 flex flex-col gap-2.5">
+                      {/* 💬 SUBTITLES & 🤖 AI VOICE-DUBBING STUDIO CONTROL BAR */}
+                      <div className="rounded-xl bg-[#0e1019] border border-sky-400/25 px-3.5 py-2.5 flex flex-col gap-2.5">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1.5 mr-1">
                             <Captions className="w-3.5 h-3.5 text-sky-400" />
-                            <span>💬 Subtitles (CC) & Hard-Sub Eraser</span>
+                            <span>💬 Subtitles &amp; 🤖 AI Voice-Dubbing</span>
                             {isSubLoading && (
                               <span className="text-[10px] text-amber-300 animate-pulse normal-case font-bold">
                                 (Loading...)
@@ -2871,125 +3164,196 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             onClick={() => subtitleFileInputRef.current?.click()}
                             className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.14] text-amber-200 border border-amber-400/30 transition-all cursor-pointer"
                           >
-                            📂 Load .SRT File
+                            📂 Upload .SRT
                           </button>
                         </div>
 
                         {activeSubLang !== 'off' && (
-                          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/10 text-[11px]">
-                            {/* Hard-Sub Eraser Mode */}
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-black text-amber-300">🪄 Hide Video's Burned-In Sub:</span>
-                              {(
-                                [
-                                  { id: 'solid', label: 'Solid Blackout (100% Hide)' },
-                                  { id: 'blur', label: 'Frosted Blur' },
-                                  { id: 'off', label: 'Off' },
-                                ] as const
-                              ).map((mode) => (
-                                <button
-                                  key={`eraser-${mode.id}`}
-                                  onClick={() => setHardSubEraserMode(mode.id)}
-                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                    hardSubEraserMode === mode.id
-                                      ? 'bg-amber-400 text-black border-amber-200'
-                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                  }`}
-                                >
-                                  {mode.label}
-                                </button>
-                              ))}
+                          <div className="flex flex-col gap-2 pt-2 border-t border-white/10 text-[11px]">
+                            {/* Row 1: AI Voice-Dubbing + Auto-Mute Mode + Voice Tone */}
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <button
+                                onClick={() => {
+                                  const next = !isAiVoiceDubOn;
+                                  setIsAiVoiceDubOn(next);
+                                  if (!next) {
+                                    stopAiSpeechAndRestoreAudio();
+                                    showHudFeedback('🤖 AI Voice Dub: OFF');
+                                  } else {
+                                    showHudFeedback('🤖 AI Voice Dub: ON (Auto-Mute Active)');
+                                  }
+                                }}
+                                className={`px-3 py-1 rounded-lg font-black border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                  isAiVoiceDubOn
+                                    ? 'bg-gradient-to-r from-[#e50914] to-[#f59e0b] text-white border-amber-300/70 shadow-[0_0_18px_rgba(229,9,20,0.45)]'
+                                    : 'bg-[#141622] text-zinc-300 border-white/15 hover:text-white'
+                                }`}
+                              >
+                                <span>🤖 AI Voice Dub (Speak Subtitles): {isAiVoiceDubOn ? 'ON' : 'OFF'}</span>
+                              </button>
+
+                              {isAiVoiceDubOn && (
+                                <>
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="font-black text-red-300">🔇 Dialogue Sound:</span>
+                                    {(
+                                      [
+                                        { id: 'fullmute', label: '100% Mute' },
+                                        { id: 'duck15', label: '15% Soft BGM' },
+                                      ] as const
+                                    ).map((mMode) => (
+                                      <button
+                                        key={`mute-mode-${mMode.id}`}
+                                        onClick={() => setAiVoiceMuteMode(mMode.id)}
+                                        className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                          aiVoiceMuteMode === mMode.id
+                                            ? 'bg-red-500 text-white border-red-300'
+                                            : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                        }`}
+                                      >
+                                        {mMode.label}
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="font-black text-amber-300">🎙️ Speaker Match:</span>
+                                    {(
+                                      [
+                                        { id: 'auto', label: 'Auto-Pitch (Male/Female)' },
+                                        { id: 'female', label: 'Female' },
+                                        { id: 'male', label: 'Male' },
+                                      ] as const
+                                    ).map((prof) => (
+                                      <button
+                                        key={`voice-prof-${prof.id}`}
+                                        onClick={() => setAiVoiceProfile(prof.id)}
+                                        className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                          aiVoiceProfile === prof.id
+                                            ? 'bg-amber-400 text-black border-amber-200'
+                                            : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                        }`}
+                                      >
+                                        {prof.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
                             </div>
 
-                            {/* Eraser Vertical Position */}
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className="font-black text-zinc-400">↕️ Eraser Position:</span>
-                              {(
-                                [
-                                  { id: 'low', label: 'Low' },
-                                  { id: 'mid', label: 'Mid' },
-                                  { id: 'high', label: 'High' },
-                                ] as const
-                              ).map((pos) => (
-                                <button
-                                  key={`pos-${pos.id}`}
-                                  onClick={() => setEraserBottomOffset(pos.id)}
-                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                    eraserBottomOffset === pos.id
-                                      ? 'bg-emerald-400 text-black border-emerald-200'
-                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                  }`}
-                                >
-                                  {pos.label}
-                                </button>
-                              ))}
-                            </div>
+                            {/* Row 2: Hard-Sub Eraser Shield, Position, Width & Text Style */}
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-black text-amber-300">🪄 Hard-Sub Eraser:</span>
+                                {(
+                                  [
+                                    { id: 'solid', label: 'Blackout' },
+                                    { id: 'blur', label: 'Blur' },
+                                    { id: 'off', label: 'Off' },
+                                  ] as const
+                                ).map((mode) => (
+                                  <button
+                                    key={`eraser-${mode.id}`}
+                                    onClick={() => setHardSubEraserMode(mode.id)}
+                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                      hardSubEraserMode === mode.id
+                                        ? 'bg-amber-400 text-black border-amber-200'
+                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {mode.label}
+                                  </button>
+                                ))}
+                              </div>
 
-                            {/* Shield Width */}
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className="font-black text-zinc-400">↔️ Width:</span>
-                              {(
-                                [
-                                  { id: 'fullbar', label: 'Full Bar' },
-                                  { id: 'box', label: 'Box' },
-                                ] as const
-                              ).map((wMode) => (
-                                <button
-                                  key={`width-${wMode.id}`}
-                                  onClick={() => setEraserWidthMode(wMode.id)}
-                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                    eraserWidthMode === wMode.id
-                                      ? 'bg-sky-400 text-black border-sky-200'
-                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                  }`}
-                                >
-                                  {wMode.label}
-                                </button>
-                              ))}
-                            </div>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-black text-zinc-400">↕️ Position:</span>
+                                {(
+                                  [
+                                    { id: 'low', label: 'Low' },
+                                    { id: 'mid', label: 'Mid' },
+                                    { id: 'high', label: 'High' },
+                                  ] as const
+                                ).map((pos) => (
+                                  <button
+                                    key={`pos-${pos.id}`}
+                                    onClick={() => setEraserBottomOffset(pos.id)}
+                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                      eraserBottomOffset === pos.id
+                                        ? 'bg-emerald-400 text-black border-emerald-200'
+                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {pos.label}
+                                  </button>
+                                ))}
+                              </div>
 
-                            {/* Text Color & Size */}
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className="font-black text-zinc-400">🎨 Text Style:</span>
-                              {(
-                                [
-                                  { id: 'yellow', label: 'Yellow', cls: 'text-[#facc15]' },
-                                  { id: 'white', label: 'White', cls: 'text-white' },
-                                  { id: 'cyan', label: 'Cyan', cls: 'text-[#00f2fe]' },
-                                ] as const
-                              ).map((col) => (
-                                <button
-                                  key={`col-${col.id}`}
-                                  onClick={() => setSubColor(col.id)}
-                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${col.cls} ${
-                                    subColor === col.id
-                                      ? 'bg-white/20 border-white'
-                                      : 'bg-[#141622] border-white/10 opacity-75 hover:opacity-100'
-                                  }`}
-                                >
-                                  {col.label}
-                                </button>
-                              ))}
-                              <span className="text-zinc-600 mx-0.5">|</span>
-                              {(
-                                [
-                                  { id: 'sm', label: 'S' },
-                                  { id: 'md', label: 'M' },
-                                  { id: 'lg', label: 'L' },
-                                ] as const
-                              ).map((sz) => (
-                                <button
-                                  key={`sz-${sz.id}`}
-                                  onClick={() => setSubFontSize(sz.id)}
-                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                    subFontSize === sz.id
-                                      ? 'bg-white text-black border-white'
-                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                  }`}
-                                >
-                                  {sz.label}
-                                </button>
-                              ))}
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-black text-zinc-400">↔️ Width:</span>
+                                {(
+                                  [
+                                    { id: 'fullbar', label: 'Full Bar' },
+                                    { id: 'box', label: 'Box' },
+                                  ] as const
+                                ).map((wMode) => (
+                                  <button
+                                    key={`width-${wMode.id}`}
+                                    onClick={() => setEraserWidthMode(wMode.id)}
+                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                      eraserWidthMode === wMode.id
+                                        ? 'bg-sky-400 text-black border-sky-200'
+                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {wMode.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-black text-zinc-400">🎨 Text Style:</span>
+                                {(
+                                  [
+                                    { id: 'yellow', label: 'Yellow', cls: 'text-[#facc15]' },
+                                    { id: 'white', label: 'White', cls: 'text-white' },
+                                    { id: 'cyan', label: 'Cyan', cls: 'text-[#00f2fe]' },
+                                  ] as const
+                                ).map((col) => (
+                                  <button
+                                    key={`col-${col.id}`}
+                                    onClick={() => setSubColor(col.id)}
+                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${col.cls} ${
+                                      subColor === col.id
+                                        ? 'bg-white/20 border-white'
+                                        : 'bg-[#141622] border-white/10 opacity-75 hover:opacity-100'
+                                    }`}
+                                  >
+                                    {col.label}
+                                  </button>
+                                ))}
+                                <span className="text-zinc-600 mx-0.5">|</span>
+                                {(
+                                  [
+                                    { id: 'sm', label: 'S' },
+                                    { id: 'md', label: 'M' },
+                                    { id: 'lg', label: 'L' },
+                                  ] as const
+                                ).map((sz) => (
+                                  <button
+                                    key={`sz-${sz.id}`}
+                                    onClick={() => setSubFontSize(sz.id)}
+                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                      subFontSize === sz.id
+                                        ? 'bg-white text-black border-white'
+                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {sz.label}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         )}

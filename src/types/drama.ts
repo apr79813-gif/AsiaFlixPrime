@@ -10,6 +10,7 @@ export interface SubtitleTrack {
 export interface SubtitleTrackItem {
   code: string;
   label: string;
+  langTag: string;
   url: string;
 }
 

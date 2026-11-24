@@ -1464,39 +1464,42 @@ export default function App() {
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
         const rawSubtitleCell = subtitleIdx >= 0 ? row[subtitleIdx]?.trim() || '' : '';
 
-        const SUBTITLE_LANGUAGE_LABELS: Record<string, string> = {
-          hin: '🇮🇳 Hindi',
-          hi: '🇮🇳 Hindi',
-          hindi: '🇮🇳 Hindi',
-          eng: '🇬🇧 English',
-          en: '🇬🇧 English',
-          ur: '🇵🇰 Urdu',
-          urd: '🇵🇰 Urdu',
-          ben: '🇮🇳 Bengali',
-          bn: '🇮🇳 Bengali',
-          tam: '🇮🇳 Tamil',
-          ta: '🇮🇳 Tamil',
-          tel: '🇮🇳 Telugu',
-          te: '🇮🇳 Telugu',
-          mar: '🇮🇳 Marathi',
-          mr: '🇮🇳 Marathi',
-          ind: '🇮🇩 Indonesian',
-          id: '🇮🇩 Indonesian',
-          kor: '🇰🇷 Korean',
-          ko: '🇰🇷 Korean',
-          chi: '🇨🇳 Chinese',
-          zh: '🇨🇳 Chinese',
-          ara: '🇸🇦 Arabic',
-          ar: '🇸🇦 Arabic',
-          esp: '🇪🇸 Spanish',
-          es: '🇪🇸 Spanish',
-          sub: '💬 CC Sub',
+        const SUBTITLE_LANGUAGE_META: Record<string, { label: string; langTag: string }> = {
+          hin: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
+          hi: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
+          hindi: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
+          eng: { label: '🇬🇧 English', langTag: 'en-US' },
+          en: { label: '🇬🇧 English', langTag: 'en-US' },
+          ur: { label: '🇵🇰 Urdu', langTag: 'ur-PK' },
+          urd: { label: '🇵🇰 Urdu', langTag: 'ur-PK' },
+          ben: { label: '🇮🇳 Bengali', langTag: 'bn-IN' },
+          bn: { label: '🇮🇳 Bengali', langTag: 'bn-IN' },
+          tam: { label: '🇮🇳 Tamil', langTag: 'ta-IN' },
+          ta: { label: '🇮🇳 Tamil', langTag: 'ta-IN' },
+          tel: { label: '🇮🇳 Telugu', langTag: 'te-IN' },
+          te: { label: '🇮🇳 Telugu', langTag: 'te-IN' },
+          mar: { label: '🇮🇳 Marathi', langTag: 'mr-IN' },
+          mr: { label: '🇮🇳 Marathi', langTag: 'mr-IN' },
+          ind: { label: '🇮🇩 Indonesian', langTag: 'id-ID' },
+          id: { label: '🇮🇩 Indonesian', langTag: 'id-ID' },
+          kor: { label: '🇰🇷 Korean', langTag: 'ko-KR' },
+          ko: { label: '🇰🇷 Korean', langTag: 'ko-KR' },
+          chi: { label: '🇨🇳 Chinese', langTag: 'zh-CN' },
+          zh: { label: '🇨🇳 Chinese', langTag: 'zh-CN' },
+          ara: { label: '🇸🇦 Arabic', langTag: 'ar-SA' },
+          ar: { label: '🇸🇦 Arabic', langTag: 'ar-SA' },
+          esp: { label: '🇪🇸 Spanish', langTag: 'es-ES' },
+          es: { label: '🇪🇸 Spanish', langTag: 'es-ES' },
+          sub: { label: '💬 CC Sub', langTag: 'hi-IN' },
         };
 
-        const getSubtitleLangLabel = (code: string): string => {
+        const getSubtitleLangMeta = (code: string): { label: string; langTag: string } => {
           const lower = code.toLowerCase();
-          if (SUBTITLE_LANGUAGE_LABELS[lower]) return SUBTITLE_LANGUAGE_LABELS[lower];
-          return lower.charAt(0).toUpperCase() + lower.slice(1);
+          if (SUBTITLE_LANGUAGE_META[lower]) return SUBTITLE_LANGUAGE_META[lower];
+          return {
+            label: lower.charAt(0).toUpperCase() + lower.slice(1),
+            langTag: lower.length === 2 ? `${lower}-${lower.toUpperCase()}` : 'en-US',
+          };
         };
 
         // Parse Multi-Language Subtitles from dedicated Subtitle column (and Audio column fallback)
@@ -1516,25 +1519,27 @@ export default function App() {
             const normalizedUrl = normalizeDirectMediaUrl(m[3]);
             if (Number.isNaN(epNum) || !normalizedUrl) continue;
 
-            const langLabel = getSubtitleLangLabel(langCode);
+            const langMeta = getSubtitleLangMeta(langCode);
             if (!episodeSubtitles[epNum]) episodeSubtitles[epNum] = {};
             if (!episodeSubtitles[epNum][langCode]) {
               episodeSubtitles[epNum][langCode] = {
                 code: langCode,
-                label: langLabel,
+                label: langMeta.label,
+                langTag: langMeta.langTag,
                 url: normalizedUrl,
               };
             }
             if (!dramaSubtitles[langCode]) {
               dramaSubtitles[langCode] = {
                 code: langCode,
-                label: langLabel,
+                label: langMeta.label,
+                langTag: langMeta.langTag,
                 url: normalizedUrl,
               };
             }
             if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
               parsedSubtitleTracks.push({
-                label: `${langLabel} (Ep ${epNum})`,
+                label: `${langMeta.label} (Ep ${epNum})`,
                 url: normalizedUrl,
               });
             }
@@ -1551,11 +1556,12 @@ export default function App() {
             if (skippedSubPrefixes.has(langCode) || langCode === 't1' || langCode === 't2' || langCode === 't3') continue;
             const normalizedUrl = normalizeDirectMediaUrl(m[2]);
             if (!normalizedUrl) continue;
-            const langLabel = getSubtitleLangLabel(langCode);
+            const langMeta = getSubtitleLangMeta(langCode);
             if (!dramaSubtitles[langCode]) {
               dramaSubtitles[langCode] = {
                 code: langCode,
-                label: langLabel,
+                label: langMeta.label,
+                langTag: langMeta.langTag,
                 url: normalizedUrl,
               };
             }
@@ -1563,13 +1569,14 @@ export default function App() {
             if (!episodeSubtitles[1][langCode]) {
               episodeSubtitles[1][langCode] = {
                 code: langCode,
-                label: langLabel,
+                label: langMeta.label,
+                langTag: langMeta.langTag,
                 url: normalizedUrl,
               };
             }
             if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
               parsedSubtitleTracks.push({
-                label: langLabel,
+                label: langMeta.label,
                 url: normalizedUrl,
               });
             }

@@ -34,7 +34,7 @@ import {
 } from './services/notificationService';
 import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
 import { createDramaSlug, parseDeepLinkFromLocation } from './services/urlHelper';
-import { getVipStats, VipStats, VIP_STATS_UPDATED_EVENT } from './services/vipPlayerHelper';
+import { getVipStats, VipStats, VIP_STATS_UPDATED_EVENT, getAdminSubtitleOverrides } from './services/vipPlayerHelper';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
@@ -146,6 +146,42 @@ export default function App() {
     return (localStorage.getItem('asiaflix_catalog_layout_mode_v1') as 'grid' | 'cinema') || 'grid';
   });
 
+  const applyAdminSubtitleOverrides = (list: DramaItem[]): DramaItem[] => {
+    const overridesMap = getAdminSubtitleOverrides();
+    if (!overridesMap || Object.keys(overridesMap).length === 0) return list;
+    return list.map((d) => {
+      const entries = overridesMap[d.id];
+      if (!entries || entries.length === 0) return d;
+      const dramaSubMap: Record<string, SubtitleTrackItem> = { ...(d.subtitles || {}) };
+      entries
+        .filter((e) => e.epNum === 'all')
+        .forEach((e) => {
+          dramaSubMap[e.code] = { code: e.code, label: e.label, langTag: e.langTag, url: e.url };
+        });
+      const updatedEpisodes = d.episodes.map((ep) => {
+        const epNum =
+          typeof ep.episodeNumber === 'number'
+            ? ep.episodeNumber
+            : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '1', 10);
+        const epSubMap: Record<string, SubtitleTrackItem> = { ...(ep.subtitles || {}) };
+        entries
+          .filter((e) => e.epNum === epNum)
+          .forEach((e) => {
+            epSubMap[e.code] = { code: e.code, label: e.label, langTag: e.langTag, url: e.url };
+          });
+        return Object.keys(epSubMap).length > 0
+          ? { ...ep, subtitles: epSubMap, subtitleLink: Object.values(epSubMap)[0]?.url || ep.subtitleLink }
+          : ep;
+      });
+      return {
+        ...d,
+        subtitles: Object.keys(dramaSubMap).length > 0 ? dramaSubMap : d.subtitles,
+        subtitleLink: Object.values(dramaSubMap)[0]?.url || d.subtitleLink,
+        episodes: updatedEpisodes,
+      };
+    });
+  };
+
   // --- DRAMA CATALOG STATE WITH CURATION RECOVERY ---
   const [dramas, setDramas] = useState<DramaItem[]>(() => {
     // 1. Load custom-added dramas
@@ -169,7 +205,7 @@ export default function App() {
         const parsed = JSON.parse(savedCurated);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const nonCustomCurated = parsed.filter((p) => !customList.some((c) => c.id === p.id));
-          return [...customList, ...nonCustomCurated];
+          return applyAdminSubtitleOverrides([...customList, ...nonCustomCurated]);
         }
       } catch (e) {
         console.error('Error loading curated dramas:', e);
@@ -177,7 +213,7 @@ export default function App() {
     }
 
     // Website catalog comes 100% from Google Sheet rows (do not fallback to INITIAL_DRAMAS)
-    return customList;
+    return applyAdminSubtitleOverrides(customList);
   });
 
   // --- WEEKEND MEGA LINEUP SETTINGS ---
@@ -638,7 +674,7 @@ export default function App() {
   const [isInstantSearchOpen, setIsInstantSearchOpen] = useState(false);
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
   const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies' | 'Other Series'>('All');
-  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>('trending');
+  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>('trending');
 
   // --- CLOUD-SYNCED AD CONFIGURATION STATE ---
   const [adConfig, setAdConfig] = useState<AdConfig>(() => getLocalAdConfig());
@@ -687,7 +723,7 @@ export default function App() {
     localStorage.removeItem('asiaflix_admin_unlocked');
   };
 
-  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
+  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
     setAdminInitialTab(tab);
     setIsAdminOpen(true);
   };
@@ -976,7 +1012,7 @@ export default function App() {
 
       const incomingIds = new Set(incoming.map((item) => item.id));
       const filteredCustom = customDramas.filter((c) => !incomingIds.has(c.id));
-      const result = [...filteredCustom, ...incoming];
+      const result = applyAdminSubtitleOverrides([...filteredCustom, ...incoming]);
 
       localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(result));
       return result;

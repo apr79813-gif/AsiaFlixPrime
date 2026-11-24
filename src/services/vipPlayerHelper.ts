@@ -412,6 +412,49 @@ export function addDanmakuCue(dramaId: string, epNum: number, time: number, text
   return next;
 }
 
+export const ADMIN_SUBTITLES_STORAGE_KEY = 'asiaflix_admin_subtitles';
+
+export interface AdminSubtitleEntry {
+  code: string;
+  label: string;
+  langTag: string;
+  url: string;
+  epNum: number | 'all';
+}
+
+export function normalizeSubtitleUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+  if (/huggingface\.co\/datasets\/.+\/blob\//i.test(trimmed)) {
+    return trimmed.replace(/\/blob\//i, '/resolve/');
+  }
+  if (/huggingface\.co\/.+\/blob\//i.test(trimmed)) {
+    return trimmed.replace(/\/blob\//i, '/resolve/');
+  }
+  return trimmed;
+}
+
+export function getAdminSubtitleOverrides(): Record<string, AdminSubtitleEntry[]> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(ADMIN_SUBTITLES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveAdminSubtitleOverrides(map: Record<string, AdminSubtitleEntry[]>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(ADMIN_SUBTITLES_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore quota errors
+  }
+}
+
 function parseTimestampToken(token: string): number | null {
   const clean = token.trim().replace(',', '.');
   const parts = clean.split(':');
@@ -438,7 +481,13 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
     .replace(/^\uFEFF/, '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
+    // Strip markdown code-fence wrappers common in .md.srt files
+    .replace(/^[ \t]*```[a-zA-Z0-9_-]*[ \t]*$/gm, '')
+    .replace(/^[ \t]*~~~[a-zA-Z0-9_-]*[ \t]*$/gm, '')
+    // Strip leading markdown blockquotes if any
+    .replace(/^[ \t]*>[ \t]?/gm, '')
     .trim();
+
   const blocks = normalized.split(/\n{2,}/);
   const cues: SubtitleCue[] = [];
 
@@ -470,6 +519,7 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/\{\\[^}]*\}/g, '')
       .replace(/<\/?[^>]+(>|$)/g, '')
+      .replace(/`+/g, '')
       .trim();
 
     if (textLines) {
@@ -481,3 +531,4 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
     .sort((a, b) => a.start - b.start)
     .map((cue, idx) => ({ ...cue, id: idx + 1 }));
 }
+

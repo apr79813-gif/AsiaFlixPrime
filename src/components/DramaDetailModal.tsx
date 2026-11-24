@@ -66,6 +66,7 @@ import {
   addDanmakuCue,
   DanmakuCue,
   parseSrtOrVttContent,
+  normalizeSubtitleUrl,
   SubtitleCue,
   TIMESTAMPS_UPDATED_EVENT,
   WatchTimestampEntry,
@@ -318,7 +319,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const studioAudioGraphRef = useRef<{
     el: HTMLMediaElement;
     ctx: AudioContext;
-    analyser: AnalyserNode;
     highpass: BiquadFilterNode;
     lowshelf: BiquadFilterNode;
     peaking: BiquadFilterNode;
@@ -337,6 +337,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const lastTapUnlockRef = useRef<number>(0);
   const lastDanmakuIdShownRef = useRef<Record<string, number>>({});
   const subtitleFileInputRef = useRef<HTMLInputElement>(null);
+  const hardSubCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastHardSubScanMsRef = useRef<number>(0);
+  const hardSubCorsBlockedRef = useRef<boolean>(false);
+  const seekRippleTimerRef = useRef<number | null>(null);
 
   const isAdmin =
     isAdminAuthenticated ||
@@ -527,33 +531,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama ? getSceneBookmarks(drama.id) : []
   );
 
-  // Multi-Language Subtitles (CC), Smart Hard-Sub Eraser Shield & AI Voice-Dubbing Engine
+  // Multi-Language Subtitles (CC) & Smart Hard-Sub Auto-Blur / Pure Transparent Engine
   const [activeSubLang, setActiveSubLang] = useState<string>('off');
   const [uploadedSubCues, setUploadedSubCues] = useState<{ label: string; cues: SubtitleCue[] } | null>(null);
   const [parsedSubCues, setParsedSubCues] = useState<Array<{ id: number; start: number; end: number; text: string }>>([]);
   const [activeCue, setActiveCue] = useState<{ id: number; start: number; end: number; text: string } | null>(null);
-  const [hardSubEraserMode, setHardSubEraserMode] = useState<'solid' | 'blur' | 'off'>('solid');
-  const [eraserBottomOffset, setEraserBottomOffset] = useState<'low' | 'mid' | 'high'>('low');
-  const [eraserWidthMode, setEraserWidthMode] = useState<'box' | 'fullbar'>('fullbar');
+  const [subBackdropMode, setSubBackdropMode] = useState<'auto' | 'blur' | 'transparent'>('auto');
+  const [hasHardcodedSubtitles, setHasHardcodedSubtitles] = useState<boolean>(false);
+  const [detectedHardcodedSubs, setDetectedHardcodedSubs] = useState<boolean>(false);
+  const [isPlayerControlsActive, setIsPlayerControlsActive] = useState<boolean>(false);
   const [subFontSize, setSubFontSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [subColor, setSubColor] = useState<'white' | 'yellow' | 'cyan'>('yellow');
   const [isSubLoading, setIsSubLoading] = useState<boolean>(false);
-  const [isAiVoiceDubOn, setIsAiVoiceDubOn] = useState<boolean>(true);
-  const [aiVoiceMuteMode, setAiVoiceMuteMode] = useState<'fullmute' | 'duck15'>('fullmute');
-  const [aiVoiceProfile, setAiVoiceProfile] = useState<'auto' | 'female' | 'male'>('auto');
-  const [detectedSpeakerGender, setDetectedSpeakerGender] = useState<'female' | 'male' | null>(null);
-  const [isAiSpeaking, setIsAiSpeaking] = useState<boolean>(false);
-  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const lastSpokenCueIdRef = useRef<number | null>(null);
-  const isSpeakingCueRef = useRef<boolean>(false);
-  const lastProgrammaticAudioSetMsRef = useRef<number>(0);
-  const lastDetectedGenderRef = useRef<'female' | 'male'>('female');
   const activeCueRef = useRef<{ id: number; start: number; end: number; text: string } | null>(null);
-  const latestAudioPrefRef = useRef<{ muted: boolean; volume: number; isExternal: boolean }>({
-    muted: false,
-    volume: 1,
-    isExternal: false,
-  });
 
   // Danmaku Live Hype & Watch Party
   const [isDanmakuOn, setIsDanmakuOn] = useState<boolean>(true);
@@ -609,12 +599,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setFloatingDanmaku([]);
     setActiveCue(null);
     activeCueRef.current = null;
-    lastSpokenCueIdRef.current = null;
-    isSpeakingCueRef.current = false;
-    setIsAiSpeaking(false);
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    setDetectedHardcodedSubs(false);
+    hardSubCorsBlockedRef.current = false;
     preloadedNextUrlRef.current = null;
     lastPlaybackTickMsRef.current = null;
     if (drama && activeStreamEp !== null) {
@@ -655,12 +641,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setParsedSubCues([]);
     setActiveCue(null);
     activeCueRef.current = null;
-    lastSpokenCueIdRef.current = null;
-    isSpeakingCueRef.current = false;
-    setIsAiSpeaking(false);
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    setDetectedHardcodedSubs(false);
+    hardSubCorsBlockedRef.current = false;
     setUploadedSubCues(null);
     setRevealedSpoilerEpKeys({});
     pendingRestoreTimeRef.current =
@@ -753,6 +735,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return () => {
       if (hudTimerRef.current !== null) {
         window.clearTimeout(hudTimerRef.current);
+      }
+      if (seekRippleTimerRef.current !== null) {
+        window.clearTimeout(seekRippleTimerRef.current);
       }
       if (videoAudioNodeRef.current) {
         videoAudioNodeRef.current.ctx.close().catch(() => {});
@@ -971,12 +956,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost + Vocal Pitch Analyser on the audible media element
+  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on the audible media element
   const activeAudibleUrl = isExternalAudioActive ? trackCustomAudio || '' : resolvedPlayerSource?.type === 'video' ? resolvedPlayerSource.src : '';
-  const wantsAudioStudio =
-    audioEqMode !== 'normal' ||
-    volumeBoost > 100 ||
-    (isAiVoiceDubOn && activeSubLang !== 'off' && aiVoiceProfile === 'auto');
+  const wantsAudioStudio = audioEqMode !== 'normal' || volumeBoost > 100;
 
   useEffect(() => {
     if (!wantsAudioStudio || !activeAudibleUrl || !/^https?:\/\//i.test(activeAudibleUrl)) {
@@ -1034,9 +1016,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         if (!AudioCtx) return;
         const ctx = new AudioCtx();
         const source = ctx.createMediaElementSource(audibleEl);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.65;
 
         const highpass = ctx.createBiquadFilter();
         highpass.type = 'highpass';
@@ -1061,8 +1040,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         const compressor = ctx.createDynamicsCompressor();
         const gain = ctx.createGain();
 
-        // Feed raw vocal signal into AnalyserNode upstream of GainNode mute/ducking
-        source.connect(analyser);
         source.connect(highpass);
         highpass.connect(lowshelf);
         lowshelf.connect(peaking);
@@ -1071,7 +1048,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         compressor.connect(gain);
         gain.connect(ctx.destination);
 
-        graph = { el: audibleEl, ctx, analyser, highpass, lowshelf, peaking, highshelf, compressor, gain };
+        graph = { el: audibleEl, ctx, highpass, lowshelf, peaking, highshelf, compressor, gain };
         studioAudioGraphRef.current = graph;
       }
 
@@ -1148,145 +1125,68 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio]);
 
-  useEffect(() => {
-    latestAudioPrefRef.current = {
-      muted: isAudioMuted,
-      volume: audioVolume,
-      isExternal: isExternalAudioActive,
-    };
-  }, [isAudioMuted, audioVolume, isExternalAudioActive]);
-
-  // Load browser speech synthesis voices & clean up on unmount
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices && voices.length > 0) {
-        setAvailableVoices(voices);
-      }
-    };
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-    return () => {
-      window.speechSynthesis.onvoiceschanged = null;
-      window.speechSynthesis.cancel();
-    };
-  }, []);
-
-  const applyProgrammaticVideoAudio = (muted: boolean, vol: number) => {
-    const vid = videoRef.current;
-    if (!vid) return;
-    lastProgrammaticAudioSetMsRef.current = Date.now();
-    const clampedVol = Math.min(1, Math.max(0, vol));
-
-    // When Web Audio graph owns the stream (CORS-supported), mute/duck via GainNode so AnalyserNode stays active
-    const graph = studioAudioGraphRef.current;
-    if (!latestAudioPrefRef.current.isExternal && graph && graph.el === vid && audibleCorsSupported && wantsAudioStudio) {
-      try {
-        graph.gain.gain.value = muted ? 0 : Math.min(2.0, Math.max(0, clampedVol * (volumeBoost / 100)));
-        vid.muted = false;
-        vid.volume = 1;
-        return;
-      } catch {
-        // Fallback below
-      }
+  // Detect burned-in subtitles in lower video subtitle zone (78%–92% height) via canvas pixel contrast
+  const detectLowerRegionHardSubs = (vid: HTMLVideoElement) => {
+    if (subBackdropMode !== 'auto' || hardSubCorsBlockedRef.current || vid.videoWidth <= 0 || vid.videoHeight <= 0) {
+      return;
     }
+    const now = Date.now();
+    if (now - lastHardSubScanMsRef.current < 650) return;
+    lastHardSubScanMsRef.current = now;
 
-    if (latestAudioPrefRef.current.isExternal) {
-      if (audioRef.current) {
-        audioRef.current.muted = muted;
-        audioRef.current.volume = clampedVol;
+    try {
+      if (!hardSubCanvasRef.current) {
+        hardSubCanvasRef.current = document.createElement('canvas');
+        hardSubCanvasRef.current.width = 160;
+        hardSubCanvasRef.current.height = 28;
       }
-      if (!isAudioCorsFallback) {
-        vid.muted = muted;
-        vid.volume = clampedVol;
+      const canvas = hardSubCanvasRef.current;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      const sx = Math.floor(vid.videoWidth * 0.18);
+      const sw = Math.max(16, Math.floor(vid.videoWidth * 0.64));
+      const sy = Math.floor(vid.videoHeight * 0.78);
+      const sh = Math.max(8, Math.floor(vid.videoHeight * 0.14));
+
+      ctx.drawImage(vid, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      let brightContrastHits = 0;
+      let rowsWithText = 0;
+      for (let y = 0; y < canvas.height; y++) {
+        let rowHits = 0;
+        let prevLuma = 0;
+        for (let x = 0; x < canvas.width; x++) {
+          const idx = (y * canvas.width + x) * 4;
+          const luma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+          if (x > 0 && ((luma >= 210 && Math.abs(luma - prevLuma) >= 75) || (prevLuma >= 210 && Math.abs(luma - prevLuma) >= 75))) {
+            rowHits++;
+          }
+          prevLuma = luma;
+        }
+        if (rowHits >= 4 && rowHits <= 70) {
+          rowsWithText++;
+          brightContrastHits += rowHits;
+        }
       }
-    } else {
-      vid.muted = muted;
-      vid.volume = clampedVol;
+
+      const detected = rowsWithText >= 2 && brightContrastHits >= 14;
+      setDetectedHardcodedSubs((prev) => (prev === detected ? prev : detected));
+    } catch {
+      hardSubCorsBlockedRef.current = true;
     }
   };
 
-  const detectSpeakerGender = (cueText: string): 'female' | 'male' => {
-    if (/^\s*(?:\[|\()?(?:female|woman|girl|she|lady|queen|princess|mom|mother|sister|unnie|noona|jiejie|meimei|f|w)(?:\]|\)|:|\s*-)/i.test(cueText)) {
-      lastDetectedGenderRef.current = 'female';
-      setDetectedSpeakerGender('female');
-      return 'female';
-    }
-    if (/^\s*(?:\[|\()?(?:male|man|boy|he|sir|king|prince|dad|father|brother|oppa|hyung|gege|m)(?:\]|\)|:|\s*-)/i.test(cueText)) {
-      lastDetectedGenderRef.current = 'male';
-      setDetectedSpeakerGender('male');
-      return 'male';
-    }
-
-    const analyser = studioAudioGraphRef.current?.analyser;
-    if (analyser) {
-      const bufferLen = analyser.frequencyBinCount;
-      const data = new Uint8Array(bufferLen);
-      analyser.getByteFrequencyData(data);
-      const sampleRate = analyser.context.sampleRate || 48000;
-      const binHz = sampleRate / analyser.fftSize;
-
-      const maleStart = Math.max(1, Math.floor(85 / binHz));
-      const maleEnd = Math.max(maleStart, Math.ceil(160 / binHz));
-      const femaleStart = Math.max(maleEnd + 1, Math.floor(165 / binHz));
-      const femaleEnd = Math.min(bufferLen - 1, Math.ceil(280 / binHz));
-
-      let maleSum = 0;
-      let malePeak = 0;
-      for (let i = maleStart; i <= maleEnd; i++) {
-        maleSum += data[i];
-        if (data[i] > malePeak) malePeak = data[i];
-      }
-      const maleAvg = maleSum / Math.max(1, maleEnd - maleStart + 1);
-
-      let femaleSum = 0;
-      let femalePeak = 0;
-      for (let i = femaleStart; i <= femaleEnd; i++) {
-        femaleSum += data[i];
-        if (data[i] > femalePeak) femalePeak = data[i];
-      }
-      const femaleAvg = femaleSum / Math.max(1, femaleEnd - femaleStart + 1);
-
-      if (Math.max(malePeak, femalePeak) >= 28) {
-        const classified: 'female' | 'male' =
-          femaleAvg * 1.06 + femalePeak * 0.25 >= maleAvg + malePeak * 0.25 ? 'female' : 'male';
-        lastDetectedGenderRef.current = classified;
-        setDetectedSpeakerGender(classified);
-        return classified;
-      }
-    }
-
-    const fallback = lastDetectedGenderRef.current || 'female';
-    setDetectedSpeakerGender(fallback);
-    return fallback;
-  };
-
-  const stopAiSpeechAndRestoreAudio = () => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    lastSpokenCueIdRef.current = null;
-    isSpeakingCueRef.current = false;
-    setIsAiSpeaking(false);
-    const { muted, volume } = latestAudioPrefRef.current;
-    applyProgrammaticVideoAudio(muted, volume);
-  };
-
-  useEffect(() => {
-    if (!isAiVoiceDubOn || activeSubLang === 'off') {
-      stopAiSpeechAndRestoreAudio();
-    }
-  }, [isAiVoiceDubOn, activeSubLang]);
+  const shouldBlurSubArea =
+    subBackdropMode === 'blur' ||
+    (subBackdropMode === 'auto' &&
+      (hardSubCorsBlockedRef.current ? hasHardcodedSubtitles : detectedHardcodedSubs));
 
   const handleSelectSubLang = (langCode: string) => {
-    stopAiSpeechAndRestoreAudio();
     setActiveSubLang(langCode);
     setActiveCue(null);
     activeCueRef.current = null;
-    if (langCode !== 'off' && langCode !== 'eng' && langCode !== 'en') {
-      setHardSubEraserMode('solid');
-    }
     if (langCode === 'off') {
       showHudFeedback('💬 Subtitles: Off');
     } else if (langCode === 'local') {
@@ -1297,7 +1197,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  // Auto-Fetch & Parse Remote .SRT / .VTT Subtitle File whenever activeSubLang or episode changes
+  // Auto-Fetch & Parse Remote .SRT / .MD.SRT / .VTT Subtitle File whenever activeSubLang or episode changes
   useEffect(() => {
     if (activeSubLang === 'off') {
       setParsedSubCues([]);
@@ -1314,10 +1214,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const track =
       currentEpObj?.subtitles?.[activeSubLang] ||
       availableSubLanguages.find((s) => s.code === activeSubLang);
-    if (track && /^https?:\/\//i.test(track.url)) {
+    const resolvedUrl = track?.url ? normalizeSubtitleUrl(track.url) : '';
+    if (resolvedUrl && (/^https?:\/\//i.test(resolvedUrl) || /^data:/i.test(resolvedUrl))) {
       let cancelled = false;
       setIsSubLoading(true);
-      fetch(track.url)
+      fetch(resolvedUrl)
         .then((r) => {
           if (!r.ok) throw new Error('Subtitle fetch failed');
           return r.text();
@@ -1326,7 +1227,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           if (!cancelled) {
             const cues = parseSrtOrVttContent(txt);
             setParsedSubCues(cues);
-            lastSpokenCueIdRef.current = null;
             setIsSubLoading(false);
             if (cues.length === 0) {
               showHudFeedback('⚠️ Subtitle file empty or unsupported format');
@@ -1337,7 +1237,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           if (!cancelled) {
             setParsedSubCues([]);
             setIsSubLoading(false);
-            showHudFeedback('⚠️ Unable to load subtitle URL (try Upload .SRT)');
+            showHudFeedback('⚠️ Unable to load subtitle track');
           }
         });
       return () => {
@@ -1506,7 +1406,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleClosePlayer = () => {
-    stopAiSpeechAndRestoreAudio();
     if (audioRef.current) {
       audioRef.current.pause();
     }
@@ -1519,6 +1418,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsTheaterMode(false);
     setHudToast(null);
     setIframeControlNotice(false);
+  };
+
+  const triggerSeekRipple = (side: 'left' | 'right') => {
+    if (seekRippleTimerRef.current !== null) {
+      window.clearTimeout(seekRippleTimerRef.current);
+    }
+    setSeekRipple({ side, nonce: Date.now() });
+    seekRippleTimerRef.current = window.setTimeout(() => {
+      setSeekRipple(null);
+    }, 500);
   };
 
   const handleSeek = (deltaSeconds: number, feedbackLabel: string) => {
@@ -1538,7 +1447,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           // Ignore if audio metadata not ready
         }
       }
-      showHudFeedback(feedbackLabel);
+      if (deltaSeconds === -10 || deltaSeconds === 10) {
+        triggerSeekRipple(deltaSeconds < 0 ? 'left' : 'right');
+      } else {
+        showHudFeedback(feedbackLabel);
+      }
     }
   };
 
@@ -1813,16 +1726,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) return;
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
       const cues = parseSrtOrVttContent(content);
-      stopAiSpeechAndRestoreAudio();
       setUploadedSubCues({ label: file.name.slice(0, 22), cues });
       setActiveSubLang('local');
-      setHardSubEraserMode('solid');
       setActiveCue(null);
       activeCueRef.current = null;
       setParsedSubCues(cues);
@@ -2304,6 +2216,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {/* 2. 16:9 Protected Video Viewport */}
                   <div
                     ref={playerContainerRef}
+                    onMouseEnter={() => setIsPlayerControlsActive(true)}
+                    onMouseMove={() => setIsPlayerControlsActive(true)}
+                    onMouseLeave={() => setIsPlayerControlsActive(false)}
+                    onTouchStart={() => setIsPlayerControlsActive(true)}
                     className="aspect-video w-full bg-black relative overflow-hidden"
                   >
                   {/* Top-Left On-Screen Episode HUD Watermark Overlay — ONLY for Episode Series */}
@@ -2376,78 +2292,74 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* Double-Tap Left/Right Seek Ripple Feedback */}
+                  {/* Sleek Transparent Glassmorphic OTT Seek Indicator (auto-fades in 500ms) */}
                   {seekRipple && (
                     <div
                       key={seekRipple.nonce}
-                      className={`pointer-events-none absolute top-1/2 -translate-y-1/2 z-30 px-5 py-3 rounded-2xl bg-black/80 border border-[#e50914]/60 text-white text-sm sm:text-base font-black shadow-[0_0_30px_rgba(229,9,20,0.5)] animate-ping ${
-                        seekRipple.side === 'left' ? 'left-8' : 'right-8'
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(255, 255, 255, 0.18)',
+                        color: '#ffffff',
+                        borderRadius: '9999px',
+                      }}
+                      className={`pointer-events-none absolute top-1/2 -translate-y-1/2 z-30 px-4 py-2 text-xs sm:text-sm font-bold tracking-wide shadow-[0_4px_24px_rgba(0,0,0,0.35)] animate-fade-in ${
+                        seekRipple.side === 'left' ? 'left-6 sm:left-10' : 'right-6 sm:right-10'
                       }`}
                     >
-                      {seekRipple.side === 'left' ? '⏪ -10s' : '⏩ +10s'}
+                      {seekRipple.side === 'left' ? '↺ 10s' : '10s ↻'}
                     </div>
                   )}
 
-                  {/* Smart Hard-Sub Eraser Shield + Live Multi-Language Subtitle + AI Voice-Dubbing Overlay */}
-                  {activeSubLang !== 'off' && !isMiniPlayer && (hardSubEraserMode !== 'off' || Boolean(activeCue?.text)) && (
+                  {/* Active-Only Bottom-Center Subtitle Overlay (Returns null when no cue is active) */}
+                  {activeSubLang !== 'off' && !isMiniPlayer && activeCue?.text ? (
                     <div
-                      className={`pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center gap-1.5 px-3 transition-all duration-200 ${
-                        eraserBottomOffset === 'high'
-                          ? 'bottom-[14%]'
-                          : eraserBottomOffset === 'mid'
-                          ? 'bottom-[9%]'
-                          : 'bottom-[5%]'
+                      className={`pointer-events-none absolute inset-x-0 z-30 flex justify-center px-3 transition-all duration-200 ${
+                        isPlayerControlsActive ? 'bottom-[13%] sm:bottom-[14%]' : 'bottom-[7%]'
                       }`}
                     >
-                      {isAiVoiceDubOn && isAiSpeaking && (
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#e50914]/90 to-[#f59e0b]/90 text-white text-[10px] font-black shadow-[0_0_15px_rgba(245,158,11,0.55)] border border-amber-300/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                          <span>
-                            🗣️ AI Voice (
-                            {aiVoiceProfile === 'auto'
-                              ? `Auto: ${detectedSpeakerGender === 'male' ? 'Male' : 'Female'}`
-                              : aiVoiceProfile === 'male'
-                              ? 'Male'
-                              : 'Female'}
-                            )
-                          </span>
-                        </div>
-                      )}
                       <div
-                        className={`flex items-center justify-center text-center transition-all duration-200 ${
-                          eraserWidthMode === 'fullbar'
-                            ? 'w-[92%] sm:w-[86%] mx-auto'
-                            : 'w-auto max-w-[86%] sm:max-w-[78%] min-w-[240px] sm:min-w-[340px] mx-auto'
-                        } ${
-                          hardSubEraserMode === 'solid'
-                            ? 'min-h-[44px] sm:min-h-[58px] rounded-xl px-5 py-2 bg-[#050508]/95 border border-white/10 shadow-[0_4px_25px_rgba(0,0,0,0.95)]'
-                            : hardSubEraserMode === 'blur'
-                            ? 'min-h-[44px] sm:min-h-[58px] rounded-xl px-5 py-2 bg-black/80 backdrop-blur-2xl border border-white/10 shadow-[0_4px_25px_rgba(0,0,0,0.85)]'
-                            : 'px-4 py-1.5 rounded-xl bg-black/80 backdrop-blur-sm shadow-lg'
-                        }`}
+                        style={
+                          shouldBlurSubArea
+                            ? {
+                                backdropFilter: 'blur(16px)',
+                                WebkitBackdropFilter: 'blur(16px)',
+                                background: 'rgba(0, 0, 0, 0.15)',
+                                borderRadius: '6px',
+                                padding: '6px 24px',
+                              }
+                            : {
+                                background: 'transparent',
+                                padding: '2px 12px',
+                              }
+                        }
+                        className="inline-flex items-center justify-center text-center max-w-[90%] sm:max-w-[82%] transition-all duration-200"
                       >
-                        {activeCue?.text ? (
-                          <span
-                            className={`font-extrabold leading-snug whitespace-pre-line drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] ${
-                              subFontSize === 'sm'
-                                ? 'text-xs sm:text-sm'
-                                : subFontSize === 'lg'
-                                ? 'text-base sm:text-2xl'
-                                : 'text-sm sm:text-lg'
-                            } ${
-                              subColor === 'yellow'
-                                ? 'text-[#facc15]'
-                                : subColor === 'cyan'
-                                ? 'text-[#00f2fe]'
-                                : 'text-white'
-                            }`}
-                          >
-                            {activeCue.text}
-                          </span>
-                        ) : null}
+                        <span
+                          style={{
+                            textShadow: '0 2px 6px rgba(0,0,0,0.95), 0 0 3px #000',
+                            WebkitTextStroke: '0.4px rgba(0,0,0,0.85)',
+                          }}
+                          className={`font-extrabold leading-snug whitespace-pre-line ${
+                            subFontSize === 'sm'
+                              ? 'text-xs sm:text-sm'
+                              : subFontSize === 'lg'
+                              ? 'text-base sm:text-2xl'
+                              : 'text-sm sm:text-lg'
+                          } ${
+                            subColor === 'yellow'
+                              ? 'text-[#facc15]'
+                              : subColor === 'cyan'
+                              ? 'text-[#00f2fe]'
+                              : 'text-white'
+                          }`}
+                        >
+                          {activeCue.text}
+                        </span>
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Mobile Touch-Lock Screen Shield */}
                   {isTouchLocked && (
@@ -2531,9 +2443,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             onClick={() => {
                               const now = Date.now();
                               if (now - lastTapLeftRef.current <= 320) {
-                                handleSeek(-10, '⏪ -10s Rewind');
-                                setSeekRipple({ side: 'left', nonce: now });
-                                window.setTimeout(() => setSeekRipple(null), 650);
+                                handleSeek(-10, '↺ 10s');
                                 lastTapLeftRef.current = 0;
                               } else {
                                 lastTapLeftRef.current = now;
@@ -2546,9 +2456,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             onClick={() => {
                               const now = Date.now();
                               if (now - lastTapRightRef.current <= 320) {
-                                handleSeek(10, '⏩ +10s Forward');
-                                setSeekRipple({ side: 'right', nonce: now });
-                                window.setTimeout(() => setSeekRipple(null), 650);
+                                handleSeek(10, '10s ↻');
                                 lastTapRightRef.current = 0;
                               } else {
                                 lastTapRightRef.current = now;
@@ -2618,7 +2526,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onPause={() => {
                           setIsVideoPlaying(false);
                           lastPlaybackTickMsRef.current = null;
-                          stopAiSpeechAndRestoreAudio();
                           if (audioRef.current && !audioRef.current.paused) {
                             audioRef.current.pause();
                           }
@@ -2630,7 +2537,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           }
                         }}
                         onSeeking={() => {
-                          stopAiSpeechAndRestoreAudio();
                           syncAudioToVideo(!videoRef.current?.paused);
                         }}
                         onSeeked={() => syncAudioToVideo(!videoRef.current?.paused)}
@@ -2641,7 +2547,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         }}
                         onVolumeChange={(e) => {
                           const vid = e.currentTarget;
-                          if (Date.now() - lastProgrammaticAudioSetMsRef.current < 150) return;
                           if (isExternalAudioActive && isAudioCorsFallback) return;
                           setAudioVolume(vid.volume);
                           setIsAudioMuted(vid.muted);
@@ -2653,7 +2558,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         onEnded={() => {
                           setIsVideoPlaying(false);
                           lastPlaybackTickMsRef.current = null;
-                          stopAiSpeechAndRestoreAudio();
                           recordEpisodeCompleted();
                           if (sleepTimerMode === 'end_of_ep') {
                             setSleepTimerMode('off');
@@ -2681,7 +2585,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             }
                           }
 
-                          // 2. Active Subtitle Cue Matcher + 🤖 Real-Time AI Subtitle Voice-Over & Smart Auto-Mute Engine
+                          // 2. Active Subtitle Cue Matcher & Burned-In Hard-Sub Detector
                           if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
                             const tNow = vid.currentTime;
                             const matchedCue = parsedSubCues.find((c) => tNow >= c.start && tNow <= c.end) || null;
@@ -2689,94 +2593,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               activeCueRef.current = matchedCue;
                               setActiveCue(matchedCue);
                             }
-
-                            if (isAiVoiceDubOn && !vid.paused) {
-                              if (matchedCue) {
-                                // Classify speaker pitch/gender right as cue starts (using Web Audio AnalyserNode + speaker tags)
-                                const resolvedGender: 'female' | 'male' =
-                                  aiVoiceProfile === 'auto'
-                                    ? lastSpokenCueIdRef.current !== matchedCue.id
-                                      ? detectSpeakerGender(matchedCue.text)
-                                      : detectedSpeakerGender || lastDetectedGenderRef.current
-                                    : aiVoiceProfile;
-
-                                // Mute or duck original video sound while dialogue subtitle is active
-                                if (aiVoiceMuteMode === 'fullmute') {
-                                  applyProgrammaticVideoAudio(true, audioVolume);
-                                } else {
-                                  applyProgrammaticVideoAudio(false, Math.min(audioVolume, 0.12));
-                                }
-
-                                if (
-                                  lastSpokenCueIdRef.current !== matchedCue.id &&
-                                  typeof window !== 'undefined' &&
-                                  'speechSynthesis' in window
-                                ) {
-                                  lastSpokenCueIdRef.current = matchedCue.id;
-                                  window.speechSynthesis.cancel();
-                                  const cleanText = matchedCue.text.replace(/\[.*?\]|\(.*?\)|♪/g, '').trim();
-                                  if (cleanText.length > 0) {
-                                    const utterance = new SpeechSynthesisUtterance(cleanText);
-                                    const targetLang =
-                                      currentEpObj?.subtitles?.[activeSubLang]?.langTag ||
-                                      availableSubLanguages.find((s) => s.code === activeSubLang)?.langTag ||
-                                      (activeSubLang === 'hin' || activeSubLang === 'hi' ? 'hi-IN' : 'en-US');
-                                    utterance.lang = targetLang;
-
-                                    const voicesList =
-                                      availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
-                                    const langPrefix = targetLang.split('-')[0].toLowerCase();
-                                    const langMatches = voicesList.filter(
-                                      (v) =>
-                                        v.lang.toLowerCase() === targetLang.toLowerCase() ||
-                                        v.lang.toLowerCase().startsWith(langPrefix)
-                                    );
-                                    const profileRegex =
-                                      resolvedGender === 'female'
-                                        ? /female|woman|lekha|swara|heera|kalpana|zira|samantha|aria|jenny|neerja/i
-                                        : /male|man|madhur|prabhat|hemant|ravi|david|mark|guy/i;
-                                    const chosenVoice =
-                                      langMatches.find((v) => profileRegex.test(v.name)) ||
-                                      langMatches.find((v) => /google|microsoft|natural/i.test(v.name)) ||
-                                      langMatches[0];
-                                    if (chosenVoice) utterance.voice = chosenVoice;
-
-                                    utterance.pitch = resolvedGender === 'female' ? 1.12 : 0.88;
-
-                                    const cueDuration = Math.max(1.2, matchedCue.end - matchedCue.start);
-                                    const wordCount = Math.max(1, cleanText.split(/\s+/).length);
-                                    const estSeconds = wordCount * 0.42;
-                                    const targetWindow = Math.max(0.8, cueDuration / (vid.playbackRate || 1));
-                                    const rawRate = estSeconds / targetWindow;
-                                    utterance.rate = Number(Math.min(1.45, Math.max(1.0, rawRate)).toFixed(2));
-
-                                    utterance.onstart = () => {
-                                      isSpeakingCueRef.current = true;
-                                      setIsAiSpeaking(true);
-                                    };
-                                    const handleSpeechDone = () => {
-                                      isSpeakingCueRef.current = false;
-                                      setIsAiSpeaking(false);
-                                      if (!activeCueRef.current) {
-                                        const pref = latestAudioPrefRef.current;
-                                        applyProgrammaticVideoAudio(pref.muted, pref.volume);
-                                      }
-                                    };
-                                    utterance.onend = handleSpeechDone;
-                                    utterance.onerror = handleSpeechDone;
-                                    window.speechSynthesis.speak(utterance);
-                                  }
-                                }
-                              } else {
-                                // Sample ambient/pre-cue pitch softly when unmuted & restore normal video audio between cues
-                                if (aiVoiceProfile === 'auto' && studioAudioGraphRef.current?.analyser) {
-                                  detectSpeakerGender('');
-                                }
-                                const lastEnd = activeCueRef.current?.end ?? 0;
-                                if (!isSpeakingCueRef.current || tNow > lastEnd + 0.15) {
-                                  applyProgrammaticVideoAudio(isAudioMuted, audioVolume);
-                                }
-                              }
+                            if (!vid.paused) {
+                              detectLowerRegionHardSubs(vid);
                             }
                           } else if (activeCueRef.current) {
                             activeCueRef.current = null;
@@ -3011,16 +2829,32 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <button
-                            onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
-                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                            onClick={() => handleSeek(-10, '↺ 10s')}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              backdropFilter: 'blur(8px)',
+                              WebkitBackdropFilter: 'blur(8px)',
+                              border: '1px solid rgba(255, 255, 255, 0.18)',
+                              color: '#ffffff',
+                              borderRadius: '9999px',
+                            }}
+                            className="hover:bg-white/[0.16] font-bold px-3.5 py-2 transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
                           >
-                            ⏪ -10s
+                            ↺ 10s
                           </button>
                           <button
-                            onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
-                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                            onClick={() => handleSeek(10, '10s ↻')}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              backdropFilter: 'blur(8px)',
+                              WebkitBackdropFilter: 'blur(8px)',
+                              border: '1px solid rgba(255, 255, 255, 0.18)',
+                              color: '#ffffff',
+                              borderRadius: '9999px',
+                            }}
+                            className="hover:bg-white/[0.16] font-bold px-3.5 py-2 transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
                           >
-                            +10s ⏩
+                            10s ↻
                           </button>
                           <button
                             onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
@@ -3102,162 +2936,93 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </div>
                       </div>
 
-                      {/* 💬 SUBTITLES & 🤖 AI VOICE-DUBBING STUDIO CONTROL BAR */}
-                      <div className="rounded-xl bg-[#0e1019] border border-sky-400/25 px-3.5 py-2.5 flex flex-col gap-2.5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1.5 mr-1">
-                            <Captions className="w-3.5 h-3.5 text-sky-400" />
-                            <span>💬 Subtitles &amp; 🤖 AI Voice-Dubbing</span>
-                            {isSubLoading && (
-                              <span className="text-[10px] text-amber-300 animate-pulse normal-case font-bold">
-                                (Loading...)
-                              </span>
-                            )}
-                          </span>
+                      {/* 💬 SUBTITLES BAR (Hidden for Audience when no subtitles are configured) */}
+                      {(availableSubLanguages.length > 0 || isAdmin) && (
+                        <div className="rounded-xl bg-[#0e1019] border border-sky-400/25 px-3.5 py-2.5 flex flex-col gap-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1.5 mr-1">
+                              <Captions className="w-3.5 h-3.5 text-sky-400" />
+                              <span>SUBTITLES</span>
+                              {isSubLoading && (
+                                <span className="text-[10px] text-amber-300 animate-pulse normal-case font-bold">
+                                  (Loading...)
+                                </span>
+                              )}
+                            </span>
 
-                          <button
-                            onClick={() => handleSelectSubLang('off')}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                              activeSubLang === 'off'
-                                ? 'bg-[#e50914] text-white border-red-400/60 shadow-[0_0_12px_rgba(229,9,20,0.4)]'
-                                : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
-                            }`}
-                          >
-                            🚫 Off
-                          </button>
-
-                          {availableSubLanguages.map((sub) => (
                             <button
-                              key={`cc-pill-${sub.code}-${sub.url}`}
-                              onClick={() => handleSelectSubLang(sub.code)}
+                              onClick={() => handleSelectSubLang('off')}
                               className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                                activeSubLang === sub.code
-                                  ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                activeSubLang === 'off'
+                                  ? 'bg-[#e50914] text-white border-red-400/60 shadow-[0_0_12px_rgba(229,9,20,0.4)]'
+                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
                               }`}
                             >
-                              {sub.displayLabel}
+                              🚫 Off
                             </button>
-                          ))}
 
-                          {uploadedSubCues && (
-                            <button
-                              onClick={() => handleSelectSubLang('local')}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                                activeSubLang === 'local'
-                                  ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
-                              }`}
-                            >
-                              📄 {uploadedSubCues.label}
-                            </button>
-                          )}
-
-                          <input
-                            ref={subtitleFileInputRef}
-                            type="file"
-                            accept=".srt,.vtt"
-                            onChange={handleSubtitleFileUpload}
-                            className="hidden"
-                          />
-                          <button
-                            onClick={() => subtitleFileInputRef.current?.click()}
-                            className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.14] text-amber-200 border border-amber-400/30 transition-all cursor-pointer"
-                          >
-                            📂 Upload .SRT
-                          </button>
-                        </div>
-
-                        {activeSubLang !== 'off' && (
-                          <div className="flex flex-col gap-2 pt-2 border-t border-white/10 text-[11px]">
-                            {/* Row 1: AI Voice-Dubbing + Auto-Mute Mode + Voice Tone */}
-                            <div className="flex flex-wrap items-center gap-2.5">
+                            {availableSubLanguages.map((sub) => (
                               <button
-                                onClick={() => {
-                                  const next = !isAiVoiceDubOn;
-                                  setIsAiVoiceDubOn(next);
-                                  if (!next) {
-                                    stopAiSpeechAndRestoreAudio();
-                                    showHudFeedback('🤖 AI Voice Dub: OFF');
-                                  } else {
-                                    showHudFeedback('🤖 AI Voice Dub: ON (Auto-Mute Active)');
-                                  }
-                                }}
-                                className={`px-3 py-1 rounded-lg font-black border transition-all cursor-pointer flex items-center gap-1.5 ${
-                                  isAiVoiceDubOn
-                                    ? 'bg-gradient-to-r from-[#e50914] to-[#f59e0b] text-white border-amber-300/70 shadow-[0_0_18px_rgba(229,9,20,0.45)]'
-                                    : 'bg-[#141622] text-zinc-300 border-white/15 hover:text-white'
+                                key={`cc-pill-${sub.code}-${sub.url}`}
+                                onClick={() => handleSelectSubLang(sub.code)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
+                                  activeSubLang === sub.code
+                                    ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
+                                    : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
                                 }`}
                               >
-                                <span>🤖 AI Voice Dub (Speak Subtitles): {isAiVoiceDubOn ? 'ON' : 'OFF'}</span>
+                                {sub.displayLabel}
                               </button>
+                            ))}
 
-                              {isAiVoiceDubOn && (
-                                <>
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    <span className="font-black text-red-300">🔇 Dialogue Sound:</span>
-                                    {(
-                                      [
-                                        { id: 'fullmute', label: '100% Mute' },
-                                        { id: 'duck15', label: '15% Soft BGM' },
-                                      ] as const
-                                    ).map((mMode) => (
-                                      <button
-                                        key={`mute-mode-${mMode.id}`}
-                                        onClick={() => setAiVoiceMuteMode(mMode.id)}
-                                        className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                          aiVoiceMuteMode === mMode.id
-                                            ? 'bg-red-500 text-white border-red-300'
-                                            : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                        }`}
-                                      >
-                                        {mMode.label}
-                                      </button>
-                                    ))}
-                                  </div>
+                            {isAdmin && uploadedSubCues && (
+                              <button
+                                onClick={() => handleSelectSubLang('local')}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
+                                  activeSubLang === 'local'
+                                    ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
+                                    : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                }`}
+                              >
+                                📄 {uploadedSubCues.label}
+                              </button>
+                            )}
 
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    <span className="font-black text-amber-300">🎙️ Speaker Match:</span>
-                                    {(
-                                      [
-                                        { id: 'auto', label: 'Auto-Pitch (Male/Female)' },
-                                        { id: 'female', label: 'Female' },
-                                        { id: 'male', label: 'Male' },
-                                      ] as const
-                                    ).map((prof) => (
-                                      <button
-                                        key={`voice-prof-${prof.id}`}
-                                        onClick={() => setAiVoiceProfile(prof.id)}
-                                        className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                          aiVoiceProfile === prof.id
-                                            ? 'bg-amber-400 text-black border-amber-200'
-                                            : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                        }`}
-                                      >
-                                        {prof.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </>
-                              )}
-                            </div>
+                            {isAdmin && (
+                              <>
+                                <input
+                                  ref={subtitleFileInputRef}
+                                  type="file"
+                                  accept=".srt,.vtt,.md.srt,.txt"
+                                  onChange={handleSubtitleFileUpload}
+                                  className="hidden"
+                                />
+                                <button
+                                  onClick={() => subtitleFileInputRef.current?.click()}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.14] text-amber-200 border border-amber-400/30 transition-all cursor-pointer"
+                                >
+                                  📂 Admin Upload .SRT
+                                </button>
+                              </>
+                            )}
+                          </div>
 
-                            {/* Row 2: Hard-Sub Eraser Shield, Position, Width & Text Style */}
-                            <div className="flex flex-wrap items-center gap-3">
+                          {activeSubLang !== 'off' && (
+                            <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/10 text-[11px]">
                               <div className="flex flex-wrap items-center gap-1">
-                                <span className="font-black text-amber-300">🪄 Hard-Sub Eraser:</span>
+                                <span className="font-black text-amber-300">🪄 Sub Backdrop:</span>
                                 {(
                                   [
-                                    { id: 'solid', label: 'Blackout' },
-                                    { id: 'blur', label: 'Blur' },
-                                    { id: 'off', label: 'Off' },
+                                    { id: 'auto', label: 'Auto-Detect' },
+                                    { id: 'blur', label: 'Blur Hard-Subs' },
+                                    { id: 'transparent', label: 'Pure Transparent' },
                                   ] as const
                                 ).map((mode) => (
                                   <button
-                                    key={`eraser-${mode.id}`}
-                                    onClick={() => setHardSubEraserMode(mode.id)}
+                                    key={`sub-mode-${mode.id}`}
+                                    onClick={() => setSubBackdropMode(mode.id)}
                                     className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      hardSubEraserMode === mode.id
+                                      subBackdropMode === mode.id
                                         ? 'bg-amber-400 text-black border-amber-200'
                                         : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
                                     }`}
@@ -3265,51 +3030,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                     {mode.label}
                                   </button>
                                 ))}
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="font-black text-zinc-400">↕️ Position:</span>
-                                {(
-                                  [
-                                    { id: 'low', label: 'Low' },
-                                    { id: 'mid', label: 'Mid' },
-                                    { id: 'high', label: 'High' },
-                                  ] as const
-                                ).map((pos) => (
+                                {subBackdropMode === 'auto' && hardSubCorsBlockedRef.current && (
                                   <button
-                                    key={`pos-${pos.id}`}
-                                    onClick={() => setEraserBottomOffset(pos.id)}
+                                    onClick={() => setHasHardcodedSubtitles((v) => !v)}
                                     className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      eraserBottomOffset === pos.id
-                                        ? 'bg-emerald-400 text-black border-emerald-200'
-                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    {pos.label}
-                                  </button>
-                                ))}
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="font-black text-zinc-400">↔️ Width:</span>
-                                {(
-                                  [
-                                    { id: 'fullbar', label: 'Full Bar' },
-                                    { id: 'box', label: 'Box' },
-                                  ] as const
-                                ).map((wMode) => (
-                                  <button
-                                    key={`width-${wMode.id}`}
-                                    onClick={() => setEraserWidthMode(wMode.id)}
-                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      eraserWidthMode === wMode.id
+                                      hasHardcodedSubtitles
                                         ? 'bg-sky-400 text-black border-sky-200'
                                         : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
                                     }`}
                                   >
-                                    {wMode.label}
+                                    {hasHardcodedSubtitles ? 'Burned-In Blur: ON' : 'Burned-In Blur: OFF'}
                                   </button>
-                                ))}
+                                )}
                               </div>
 
                               <div className="flex flex-wrap items-center gap-1">
@@ -3355,9 +3087,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 ))}
                               </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* TIER 2 EXPANDABLE 4-TAB VIP STUDIO DECK */}
                       {isStudioToolsOpen && (
@@ -3667,81 +3399,85 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
                               {/* Custom Subtitles (CC) & Sleep Timer Row */}
                               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                                    <Captions className="w-3.5 h-3.5" />
-                                    <span>CC:</span>
-                                  </span>
-                                  <button
-                                    onClick={() => handleSelectSubLang('off')}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                      activeSubLang === 'off'
-                                        ? 'bg-sky-500 text-black border-sky-300'
-                                        : 'bg-[#141622] text-zinc-300 border-white/10'
-                                    }`}
-                                  >
-                                    Off
-                                  </button>
-                                  {availableSubLanguages.map((sub) => (
+                                {(availableSubLanguages.length > 0 || isAdmin) ? (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                                      <Captions className="w-3.5 h-3.5" />
+                                      <span>CC:</span>
+                                    </span>
                                     <button
-                                      key={`${sub.code}-${sub.url}`}
-                                      onClick={() => handleSelectSubLang(sub.code)}
+                                      onClick={() => handleSelectSubLang('off')}
                                       className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                        activeSubLang === sub.code
+                                        activeSubLang === 'off'
                                           ? 'bg-sky-500 text-black border-sky-300'
                                           : 'bg-[#141622] text-zinc-300 border-white/10'
                                       }`}
                                     >
-                                      {sub.displayLabel}
+                                      Off
                                     </button>
-                                  ))}
-                                  {uploadedSubCues && (
-                                    <button
-                                      onClick={() => handleSelectSubLang('local')}
-                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                        activeSubLang === 'local'
-                                          ? 'bg-sky-500 text-black border-sky-300'
-                                          : 'bg-[#141622] text-zinc-300 border-white/10'
-                                      }`}
-                                    >
-                                      📄 {uploadedSubCues.label}
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => subtitleFileInputRef.current?.click()}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/15 cursor-pointer"
-                                  >
-                                    + Upload .SRT/.VTT
-                                  </button>
+                                    {availableSubLanguages.map((sub) => (
+                                      <button
+                                        key={`${sub.code}-${sub.url}`}
+                                        onClick={() => handleSelectSubLang(sub.code)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                          activeSubLang === sub.code
+                                            ? 'bg-sky-500 text-black border-sky-300'
+                                            : 'bg-[#141622] text-zinc-300 border-white/10'
+                                        }`}
+                                      >
+                                        {sub.displayLabel}
+                                      </button>
+                                    ))}
+                                    {isAdmin && uploadedSubCues && (
+                                      <button
+                                        onClick={() => handleSelectSubLang('local')}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                          activeSubLang === 'local'
+                                            ? 'bg-sky-500 text-black border-sky-300'
+                                            : 'bg-[#141622] text-zinc-300 border-white/10'
+                                        }`}
+                                      >
+                                        📄 {uploadedSubCues.label}
+                                      </button>
+                                    )}
+                                    {isAdmin && (
+                                      <button
+                                        onClick={() => subtitleFileInputRef.current?.click()}
+                                        className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/15 cursor-pointer"
+                                      >
+                                        + Upload .SRT/.MD.SRT
+                                      </button>
+                                    )}
 
-                                  {activeSubLang !== 'off' && (
-                                    <>
-                                      <span className="text-zinc-600 mx-0.5">|</span>
-                                      {(['sm', 'md', 'lg'] as const).map((sz) => (
-                                        <button
-                                          key={sz}
-                                          onClick={() => setSubFontSize(sz)}
-                                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase cursor-pointer ${
-                                            subFontSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
-                                          }`}
-                                        >
-                                          {sz === 'sm' ? 'S' : sz === 'md' ? 'M' : 'L'}
-                                        </button>
-                                      ))}
-                                      {(['white', 'yellow', 'cyan'] as const).map((col) => (
-                                        <button
-                                          key={col}
-                                          onClick={() => setSubColor(col)}
-                                          className={`px-2 py-0.5 rounded text-[10px] font-black capitalize cursor-pointer border ${
-                                            subColor === col ? 'border-white scale-105' : 'border-white/15 opacity-70'
-                                          } ${col === 'yellow' ? 'text-amber-300' : col === 'cyan' ? 'text-cyan-300' : 'text-white'}`}
-                                        >
-                                          {col}
-                                        </button>
-                                      ))}
-                                    </>
-                                  )}
-                                </div>
+                                    {activeSubLang !== 'off' && (
+                                      <>
+                                        <span className="text-zinc-600 mx-0.5">|</span>
+                                        {(['sm', 'md', 'lg'] as const).map((sz) => (
+                                          <button
+                                            key={sz}
+                                            onClick={() => setSubFontSize(sz)}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase cursor-pointer ${
+                                              subFontSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
+                                            }`}
+                                          >
+                                            {sz === 'sm' ? 'S' : sz === 'md' ? 'M' : 'L'}
+                                          </button>
+                                        ))}
+                                        {(['white', 'yellow', 'cyan'] as const).map((col) => (
+                                          <button
+                                            key={col}
+                                            onClick={() => setSubColor(col)}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-black capitalize cursor-pointer border ${
+                                              subColor === col ? 'border-white scale-105' : 'border-white/15 opacity-70'
+                                            } ${col === 'yellow' ? 'text-amber-300' : col === 'cyan' ? 'text-cyan-300' : 'text-white'}`}
+                                          >
+                                            {col}
+                                          </button>
+                                        ))}
+                                      </>
+                                    )}
+                                  </div>
+                                ) : <div />}
 
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-[11px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1 mr-1">

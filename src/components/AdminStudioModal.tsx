@@ -32,7 +32,9 @@ import {
   FileText,
   Copy,
   Code,
-  DollarSign
+  DollarSign,
+  Captions,
+  Upload
 } from 'lucide-react';
 import { DramaItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
 import { 
@@ -46,6 +48,13 @@ import {
   DEFAULT_AD_CONFIG
 } from '../services/supabaseService';
 import { sendTelegramBroadcast, sendNativePushNotification } from '../services/notificationService';
+import {
+  parseSrtOrVttContent,
+  normalizeSubtitleUrl,
+  getAdminSubtitleOverrides,
+  saveAdminSubtitleOverrides,
+  AdminSubtitleEntry,
+} from '../services/vipPlayerHelper';
 import { INITIAL_DRAMAS } from '../data/initialCatalog';
 
 // Secure SHA-256 Hashing using Native Web Crypto API
@@ -70,7 +79,7 @@ interface AdminStudioModalProps {
   onUpdateWeekendSettings: (settings: WeekendSettings) => void;
   heroBanners: HeroBannerSlide[];
   onUpdateHeroBanners: (banners: HeroBannerSlide[]) => void;
-  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security';
+  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security';
   onAuthSuccess?: () => void;
   onAuthLogout?: () => void;
   isAuthenticatedParent?: boolean;
@@ -115,7 +124,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>(initialTab);
 
   // Ads Manager Local Draft State
   const [adDraft, setAdDraft] = useState<AdConfig>(() => adConfig || { ...DEFAULT_AD_CONFIG });
@@ -282,6 +291,206 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [synopsis, setSynopsis] = useState('');
   const [makeSpotlight, setMakeSpotlight] = useState(true);
   const [makeWeekend, setMakeWeekend] = useState(false);
+
+  // Admin Subtitles Manager State
+  const [adminSubOverrides, setAdminSubOverrides] = useState<Record<string, AdminSubtitleEntry[]>>(() =>
+    getAdminSubtitleOverrides()
+  );
+  const [subTargetDramaId, setSubTargetDramaId] = useState<string>(() => dramas[0]?.id || '');
+  const [subTargetEp, setSubTargetEp] = useState<string>('all');
+  const [subLangCode, setSubLangCode] = useState<string>('hin_eng');
+  const [subUrlInput, setSubUrlInput] = useState<string>('');
+  const [subUploadPreview, setSubUploadPreview] = useState<{ fileName: string; cueCount: number; dataUrl: string } | null>(null);
+  const [subSaveFeedback, setSubSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!subTargetDramaId && localDramas.length > 0) {
+      setSubTargetDramaId(localDramas[0].id);
+    }
+  }, [localDramas, subTargetDramaId]);
+
+  const ADMIN_SUB_LANG_META: Record<string, { label: string; langTag: string }> = {
+    hin_eng: { label: '🇮🇳 Hindi + Eng Mix', langTag: 'hi-IN' },
+    hin: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
+    eng: { label: '🇬🇧 English', langTag: 'en-US' },
+    ur: { label: '🇵🇰 Urdu', langTag: 'ur-PK' },
+    tam: { label: '🇮🇳 Tamil', langTag: 'ta-IN' },
+    tel: { label: '🇮🇳 Telugu', langTag: 'te-IN' },
+    ben: { label: '🇮🇳 Bengali', langTag: 'bn-IN' },
+    mar: { label: '🇮🇳 Marathi', langTag: 'mr-IN' },
+    kor: { label: '🇰🇷 Korean', langTag: 'ko-KR' },
+    chi: { label: '🇨🇳 Chinese', langTag: 'zh-CN' },
+    ind: { label: '🇮🇩 Indonesian', langTag: 'id-ID' },
+  };
+
+  const handleAdminSubFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = typeof reader.result === 'string' ? reader.result : '';
+      const cues = parseSrtOrVttContent(content);
+      if (cues.length === 0) {
+        setSubSaveFeedback({
+          type: 'error',
+          message: `No valid subtitle timestamps found in "${file.name}". Please upload a valid .srt, .md.srt, or .vtt file.`,
+        });
+        return;
+      }
+      const dataUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
+      setSubUploadPreview({ fileName: file.name, cueCount: cues.length, dataUrl });
+      setSubSaveFeedback({
+        type: 'success',
+        message: `Parsed ${cues.length} subtitle cues from "${file.name}". Click Save Subtitle Track to publish.`,
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const applyAdminSubEntryToDramas = (
+    dramaId: string,
+    entriesForDrama: AdminSubtitleEntry[]
+  ) => {
+    const updated = localDramas.map((d) => {
+      if (d.id !== dramaId) return d;
+      const dramaSubMap: Record<string, { code: string; label: string; langTag: string; url: string }> = {
+        ...(d.subtitles || {}),
+      };
+      entriesForDrama
+        .filter((item) => item.epNum === 'all')
+        .forEach((item) => {
+          dramaSubMap[item.code] = {
+            code: item.code,
+            label: item.label,
+            langTag: item.langTag,
+            url: item.url,
+          };
+        });
+
+      const updatedEpisodes = d.episodes.map((ep) => {
+        const epNum =
+          typeof ep.episodeNumber === 'number'
+            ? ep.episodeNumber
+            : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '1', 10);
+        const epSubMap = { ...(ep.subtitles || {}) };
+        entriesForDrama
+          .filter((item) => item.epNum === epNum)
+          .forEach((item) => {
+            epSubMap[item.code] = {
+              code: item.code,
+              label: item.label,
+              langTag: item.langTag,
+              url: item.url,
+            };
+          });
+        return {
+          ...ep,
+          subtitles: Object.keys(epSubMap).length > 0 ? epSubMap : ep.subtitles,
+          subtitleLink: Object.values(epSubMap)[0]?.url || ep.subtitleLink,
+        };
+      });
+
+      return {
+        ...d,
+        subtitles: Object.keys(dramaSubMap).length > 0 ? dramaSubMap : d.subtitles,
+        subtitleLink: Object.values(dramaSubMap)[0]?.url || d.subtitleLink,
+        episodes: updatedEpisodes,
+      };
+    });
+    setLocalDramas(updated);
+    onUpdateDramasCuration(updated);
+  };
+
+  const handleSaveAdminSubtitle = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubSaveFeedback(null);
+    if (!subTargetDramaId) {
+      setSubSaveFeedback({ type: 'error', message: 'Please select a drama first.' });
+      return;
+    }
+    const rawUrl = subUploadPreview?.dataUrl || normalizeSubtitleUrl(subUrlInput);
+    if (!rawUrl || (!/^https?:\/\//i.test(rawUrl) && !/^data:/i.test(rawUrl))) {
+      setSubSaveFeedback({
+        type: 'error',
+        message: 'Paste a valid Hugging Face / direct .srt or .md.srt URL, or upload a local file.',
+      });
+      return;
+    }
+
+    const meta = ADMIN_SUB_LANG_META[subLangCode] || { label: subLangCode.toUpperCase(), langTag: 'en-US' };
+    const parsedEp: number | 'all' =
+      subTargetEp === 'all' ? 'all' : Math.max(1, parseInt(subTargetEp, 10) || 1);
+
+    const newEntry: AdminSubtitleEntry = {
+      code: subLangCode,
+      label: meta.label,
+      langTag: meta.langTag,
+      url: rawUrl,
+      epNum: parsedEp,
+    };
+
+    const existingList = adminSubOverrides[subTargetDramaId] || [];
+    const nextList = [
+      ...existingList.filter((item) => !(item.code === newEntry.code && item.epNum === newEntry.epNum)),
+      newEntry,
+    ];
+    const nextMap = { ...adminSubOverrides, [subTargetDramaId]: nextList };
+    setAdminSubOverrides(nextMap);
+    saveAdminSubtitleOverrides(nextMap);
+    applyAdminSubEntryToDramas(subTargetDramaId, nextList);
+
+    setSubUrlInput('');
+    setSubUploadPreview(null);
+    setSubSaveFeedback({
+      type: 'success',
+      message: `Saved ${meta.label} (${parsedEp === 'all' ? 'All Episodes / Movie' : `Ep ${parsedEp}`})! Live in player immediately.`,
+    });
+  };
+
+  const handleRemoveAdminSubtitle = (dramaId: string, code: string, epNum: number | 'all') => {
+    const existingList = adminSubOverrides[dramaId] || [];
+    const nextList = existingList.filter((item) => !(item.code === code && item.epNum === epNum));
+    const nextMap = { ...adminSubOverrides };
+    if (nextList.length > 0) {
+      nextMap[dramaId] = nextList;
+    } else {
+      delete nextMap[dramaId];
+    }
+    setAdminSubOverrides(nextMap);
+    saveAdminSubtitleOverrides(nextMap);
+
+    const updated = localDramas.map((d) => {
+      if (d.id !== dramaId) return d;
+      if (epNum === 'all') {
+        const nextDramaSubs = { ...(d.subtitles || {}) };
+        delete nextDramaSubs[code];
+        return {
+          ...d,
+          subtitles: Object.keys(nextDramaSubs).length > 0 ? nextDramaSubs : undefined,
+        };
+      }
+      return {
+        ...d,
+        episodes: d.episodes.map((ep) => {
+          const n =
+            typeof ep.episodeNumber === 'number'
+              ? ep.episodeNumber
+              : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '1', 10);
+          if (n !== epNum || !ep.subtitles) return ep;
+          const nextEpSubs = { ...ep.subtitles };
+          delete nextEpSubs[code];
+          return {
+            ...ep,
+            subtitles: Object.keys(nextEpSubs).length > 0 ? nextEpSubs : undefined,
+          };
+        }),
+      };
+    });
+    setLocalDramas(updated);
+    onUpdateDramasCuration(updated);
+    setSubSaveFeedback({ type: 'success', message: 'Removed subtitle track.' });
+  };
 
   // Broadcast state
   const [notifTitle, setNotifTitle] = useState('');
@@ -1244,6 +1453,16 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
               </button>
 
               <button
+                onClick={() => setActiveTab('subtitles')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                  activeTab === 'subtitles' ? 'bg-[#e50914] text-white shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Captions className="w-3.5 h-3.5 text-sky-300" />
+                <span>Subtitles (.SRT / .MD.SRT)</span>
+              </button>
+
+              <button
                 onClick={() => setActiveTab('broadcast')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
                   activeTab === 'broadcast' ? 'bg-[#e50914] text-white shadow' : 'text-zinc-400 hover:text-white'
@@ -2189,6 +2408,163 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   <span>{isSavingSupabase ? 'Inserting...' : '📌 Publish to Live Portal (Sabse Aage #1)'}</span>
                 </button>
               </form>
+            )}
+
+            {/* TAB: ADMIN-ONLY SUBTITLES MANAGER (.SRT / .MD.SRT & HUGGING FACE URLS) */}
+            {activeTab === 'subtitles' && (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-gradient-to-r from-sky-500/15 via-black/40 to-transparent border border-sky-400/30 space-y-1.5">
+                  <div className="flex items-center gap-2 text-white font-black text-xs">
+                    <Captions className="w-4 h-4 text-sky-400" />
+                    <span>Admin Subtitle Manager (.SRT / .MD.SRT &amp; Hugging Face Direct URLs)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Attach <strong>.srt</strong>, <strong>.md.srt</strong> (e.g. Hugging Face <code className="text-sky-300">resolve/main/...md.srt?download=true</code>), or <strong>.vtt</strong> subtitle tracks to any drama or episode. Audience viewers only see the Subtitle bar on titles where tracks exist—upload buttons remain strictly Admin-only.
+                  </p>
+                </div>
+
+                {subSaveFeedback && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-bold border ${
+                      subSaveFeedback.type === 'success'
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+                        : 'bg-red-500/20 border-red-500/40 text-red-200'
+                    }`}
+                  >
+                    {subSaveFeedback.message}
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveAdminSubtitle} className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Select Drama / Movie
+                      </label>
+                      <select
+                        value={subTargetDramaId}
+                        onChange={(e) => setSubTargetDramaId(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-[#181924] border border-white/10 text-white text-xs outline-none focus:border-sky-400"
+                      >
+                        {localDramas.map((d) => (
+                          <option key={`sub-opt-${d.id}`} value={d.id}>
+                            {d.title} ({d.category})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Episode Number
+                      </label>
+                      <input
+                        type="text"
+                        value={subTargetEp}
+                        onChange={(e) => setSubTargetEp(e.target.value)}
+                        placeholder="all (or 1, 2, 3...)"
+                        className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none focus:border-sky-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                        Subtitle Language
+                      </label>
+                      <select
+                        value={subLangCode}
+                        onChange={(e) => setSubLangCode(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-[#181924] border border-white/10 text-white text-xs outline-none focus:border-sky-400"
+                      >
+                        {Object.entries(ADMIN_SUB_LANG_META).map(([code, meta]) => (
+                          <option key={`sub-lang-${code}`} value={code}>
+                            {meta.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                      Hugging Face / Direct .SRT or .MD.SRT URL
+                    </label>
+                    <input
+                      type="url"
+                      value={subUrlInput}
+                      onChange={(e) => {
+                        setSubUrlInput(e.target.value);
+                        if (e.target.value.trim()) setSubUploadPreview(null);
+                      }}
+                      placeholder="https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/series_subtitles_hindi_english_mix.md.srt?download=true"
+                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs font-mono outline-none focus:border-sky-400"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <label className="px-3.5 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-xs font-black text-amber-200 cursor-pointer flex items-center gap-1.5 transition-all">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload Local .SRT / .MD.SRT / .VTT</span>
+                      <input
+                        type="file"
+                        accept=".srt,.vtt,.md.srt,.txt"
+                        onChange={handleAdminSubFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {subUploadPreview && (
+                      <span className="text-[11px] font-bold text-emerald-300">
+                        ✅ {subUploadPreview.fileName} ({subUploadPreview.cueCount} cues parsed)
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-black shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Save &amp; Publish Subtitle Track Live</span>
+                  </button>
+                </form>
+
+                {/* Active Admin Subtitle Overrides List */}
+                {subTargetDramaId && (adminSubOverrides[subTargetDramaId]?.length || 0) > 0 && (
+                  <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
+                    <div className="text-xs font-black text-white">
+                      Attached Admin Subtitles for Selected Title
+                    </div>
+                    <div className="space-y-1.5">
+                      {(adminSubOverrides[subTargetDramaId] || []).map((entry) => (
+                        <div
+                          key={`${entry.code}-${entry.epNum}`}
+                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-black text-sky-300">{entry.label}</span>
+                            <span className="text-zinc-400 mx-2">•</span>
+                            <span className="font-bold text-amber-200">
+                              {entry.epNum === 'all' ? 'All Episodes / Movie' : `Episode ${entry.epNum}`}
+                            </span>
+                            <p className="text-[10px] text-zinc-500 truncate mt-0.5 font-mono">
+                              {entry.url.startsWith('data:') ? 'Uploaded Local Subtitle File (Embedded)' : entry.url}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdminSubtitle(subTargetDramaId, entry.code, entry.epNum)}
+                            className="p-1.5 rounded-lg bg-red-500/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 transition-all shrink-0 cursor-pointer"
+                            title="Remove Subtitle Track"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* TAB 4: BROADCAST NOTIFICATIONS & TELEGRAM BOT */}

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { 
   Bell, 
   Bookmark, 
@@ -9,9 +9,13 @@ import {
   Search,
   Home,
   Share2,
-  Check
+  Check,
+  Flame,
+  Trophy,
+  Download
 } from 'lucide-react';
 import { ParticleMode } from './SakuraCanvas';
+import { VipStats, getVipRankMeta } from '../services/vipPlayerHelper';
 
 interface NavbarProps {
   unreadNotifsCount: number;
@@ -33,6 +37,9 @@ interface NavbarProps {
   onOpenSearch?: () => void;
   onGoHome?: () => void;
   onOpenSearchModal?: () => void;
+  vipStats?: VipStats;
+  onInstallApp?: () => void;
+  isAppInstalled?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -55,10 +62,35 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSearch,
   onGoHome,
   onOpenSearchModal,
+  vipStats,
+  onInstallApp,
+  isAppInstalled = false,
 }) => {
   const logoClicksRef = useRef(0);
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showVipPopover, setShowVipPopover] = useState(false);
+  const vipPopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showVipPopover) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (vipPopoverRef.current && !vipPopoverRef.current.contains(e.target as Node)) {
+        setShowVipPopover(false);
+      }
+    };
+    window.addEventListener('mousedown', handleOutside);
+    return () => window.removeEventListener('mousedown', handleOutside);
+  }, [showVipPopover]);
+
+  const effectiveStats: VipStats = vipStats || {
+    totalMinutes: 0,
+    totalSecondsCarry: 0,
+    episodesCompleted: 0,
+    streakDays: 0,
+    lastWatchDate: '',
+  };
+  const vipRank = getVipRankMeta(effectiveStats.totalMinutes);
 
   const handleCopyPortalLink = () => {
     navigator.clipboard.writeText('https://asiaflixprime.pages.dev/');
@@ -91,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-50 bg-[#08080c]/95 backdrop-blur-md border-b border-white/[0.08] transition-all">
-      <div className="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center justify-between gap-2 w-full overflow-hidden">
+      <div className="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center justify-between gap-2 w-full">
         {/* Brand */}
         <div className="flex items-center gap-2.5 shrink-0 min-w-0">
           <div onClick={handleLogoClick} className="flex items-center gap-2.5 group cursor-pointer select-none shrink-0">
@@ -129,6 +161,85 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* VIP Binge Level & Daily Streak Badge + Mini-Popover */}
+          <div className="relative shrink-0" ref={vipPopoverRef}>
+            <button
+              onClick={() => setShowVipPopover((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-gradient-to-r ${vipRank.gradientClass} border text-[12px] font-black transition-all shadow-[0_0_14px_rgba(245,158,11,0.2)] hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap shrink-0`}
+              title="View your VIP Binge Level & Watch Streak"
+            >
+              <span>{vipRank.title}</span>
+              <span className="opacity-60">•</span>
+              <span className="flex items-center gap-0.5 text-amber-300">
+                🔥 {effectiveStats.streakDays}d
+              </span>
+            </button>
+
+            {showVipPopover && (
+              <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-[#10121b] border border-amber-400/35 shadow-[0_20px_50px_rgba(0,0,0,0.95)] p-4 z-50 space-y-3 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-black text-white uppercase tracking-wider">VIP Binge Profile</span>
+                  </div>
+                  <span className="text-[11px] font-black px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                    {vipRank.title}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="p-2 rounded-xl bg-white/[0.04] border border-white/10">
+                    <div className="text-sm font-black text-white">{effectiveStats.totalMinutes}m</div>
+                    <div className="text-[10px] text-zinc-400 font-bold">Binged</div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white/[0.04] border border-white/10">
+                    <div className="text-sm font-black text-emerald-300">{effectiveStats.episodesCompleted}</div>
+                    <div className="text-[10px] text-zinc-400 font-bold">Eps Done</div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white/[0.04] border border-white/10">
+                    <div className="text-sm font-black text-amber-300 flex items-center justify-center gap-0.5">
+                      <Flame className="w-3.5 h-3.5 text-amber-400" />
+                      {effectiveStats.streakDays}d
+                    </div>
+                    <div className="text-[10px] text-zinc-400 font-bold">Streak</div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] font-bold">
+                    <span className="text-zinc-400">
+                      {vipRank.nextRankTitle ? `Next: ${vipRank.nextRankTitle}` : 'Max VIP Rank Reached!'}
+                    </span>
+                    <span className="text-amber-300 font-black">{vipRank.progressPct}%</span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#e50914] via-[#f59e0b] to-emerald-400 transition-all duration-500"
+                      style={{ width: `${vipRank.progressPct}%` }}
+                    />
+                  </div>
+                  {vipRank.nextRankMinutes !== null && (
+                    <p className="text-[10px] text-zinc-400">
+                      Watch <strong className="text-white">{Math.max(1, vipRank.nextRankMinutes - effectiveStats.totalMinutes)} more mins</strong> to level up!
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 1-Click Install App PWA Button */}
+          {onInstallApp && !isAppInstalled && (
+            <button
+              onClick={onInstallApp}
+              className="px-3 py-2 text-[13px] font-extrabold rounded-xl bg-emerald-500/15 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.2)]"
+              title="Install AsiaFlix Prime App"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>📲 App</span>
+            </button>
+          )}
+
           {/* ALWAYS-VISIBLE PROMINENT HOME BUTTON (PHONE, TABLET, LAPTOP) */}
           {onGoHome && (
             <button

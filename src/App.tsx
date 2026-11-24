@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from './types/drama';
+import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings, MoodFilterType, SubtitleTrack } from './types/drama';
 import { INITIAL_DRAMAS, INITIAL_NOTIFICATIONS, INITIAL_TICKETS, INITIAL_HERO_BANNERS } from './data/initialCatalog';
 import { SakuraCanvas, ParticleMode } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
@@ -34,6 +34,7 @@ import {
 } from './services/notificationService';
 import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
 import { createDramaSlug, parseDeepLinkFromLocation } from './services/urlHelper';
+import { getVipStats, VipStats, VIP_STATS_UPDATED_EVENT } from './services/vipPlayerHelper';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
@@ -482,13 +483,87 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedYear, setSelectedYear] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedMood, setSelectedMood] = useState<MoodFilterType>('all');
 
-  // --- MODAL & DEEP-LINK ROUTING STATES ---
-  const [selectedDrama, setSelectedDrama] = useState<DramaItem | null>(null);
-  const [deepLinkEpisode, setDeepLinkEpisode] = useState<number | null>(() => {
-    return parseDeepLinkFromLocation()?.epNum ?? null;
+  // --- VIP BINGE STATS & PWA INSTALL PROMPT STATE ---
+  const [vipStats, setVipStats] = useState<VipStats>(() => getVipStats());
+  const deferredInstallPromptRef = useRef<{ prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia?.('(display-mode: standalone)').matches || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
   });
-  const pendingDeepLinkRef = useRef(parseDeepLinkFromLocation());
+  const [installGuideToast, setInstallGuideToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    const syncStats = () => setVipStats(getVipStats());
+    window.addEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+    window.addEventListener('storage', syncStats);
+
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      deferredInstallPromptRef.current = e as unknown as {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: string }>;
+      };
+    };
+    const handleAppInstalled = () => {
+      deferredInstallPromptRef.current = null;
+      setIsAppInstalled(true);
+      setInstallGuideToast('✅ AsiaFlix Prime App installed successfully!');
+      window.setTimeout(() => setInstallGuideToast(null), 3500);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+    return () => {
+      window.removeEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+      window.removeEventListener('storage', syncStats);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    const promptEvt = deferredInstallPromptRef.current;
+    if (promptEvt) {
+      try {
+        await promptEvt.prompt();
+        const choice = await promptEvt.userChoice;
+        if (choice?.outcome === 'accepted') {
+          deferredInstallPromptRef.current = null;
+          setIsAppInstalled(true);
+          return;
+        }
+      } catch {
+        // fallback to toast guide below
+      }
+    }
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    setInstallGuideToast(
+      isIos
+        ? '📲 Tap Share ⬆️ at bottom of Safari → "Add to Home Screen"'
+        : '📲 Tap your browser menu (⋮) → "Install App" or "Add to Home Screen"'
+    );
+    window.setTimeout(() => setInstallGuideToast(null), 5000);
+  };
+
+  // --- DRAMA ROULETTE (SURPRISE ME) STATE ---
+  const [rouletteState, setRouletteState] = useState<{
+    isOpen: boolean;
+    displayTitle: string;
+    chosenTitle: string | null;
+  }>({ isOpen: false, displayTitle: '', chosenTitle: null });
+  const rouletteTimerRef = useRef<number | null>(null);
+
+  // --- MODAL, MINI-PLAYER & DEEP-LINK ROUTING STATES ---
+  const initialDeepLink = parseDeepLinkFromLocation();
+  const [selectedDrama, setSelectedDrama] = useState<DramaItem | null>(null);
+  const [isMiniPlayer, setIsMiniPlayer] = useState<boolean>(false);
+  const [deepLinkEpisode, setDeepLinkEpisode] = useState<number | null>(() => initialDeepLink?.epNum ?? null);
+  const [deepLinkTime, setDeepLinkTime] = useState<number | null>(() => initialDeepLink?.t ?? null);
+  const [deepLinkParty, setDeepLinkParty] = useState<string | null>(() => initialDeepLink?.party ?? null);
+  const [deepLinkTrack, setDeepLinkTrack] = useState<AudioType | null>(() => initialDeepLink?.track ?? null);
+  const pendingDeepLinkRef = useRef(initialDeepLink);
   const isHandlingPopStateRef = useRef<boolean>(false);
   const savedScrollYRef = useRef<number>(0);
 
@@ -506,6 +581,10 @@ export default function App() {
     if (!selectedDrama) {
       savedScrollYRef.current = window.scrollY;
     }
+    setIsMiniPlayer(false);
+    setDeepLinkTime(null);
+    setDeepLinkParty(null);
+    setDeepLinkTrack(null);
     setDeepLinkEpisode(epOverride);
     setSelectedDrama(drama);
     const slug = createDramaSlug(drama);
@@ -536,7 +615,11 @@ export default function App() {
   const handleCloseDrama = () => {
     const restoreY = savedScrollYRef.current;
     pendingDeepLinkRef.current = null;
+    setIsMiniPlayer(false);
     setDeepLinkEpisode(null);
+    setDeepLinkTime(null);
+    setDeepLinkParty(null);
+    setDeepLinkTrack(null);
     setSelectedDrama(null);
     document.title = DEFAULT_DOC_TITLE;
     if (!isHandlingPopStateRef.current && (window.location.pathname !== '/' || window.location.search)) {
@@ -673,6 +756,9 @@ export default function App() {
       if (matched) {
         pendingDeepLinkRef.current = null;
         setDeepLinkEpisode(pending.epNum);
+        setDeepLinkTime(pending.t ?? null);
+        setDeepLinkParty(pending.party ?? null);
+        setDeepLinkTrack(pending.track ?? null);
         setSelectedDrama(matched);
         document.title =
           pending.epNum !== null
@@ -697,15 +783,23 @@ export default function App() {
       const parsed = parseDeepLinkFromLocation();
       if (!parsed) {
         pendingDeepLinkRef.current = null;
+        setIsMiniPlayer(false);
         setDeepLinkEpisode(null);
+        setDeepLinkTime(null);
+        setDeepLinkParty(null);
+        setDeepLinkTrack(null);
         setSelectedDrama(null);
         document.title = DEFAULT_DOC_TITLE;
       } else {
         const matched = findDramaBySlug(dramasRef.current, parsed.slug);
         if (matched) {
           pendingDeepLinkRef.current = null;
+          setIsMiniPlayer(false);
           setSelectedDrama(matched);
           setDeepLinkEpisode(parsed.epNum);
+          setDeepLinkTime(parsed.t ?? null);
+          setDeepLinkParty(parsed.party ?? null);
+          setDeepLinkTrack(parsed.track ?? null);
           document.title =
             parsed.epNum !== null
               ? `Ep ${parsed.epNum} • ${matched.title} | AsiaFlix Prime`
@@ -1365,15 +1459,34 @@ export default function App() {
         const rawAudioCell = audioIdx >= 0 ? row[audioIdx]?.trim() || '' : '';
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
 
-        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub)
+        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub), and Sub1/Sub2... (Subtitles)
         const hindiAudioMap = new Map<number, string>();
         const fanDubAudioMap = new Map<number, string>();
         const origAudioMap = new Map<number, string>();
+        const parsedSubtitleTracks: SubtitleTrack[] = [];
 
         if (rawAudioCell) {
+          const subRegex = /\bsub(?:title)?\s*[-_#]?\s*(\d+)?\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          let sm: RegExpExecArray | null;
+          while ((sm = subRegex.exec(rawAudioCell)) !== null) {
+            const subUrl = normalizeDirectMediaUrl(sm[2]);
+            if (subUrl && !parsedSubtitleTracks.some((s) => s.url === subUrl)) {
+              const subIdx = sm[1] ? ` ${sm[1]}` : parsedSubtitleTracks.length > 0 ? ` ${parsedSubtitleTracks.length + 1}` : '';
+              parsedSubtitleTracks.push({
+                label: `CC Sub${subIdx}`.trim(),
+                url: subUrl,
+              });
+            }
+          }
+
+          const cellWithoutSubtitles = rawAudioCell.replace(
+            /\bsub(?:title)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+            ' '
+          );
+
           const hdRegex = /\bhd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
           let am: RegExpExecArray | null;
-          while ((am = hdRegex.exec(rawAudioCell)) !== null) {
+          while ((am = hdRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
             const aUrl = normalizeDirectMediaUrl(am[2]);
             if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
@@ -1382,7 +1495,7 @@ export default function App() {
           }
 
           const fdRegex = /\bfd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          while ((am = fdRegex.exec(rawAudioCell)) !== null) {
+          while ((am = fdRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
             const aUrl = normalizeDirectMediaUrl(am[2]);
             if (!Number.isNaN(epNum) && aUrl && !fanDubAudioMap.has(epNum)) {
@@ -1391,7 +1504,7 @@ export default function App() {
           }
 
           const osRegex = /\bos\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          while ((am = osRegex.exec(rawAudioCell)) !== null) {
+          while ((am = osRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
             const aUrl = normalizeDirectMediaUrl(am[2]);
             if (!Number.isNaN(epNum) && aUrl && !origAudioMap.has(epNum)) {
@@ -1400,7 +1513,7 @@ export default function App() {
           }
 
           // Generic Ep1/Ep2 fallback inside Audio column (only after stripping HD/FD/OS tokens) -> Hindi Dubbed
-          const withoutTrackAudio = rawAudioCell.replace(
+          const withoutTrackAudio = cellWithoutSubtitles.replace(
             /\b(?:hd|fd|os)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
             ' '
           );
@@ -1414,21 +1527,21 @@ export default function App() {
           }
 
           // Unnumbered track prefixes or single direct movie/episode URL
-          const hdUnnumbered = rawAudioCell.match(/\bhd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          const hdUnnumbered = cellWithoutSubtitles.match(/\bhd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (hdUnnumbered && !hindiAudioMap.has(1)) {
             hindiAudioMap.set(1, normalizeDirectMediaUrl(hdUnnumbered[1]));
           }
-          const fdUnnumbered = rawAudioCell.match(/\bfd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          const fdUnnumbered = cellWithoutSubtitles.match(/\bfd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (fdUnnumbered && !fanDubAudioMap.has(1)) {
             fanDubAudioMap.set(1, normalizeDirectMediaUrl(fdUnnumbered[1]));
           }
-          const osUnnumbered = rawAudioCell.match(/\bos\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          const osUnnumbered = cellWithoutSubtitles.match(/\bos\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (osUnnumbered && !origAudioMap.has(1)) {
             origAudioMap.set(1, normalizeDirectMediaUrl(osUnnumbered[1]));
           }
 
           if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0) {
-            const singleRawAudio = rawAudioCell.match(/https?:\/\/[^\s,\n|"'<>]+/);
+            const singleRawAudio = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/);
             if (singleRawAudio) {
               hindiAudioMap.set(1, normalizeDirectMediaUrl(singleRawAudio[0]));
             }
@@ -1734,6 +1847,11 @@ export default function App() {
 
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
         applyEpisodeThumbnails(parsedEpisodes);
+        if (parsedSubtitleTracks.length > 0) {
+          parsedEpisodes.forEach((ep) => {
+            ep.subtitleTracks = parsedSubtitleTracks;
+          });
+        }
 
         // Parse total planned episodes from Details (e.g. "10 Episodes" -> 10, "24 Episodes" -> 24)
         let plannedTotal = 0;
@@ -1988,6 +2106,14 @@ export default function App() {
           if (resolvedMovieHindiStream && !prev.movieStreamLink) prev.movieStreamLink = resolvedMovieHindiStream;
           if (resolvedMovieFanDubStream && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = resolvedMovieFanDubStream;
           if (resolvedMovieOrigStream && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = resolvedMovieOrigStream;
+          if (parsedSubtitleTracks.length > 0) {
+            const existingSubs = prev.subtitleTracks || [];
+            const mergedSubs = [...existingSubs];
+            parsedSubtitleTracks.forEach((s) => {
+              if (!mergedSubs.some((x) => x.url === s.url)) mergedSubs.push(s);
+            });
+            prev.subtitleTracks = mergedSubs;
+          }
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
           }
@@ -2079,6 +2205,7 @@ export default function App() {
           movieStreamLink: resolvedMovieHindiStream,
           movieFanDubStreamLink: resolvedMovieFanDubStream,
           movieEngSubStreamLink: resolvedMovieOrigStream,
+          subtitleTracks: parsedSubtitleTracks.length > 0 ? parsedSubtitleTracks : undefined,
           episodes: dramaEpisodes,
           
           // Google Sheet Fields
@@ -2782,12 +2909,13 @@ export default function App() {
             d.comingSoonAudios?.includes('Hindi Dubbed')
           );
           if (!hasHindi) return false;
-        } else if (selectedAudio === 'Fan Dubbed') {
+        } else if (selectedAudio === 'Fan Dubbed' || selectedAudio === 'Hindi Fan Dubbed') {
           const hasFan = Boolean(
             d.telegramFanDub ||
             d.availableAudios.some((a) => a.toLowerCase().includes('fan')) ||
             d.defaultAudio.toLowerCase().includes('fan') ||
-            d.comingSoonAudios?.includes('Fan Dubbed')
+            d.comingSoonAudios?.includes('Fan Dubbed') ||
+            d.comingSoonAudios?.includes('Hindi Fan Dubbed')
           );
           if (!hasFan) return false;
         } else if (selectedAudio === 'Original / Eng Sub') {
@@ -2845,6 +2973,36 @@ export default function App() {
         }
       }
 
+      // 6. Mood & Trope Quick-Filter
+      if (selectedMood !== 'all') {
+        if (selectedMood === 'short') {
+          const isShort =
+            (typeof d.totalEpisodes === 'number' && d.totalEpisodes <= 12) ||
+            Boolean(d.isMovie) ||
+            d.category === 'Asian Movies';
+          if (!isShort) return false;
+        } else {
+          const haystack = [
+            d.title,
+            d.subCategory,
+            d.synopsis,
+            ...(d.tags || []),
+            ...(d.hashtags || []),
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+
+          if (selectedMood === 'romance') {
+            if (!/(romance|youth|love|comedy|idol|ceo|sweet|rom-com)/i.test(haystack)) return false;
+          } else if (selectedMood === 'thriller') {
+            if (!/(thriller|crime|action|mystery|supernatural|dark|revenge|horror|suspense)/i.test(haystack)) return false;
+          } else if (selectedMood === 'fantasy') {
+            if (!/(fantasy|historical|wuxia|period|sci-fi|palace|xianxia|myth|time travel)/i.test(haystack)) return false;
+          }
+        }
+      }
+
       return true;
     });
 
@@ -2855,7 +3013,7 @@ export default function App() {
       seen.add(d.id);
       return true;
     });
-  }, [dramas, searchQuery, selectedAudio, selectedCategory, selectedYear, selectedStatus]);
+  }, [dramas, searchQuery, selectedAudio, selectedCategory, selectedYear, selectedStatus, selectedMood]);
 
   // Featured dramas for Hero Carousel (unique by ID)
   const featuredDramas = useMemo(() => {
@@ -2954,6 +3112,53 @@ export default function App() {
     window.scrollTo({ top: 400, behavior: 'smooth' });
   };
 
+  const handleSurpriseMe = () => {
+    const streamPool = dramas.filter((d) =>
+      Boolean(
+        d.movieStreamLink ||
+          d.movieFanDubStreamLink ||
+          d.movieEngSubStreamLink ||
+          d.episodes?.some((e) => e.streamLink || e.hindiFanDubStreamLink || e.engSubStreamLink)
+      )
+    );
+    const topPool = (streamPool.length > 0 ? streamPool : dramas).filter((d) => d.rating >= 8.8);
+    const pool = topPool.length > 0 ? topPool : streamPool.length > 0 ? streamPool : dramas;
+    if (pool.length === 0) return;
+
+    const chosen = pool[Math.floor(Math.random() * pool.length)];
+    if (rouletteTimerRef.current) window.clearInterval(rouletteTimerRef.current);
+
+    let tick = 0;
+    setRouletteState({
+      isOpen: true,
+      displayTitle: pool[0].title,
+      chosenTitle: null,
+    });
+
+    rouletteTimerRef.current = window.setInterval(() => {
+      tick += 1;
+      const sample = pool[Math.floor(Math.random() * pool.length)];
+      if (tick >= 11) {
+        if (rouletteTimerRef.current) window.clearInterval(rouletteTimerRef.current);
+        setRouletteState({
+          isOpen: true,
+          displayTitle: chosen.title,
+          chosenTitle: chosen.title,
+        });
+        window.setTimeout(() => {
+          setRouletteState({ isOpen: false, displayTitle: '', chosenTitle: null });
+          handleOpenDrama(chosen);
+        }, 280);
+      } else {
+        setRouletteState({
+          isOpen: true,
+          displayTitle: sample.title,
+          chosenTitle: null,
+        });
+      }
+    }, 75);
+  };
+
   const handleGoHome = () => {
     setSearchQuery('');
     setInstantSearchQuery('');
@@ -2962,8 +3167,13 @@ export default function App() {
     setSelectedCategory('all');
     setSelectedYear('all');
     setSelectedStatus('all');
+    setSelectedMood('all');
     pendingDeepLinkRef.current = null;
+    setIsMiniPlayer(false);
     setDeepLinkEpisode(null);
+    setDeepLinkTime(null);
+    setDeepLinkParty(null);
+    setDeepLinkTrack(null);
     setSelectedDrama(null);
     document.title = DEFAULT_DOC_TITLE;
     if (!isHandlingPopStateRef.current && (window.location.pathname !== '/' || window.location.search)) {
@@ -2998,11 +3208,18 @@ export default function App() {
       {/* Crisp Falling Particle Ambience Canvas */}
       <SakuraCanvas enabled={particleMode !== 'off'} mode={particleMode} />
 
-      {selectedDrama ? (
-        <div className="w-full min-w-full min-h-screen bg-[#050508] relative z-50">
+      {selectedDrama && (
+        <div className={isMiniPlayer ? '' : 'w-full min-w-full min-h-screen bg-[#050508] relative z-50'}>
           <DramaDetailModal
             drama={selectedDrama}
+            allDramas={dramas}
+            onSelectDrama={(nextDrama) => handleOpenDrama(nextDrama)}
             initialEpisode={deepLinkEpisode}
+            initialTimestamp={deepLinkTime}
+            initialPartyRoom={deepLinkParty}
+            initialTrack={deepLinkTrack}
+            isMiniPlayer={isMiniPlayer}
+            onToggleMiniPlayer={() => setIsMiniPlayer((prev) => !prev)}
             onActiveEpisodeChange={handleActiveEpisodeChange}
             onClose={handleCloseDrama}
             onToggleWatchlist={handleToggleWatchlist}
@@ -3020,7 +3237,9 @@ export default function App() {
             }}
           />
         </div>
-      ) : (
+      )}
+
+      {(!selectedDrama || isMiniPlayer) && (
         <>
           {/* Top Notice Running Marquee */}
           <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
@@ -3052,6 +3271,9 @@ export default function App() {
         onOpenSearch={() => setIsInstantSearchOpen(true)}
         onOpenSearchModal={() => setIsInstantSearchOpen(true)}
         onGoHome={handleGoHome}
+        vipStats={vipStats}
+        onInstallApp={handleInstallApp}
+        isAppInstalled={isAppInstalled}
       />
 
       {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
@@ -3144,6 +3366,9 @@ export default function App() {
         onSelectYear={setSelectedYear}
         selectedStatus={selectedStatus}
         onSelectStatus={setSelectedStatus}
+        selectedMood={selectedMood}
+        onSelectMood={setSelectedMood}
+        onSurpriseMe={handleSurpriseMe}
         totalFilteredCount={filteredDramas.length}
         isPhoneDevice={isPhoneDevice}
       />
@@ -3151,7 +3376,7 @@ export default function App() {
       {/* MAIN CATALOG CONTENT */}
       <main className="flex-1 pb-16 w-full">
         {/* If search query or specific filter is active: show isolated instant search results */}
-        {searchQuery.trim() !== '' || selectedAudio !== 'all' || selectedCategory !== 'all' || selectedYear !== 'all' || selectedStatus !== 'all' ? (
+        {searchQuery.trim() !== '' || selectedAudio !== 'all' || selectedCategory !== 'all' || selectedYear !== 'all' || selectedStatus !== 'all' || selectedMood !== 'all' ? (
           <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 mb-12 w-full">
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -3164,6 +3389,7 @@ export default function App() {
                 <p className={`text-zinc-400 mt-1 ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}>
                   Matching: {searchQuery ? `"${searchQuery}" · ` : ''}
                   {selectedAudio !== 'all' ? `${selectedAudio} · ` : ''}
+                  {selectedMood !== 'all' ? `${selectedMood.toUpperCase()} · ` : ''}
                   {selectedCategory !== 'all' ? `${selectedCategory} · ` : ''}
                   {selectedYear !== 'all' ? `Year ${selectedYear} · ` : ''}
                   {selectedStatus !== 'all' ? `${selectedStatus}` : ''}
@@ -3177,8 +3403,9 @@ export default function App() {
                   setSelectedCategory('all');
                   setSelectedYear('all');
                   setSelectedStatus('all');
+                  setSelectedMood('all');
                 }}
-                className={`font-bold text-red-400 hover:text-red-300 underline ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}
+                className={`font-bold text-red-400 hover:text-red-300 underline cursor-pointer ${isPhoneDevice ? 'text-sm' : 'text-xs'}`}
               >
                 Reset All Filters
               </button>
@@ -3223,7 +3450,7 @@ export default function App() {
                     rowAudioContext={
                       selectedAudio === 'Hindi Dubbed'
                         ? 'hindi'
-                        : selectedAudio === 'Fan Dubbed'
+                        : selectedAudio === 'Fan Dubbed' || selectedAudio === 'Hindi Fan Dubbed'
                         ? 'fandub'
                         : selectedAudio === 'Original / Eng Sub'
                         ? 'orig'
@@ -3776,11 +4003,38 @@ export default function App() {
       {/* 11. FLOATING & CENTER VIP POP-UP AD SYSTEM */}
       <FloatingPopupAd
         adConfig={adConfig}
-        isDramaModalOpen={Boolean(selectedDrama)}
-        isPlayerOpen={Boolean(selectedDrama)}
+        isDramaModalOpen={Boolean(selectedDrama && !isMiniPlayer)}
+        isPlayerOpen={Boolean(selectedDrama && !isMiniPlayer)}
         isAdminOpen={isAdminOpen}
         isPhoneDevice={isPhoneDevice}
       />
+
+      {/* 12. DRAMA ROULETTE SLOT-MACHINE MODAL */}
+      {rouletteState.isOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-6">
+          <div className="w-full max-w-md rounded-3xl bg-gradient-to-b from-[#161824] to-[#0a0b10] border-2 border-amber-400/60 shadow-[0_0_50px_rgba(245,158,11,0.4)] p-6 text-center space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#e50914]/20 border border-[#e50914]/50 text-xs font-black text-red-300 uppercase tracking-wider">
+              <span>🎲</span>
+              <span>AsiaFlix Drama Roulette</span>
+            </div>
+            <div className="py-5 px-4 rounded-2xl bg-black/70 border border-white/15">
+              <p className="text-xl sm:text-2xl font-black text-white tracking-tight truncate animate-pulse">
+                {rouletteState.displayTitle}
+              </p>
+            </div>
+            <p className="text-xs font-bold text-amber-300">
+              {rouletteState.chosenTitle ? '✨ Locked In! Launching HD Player...' : 'Spinning top-rated VIP series...'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 13. PWA INSTALL IN-APP GUIDE TOAST */}
+      {installGuideToast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[75] px-5 py-3 rounded-2xl bg-emerald-950/95 border border-emerald-400/60 text-emerald-100 text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(16,185,129,0.45)] backdrop-blur-xl animate-fade-in">
+          {installGuideToast}
+        </div>
+      )}
     </div>
   );
 }

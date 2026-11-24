@@ -3,6 +3,7 @@ import { DramaItem, EpisodeItem, AudioType, WatchlistStatus } from '../types/dra
 import {
   X,
   Play,
+  Pause,
   Send,
   Star,
   CheckCircle2,
@@ -30,14 +31,56 @@ import {
   Server,
   Maximize,
   Link2,
+  Lock,
+  Unlock,
+  Camera,
+  Repeat,
+  Bookmark,
+  Captions,
+  Users,
+  Moon,
+  PictureInPicture2,
+  Eye,
+  EyeOff,
+  Sliders,
+  Trash2,
 } from 'lucide-react';
 import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { createDramaSlug } from '../services/urlHelper';
+import {
+  recordWatchSeconds,
+  recordEpisodeCompleted,
+  getWatchTimestampForDrama,
+  saveWatchTimestamp,
+  formatTimeSeconds,
+  getSceneBookmarks,
+  saveSceneBookmark,
+  deleteSceneBookmark,
+  SceneBookmark,
+  getHypeVotes,
+  toggleHypeVote,
+  HYPE_REACTIONS,
+  HypeKey,
+  getDanmakuCues,
+  addDanmakuCue,
+  DanmakuCue,
+  parseSrtOrVttContent,
+  SubtitleCue,
+  TIMESTAMPS_UPDATED_EVENT,
+  WatchTimestampEntry,
+} from '../services/vipPlayerHelper';
 
 interface DramaDetailModalProps {
   drama: DramaItem | null;
+  allDramas?: DramaItem[];
+  onSelectDrama?: (drama: DramaItem) => void;
   initialEpisode?: number | null;
+  initialTimestamp?: number | null;
+  initialPartyRoom?: string | null;
+  initialTrack?: AudioType | null;
+  isMiniPlayer?: boolean;
+  onToggleMiniPlayer?: () => void;
   onActiveEpisodeChange?: (epNum: number | null) => void;
   onClose: () => void;
   onToggleWatchlist: (drama: DramaItem, status?: WatchlistStatus) => void;
@@ -236,9 +279,23 @@ const QUALITY_OPTIONS = [
   },
 ] as const;
 
+type AudioEqMode = 'normal' | 'dialogue' | 'bass3d' | 'night';
+type VideoFitMode = 'contain' | 'cover' | 'cinema219' | 'stretch';
+type StudioTab = 'audio' | 'screen' | 'vault' | 'party';
+type SleepTimerMode = 'off' | '30m' | '60m' | 'end_of_ep';
+type SubtitleSize = 'S' | 'M' | 'L';
+type SubtitleColor = 'white' | 'yellow' | 'cyan';
+
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
+  allDramas = [],
+  onSelectDrama,
   initialEpisode = null,
+  initialTimestamp = null,
+  initialPartyRoom = null,
+  initialTrack = null,
+  isMiniPlayer = false,
+  onToggleMiniPlayer,
   onActiveEpisodeChange,
   onClose,
   onToggleWatchlist,
@@ -256,9 +313,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const audioRef = useRef<HTMLAudioElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hudTimerRef = useRef<number | null>(null);
-  const pendingRestoreTimeRef = useRef<{ time: number; shouldPlay: boolean } | null>(null);
+  const pendingRestoreTimeRef = useRef<{ time: number; shouldPlay: boolean } | null>(
+    initialTimestamp && initialTimestamp > 0 ? { time: initialTimestamp, shouldPlay: true } : null
+  );
   const videoAudioNodeRef = useRef<{ el: HTMLVideoElement; ctx: AudioContext; gain: GainNode } | null>(null);
+  const studioAudioGraphRef = useRef<{
+    el: HTMLMediaElement;
+    ctx: AudioContext;
+    highpass: BiquadFilterNode;
+    lowshelf: BiquadFilterNode;
+    peaking: BiquadFilterNode;
+    highshelf: BiquadFilterNode;
+    compressor: DynamicsCompressorNode;
+    gain: GainNode;
+  } | null>(null);
+  const corsCheckCacheRef = useRef<Record<string, boolean>>({});
   const prevInitialEpisodeRef = useRef<number | null>(initialEpisode);
+  const lastSavedTsWallRef = useRef<number>(0);
+  const watchSecondsAccRef = useRef<number>(0);
+  const lastPlaybackTickMsRef = useRef<number | null>(null);
+  const preloadedNextUrlRef = useRef<string | null>(null);
+  const lastTapLeftRef = useRef<number>(0);
+  const lastTapRightRef = useRef<number>(0);
+  const lastTapUnlockRef = useRef<number>(0);
+  const lastDanmakuIdShownRef = useRef<Record<string, number>>({});
+  const subtitleFileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin =
     isAdminAuthenticated ||
@@ -425,6 +504,57 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [frontSuccess, setFrontSuccess] = useState(false);
 
+  // --- VIP STUDIO DECK & NEXT-GEN PLAYER STATES ---
+  const [isStudioToolsOpen, setIsStudioToolsOpen] = useState<boolean>(false);
+  const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>('audio');
+  const [audioEqMode, setAudioEqMode] = useState<AudioEqMode>('normal');
+  const [volumeBoost, setVolumeBoost] = useState<100 | 150 | 200>(100);
+  const [audibleCorsSupported, setAudibleCorsSupported] = useState<boolean>(false);
+  const [videoFitMode, setVideoFitMode] = useState<VideoFitMode>('contain');
+  const [isAmbilightOn, setIsAmbilightOn] = useState<boolean>(false);
+  const [isEyeCareOn, setIsEyeCareOn] = useState<boolean>(false);
+  const [isTouchLocked, setIsTouchLocked] = useState<boolean>(false);
+  const [seekRipple, setSeekRipple] = useState<{ side: 'left' | 'right'; nonce: number } | null>(null);
+
+  // Saved Timestamp Auto-Resume
+  const [savedDramaProgress, setSavedDramaProgress] = useState<WatchTimestampEntry | null>(() =>
+    drama ? getWatchTimestampForDrama(drama.id) : null
+  );
+
+  // A-B Looper & Personal Scene Vault
+  const [loopPointA, setLoopPointA] = useState<number | null>(null);
+  const [loopPointB, setLoopPointB] = useState<number | null>(null);
+  const [sceneBookmarks, setSceneBookmarks] = useState<SceneBookmark[]>(() =>
+    drama ? getSceneBookmarks(drama.id) : []
+  );
+
+  // Custom Subtitles (CC)
+  const [activeSubtitleUrl, setActiveSubtitleUrl] = useState<string>('off');
+  const [uploadedSubCues, setUploadedSubCues] = useState<{ label: string; cues: SubtitleCue[] } | null>(null);
+  const [parsedSubCues, setParsedSubCues] = useState<SubtitleCue[]>([]);
+  const [activeSubText, setActiveSubText] = useState<string>('');
+  const [subSize, setSubSize] = useState<SubtitleSize>('M');
+  const [subColor, setSubColor] = useState<SubtitleColor>('white');
+
+  // Danmaku Live Hype & Watch Party
+  const [isDanmakuOn, setIsDanmakuOn] = useState<boolean>(true);
+  const [danmakuCues, setDanmakuCues] = useState<DanmakuCue[]>([]);
+  const [floatingDanmaku, setFloatingDanmaku] = useState<Array<{ id: string; text: string; topPct: number }>>([]);
+  const [watchPartyRoom, setWatchPartyRoom] = useState<string | null>(initialPartyRoom || null);
+  const [partyReactions, setPartyReactions] = useState<Array<{ id: string; emoji: string; leftPct: number }>>([]);
+
+  // Auto-Next 5s Countdown & Sleep Timer
+  const [autoNextCountdown, setAutoNextCountdown] = useState<number | null>(null);
+  const [sleepTimerMode, setSleepTimerMode] = useState<SleepTimerMode>('off');
+
+  // Part C: Hype Vibe Meter & Anti-Spoiler Shield
+  const [hypeState, setHypeState] = useState(() =>
+    drama ? getHypeVotes(drama.id, drama.rating) : { counts: { must_watch: 0, chemistry: 0, mind_blowing: 0, emotional: 0 }, userVoted: { must_watch: false, chemistry: false, mind_blowing: false, emotional: false } }
+  );
+  const [isAntiSpoilerOn, setIsAntiSpoilerOn] = useState<boolean>(false);
+  const [revealedSpoilerEpKeys, setRevealedSpoilerEpKeys] = useState<Record<string, boolean>>({});
+  const [showStoryGuide, setShowStoryGuide] = useState<boolean>(false);
+
   const showHudFeedback = (msg: string) => {
     setHudToast(msg);
     if (hudTimerRef.current !== null) {
@@ -432,8 +562,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
     hudTimerRef.current = window.setTimeout(() => {
       setHudToast(null);
-    }, 1400);
+    }, 1500);
   };
+
+  // Sync saved watch progress on mount / update
+  useEffect(() => {
+    if (!drama) return;
+    setSavedDramaProgress(getWatchTimestampForDrama(drama.id));
+    setSceneBookmarks(getSceneBookmarks(drama.id));
+    setHypeState(getHypeVotes(drama.id, drama.rating));
+    const syncTs = () => setSavedDramaProgress(getWatchTimestampForDrama(drama.id));
+    window.addEventListener(TIMESTAMPS_UPDATED_EVENT, syncTs);
+    return () => window.removeEventListener(TIMESTAMPS_UPDATED_EVENT, syncTs);
+  }, [drama?.id]);
 
   // Reset server mirror index, embed notice & video overlay state whenever episode or drama changes
   useEffect(() => {
@@ -443,6 +584,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsVideoLoading(true);
     setForceBuiltinAudio(false);
     setIsAudioCorsFallback(false);
+    setLoopPointA(null);
+    setLoopPointB(null);
+    setAutoNextCountdown(null);
+    setFloatingDanmaku([]);
+    setActiveSubText('');
+    preloadedNextUrlRef.current = null;
+    lastPlaybackTickMsRef.current = null;
+    if (drama && activeStreamEp !== null) {
+      setDanmakuCues(getDanmakuCues(drama.id, activeStreamEp));
+    } else {
+      setDanmakuCues([]);
+    }
   }, [activeStreamEp, drama?.id]);
 
   // Reset mirror & custom audio override when switching audio tracks without dropping playback if same video source
@@ -467,7 +620,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setAudioSyncOffset(0);
     setForceBuiltinAudio(false);
     setIsAudioCorsFallback(false);
-    pendingRestoreTimeRef.current = null;
+    setIsTouchLocked(false);
+    setLoopPointA(null);
+    setLoopPointB(null);
+    setAutoNextCountdown(null);
+    setWatchPartyRoom(initialPartyRoom || null);
+    setActiveSubtitleUrl('off');
+    setParsedSubCues([]);
+    setUploadedSubCues(null);
+    setRevealedSpoilerEpKeys({});
+    pendingRestoreTimeRef.current =
+      initialTimestamp && initialTimestamp > 0 ? { time: initialTimestamp, shouldPlay: true } : null;
 
     if (!drama) {
       setActiveStreamEp(null);
@@ -504,11 +667,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       return availableTrackList[0] || 'Hindi Dubbed';
     };
 
-    const chosenTrack = pickPreferredTrackForEp(initialEpisode);
+    const chosenTrack = initialTrack || pickPreferredTrackForEp(initialEpisode);
     setActiveAudio(chosenTrack);
 
     if (initialEpisode !== null && initialEpisode !== undefined) {
       setActiveStreamEp(initialEpisode);
+      setIsStreamUnlocked(true);
+    } else if (initialTimestamp && initialTimestamp > 0) {
+      const fallbackEp = getStreamableEpisodesForTrack(chosenTrack)[0]?.epNum ?? 1;
+      setActiveStreamEp(fallbackEp);
       setIsStreamUnlocked(true);
     } else {
       setActiveStreamEp(null);
@@ -556,6 +723,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       if (videoAudioNodeRef.current) {
         videoAudioNodeRef.current.ctx.close().catch(() => {});
         videoAudioNodeRef.current = null;
+      }
+      if (studioAudioGraphRef.current) {
+        studioAudioGraphRef.current.ctx.close().catch(() => {});
+        studioAudioGraphRef.current = null;
       }
     };
   }, []);
@@ -715,10 +886,131 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  // Keep master audio volume, mute & lip-sync offset synchronized in real time while keeping native speaker UNMUTED
+  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on the audible media element
+  const activeAudibleUrl = isExternalAudioActive ? trackCustomAudio || '' : resolvedPlayerSource?.type === 'video' ? resolvedPlayerSource.src : '';
+  const wantsAudioStudio = audioEqMode !== 'normal' || volumeBoost > 100;
+
+  useEffect(() => {
+    if (!wantsAudioStudio || !activeAudibleUrl || !/^https?:\/\//i.test(activeAudibleUrl)) {
+      setAudibleCorsSupported(false);
+      return;
+    }
+    if (activeAudibleUrl in corsCheckCacheRef.current) {
+      setAudibleCorsSupported(corsCheckCacheRef.current[activeAudibleUrl]);
+      return;
+    }
+    let cancelled = false;
+    fetch(activeAudibleUrl, { method: 'HEAD', mode: 'cors' })
+      .then((res) => {
+        const ok = res.ok;
+        corsCheckCacheRef.current[activeAudibleUrl] = ok;
+        if (!cancelled) setAudibleCorsSupported(ok);
+      })
+      .catch(() => {
+        corsCheckCacheRef.current[activeAudibleUrl] = false;
+        if (!cancelled) setAudibleCorsSupported(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wantsAudioStudio, activeAudibleUrl]);
+
+  const applyStudioEqGraph = (audibleEl: HTMLMediaElement | null) => {
+    if (!audibleEl || !wantsAudioStudio || !audibleCorsSupported) {
+      if (studioAudioGraphRef.current) {
+        try {
+          const g = studioAudioGraphRef.current;
+          g.highpass.frequency.value = 10;
+          g.lowshelf.gain.value = 0;
+          g.peaking.gain.value = 0;
+          g.highshelf.gain.value = 0;
+          g.compressor.threshold.value = 0;
+          g.compressor.ratio.value = 1;
+          g.gain.gain.value = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+    try {
+      let graph = studioAudioGraphRef.current;
+      if (!graph || graph.el !== audibleEl) {
+        if (graph) {
+          graph.ctx.close().catch(() => {});
+          studioAudioGraphRef.current = null;
+        }
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const source = ctx.createMediaElementSource(audibleEl);
+        const highpass = ctx.createBiquadFilter();
+        highpass.type = 'highpass';
+        highpass.frequency.value = 10;
+
+        const lowshelf = ctx.createBiquadFilter();
+        lowshelf.type = 'lowshelf';
+        lowshelf.frequency.value = 95;
+        lowshelf.gain.value = 0;
+
+        const peaking = ctx.createBiquadFilter();
+        peaking.type = 'peaking';
+        peaking.frequency.value = 2200;
+        peaking.Q.value = 1.1;
+        peaking.gain.value = 0;
+
+        const highshelf = ctx.createBiquadFilter();
+        highshelf.type = 'highshelf';
+        highshelf.frequency.value = 8000;
+        highshelf.gain.value = 0;
+
+        const compressor = ctx.createDynamicsCompressor();
+        const gain = ctx.createGain();
+
+        source.connect(highpass);
+        highpass.connect(lowshelf);
+        lowshelf.connect(peaking);
+        peaking.connect(highshelf);
+        highshelf.connect(compressor);
+        compressor.connect(gain);
+        gain.connect(ctx.destination);
+
+        graph = { el: audibleEl, ctx, highpass, lowshelf, peaking, highshelf, compressor, gain };
+        studioAudioGraphRef.current = graph;
+      }
+
+      if (graph.ctx.state === 'suspended') {
+        graph.ctx.resume().catch(() => {});
+      }
+
+      // Reset then apply active EQ profile
+      graph.highpass.frequency.value = audioEqMode === 'dialogue' ? 110 : 10;
+      graph.peaking.gain.value = audioEqMode === 'dialogue' ? 7 : 0;
+      graph.lowshelf.gain.value = audioEqMode === 'bass3d' ? 8 : 0;
+      graph.highshelf.gain.value = audioEqMode === 'bass3d' ? 4 : 0;
+      if (audioEqMode === 'night') {
+        graph.compressor.threshold.value = -28;
+        graph.compressor.ratio.value = 8;
+        graph.compressor.knee.value = 20;
+      } else {
+        graph.compressor.threshold.value = 0;
+        graph.compressor.ratio.value = 1;
+      }
+
+      const boostMult = volumeBoost / 100;
+      graph.gain.gain.value = isAudioMuted ? 0 : Math.min(2.0, Math.max(0, audioVolume * boostMult));
+    } catch {
+      // Fallback safely to native audio
+    }
+  };
+
+  // Keep master audio volume, mute, EQ, 200% boost & lip-sync offset synchronized in real time while keeping native speaker UNMUTED
   useEffect(() => {
     const aud = audioRef.current;
     const vid = videoRef.current;
+    const nativeVol = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume * (audibleCorsSupported && wantsAudioStudio ? 1 : volumeBoost / 100)));
 
     if (isExternalAudioActive) {
       if (vid) {
@@ -731,9 +1023,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         }
       }
       if (aud && vid) {
-        aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        aud.volume = audibleCorsSupported && wantsAudioStudio ? (isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume))) : nativeVol;
         aud.muted = isAudioMuted;
         aud.playbackRate = vid.playbackRate || playbackSpeed;
+        applyStudioEqGraph(aud);
         const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
         if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.15) {
           try {
@@ -755,10 +1048,96 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           videoAudioNodeRef.current.gain.gain.value = 1;
         }
         vid.muted = isAudioMuted;
-        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        vid.volume = audibleCorsSupported && wantsAudioStudio ? (isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume))) : nativeVol;
+        applyStudioEqGraph(vid);
       }
     }
-  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio]);
+  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio]);
+
+  // Fetch and parse remote Subtitle URL (Sheet Sub1/Sub2) whenever activeSubtitleUrl changes
+  useEffect(() => {
+    if (activeSubtitleUrl === 'off') {
+      setParsedSubCues([]);
+      setActiveSubText('');
+      return;
+    }
+    if (activeSubtitleUrl === 'uploaded' && uploadedSubCues) {
+      setParsedSubCues(uploadedSubCues.cues);
+      return;
+    }
+    if (/^https?:\/\//i.test(activeSubtitleUrl)) {
+      let cancelled = false;
+      fetch(activeSubtitleUrl)
+        .then((r) => r.text())
+        .then((txt) => {
+          if (!cancelled) {
+            setParsedSubCues(parseSrtOrVttContent(txt));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setParsedSubCues([]);
+            showHudFeedback('⚠️ Unable to load subtitle URL (use .srt/.vtt upload)');
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [activeSubtitleUrl, uploadedSubCues]);
+
+  // Auto-Next 5-Second Countdown interval
+  useEffect(() => {
+    if (autoNextCountdown === null) return;
+    if (autoNextCountdown <= 0) {
+      setAutoNextCountdown(null);
+      if (nextStreamItem) {
+        pendingRestoreTimeRef.current = null;
+        setActiveStreamEp(nextStreamItem.epNum);
+        onActiveEpisodeChange?.(nextStreamItem.epNum);
+        setIsStreamUnlocked(true);
+        const markKey = nextStreamItem.episodeKey ?? nextStreamItem.epNum;
+        if (drama && !watchedEpisodes.includes(markKey) && !watchedEpisodes.includes('all')) {
+          onToggleEpisodeWatched(drama.id, markKey);
+        }
+      }
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setAutoNextCountdown((c) => (c !== null ? c - 1 : null));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [autoNextCountdown]);
+
+  // Sleep Timer (30m / 60m) fade & pause
+  useEffect(() => {
+    if (sleepTimerMode !== '30m' && sleepTimerMode !== '60m') return;
+    const ms = sleepTimerMode === '30m' ? 30 * 60 * 1000 : 60 * 60 * 1000;
+    const timer = window.setTimeout(() => {
+      const vid = videoRef.current;
+      const aud = audioRef.current;
+      if (vid) {
+        let step = 0;
+        const startVol = vid.volume;
+        const fade = window.setInterval(() => {
+          step += 1;
+          const factor = Math.max(0, 1 - step / 10);
+          vid.volume = startVol * factor;
+          if (aud) aud.volume = startVol * factor;
+          if (step >= 10) {
+            window.clearInterval(fade);
+            vid.pause();
+            if (aud) aud.pause();
+            vid.volume = startVol;
+            if (aud) aud.volume = startVol;
+          }
+        }, 200);
+      }
+      setSleepTimerMode('off');
+      showHudFeedback('🌙 Sleep Timer: Playback Paused');
+    }, ms);
+    return () => window.clearTimeout(timer);
+  }, [sleepTimerMode]);
 
   const currentStreamIndex = currentPlayingStream
     ? activeTrackStreamables.findIndex((item) => item.epNum === currentPlayingStream.epNum)
@@ -979,6 +1358,265 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setTimeout(() => setEpLinkCopied(false), 2500);
   };
 
+  const handleResumeSavedProgress = (clickEvent?: React.MouseEvent) => {
+    if (!savedDramaProgress) return;
+    pendingRestoreTimeRef.current = { time: savedDramaProgress.currentTime, shouldPlay: true };
+    const trackToUse = savedDramaProgress.track || activeAudio;
+    setActiveAudio(trackToUse);
+    setActiveStreamEp(savedDramaProgress.ep);
+    onActiveEpisodeChange?.(savedDramaProgress.ep);
+    if (!clickEvent || clickEvent.nativeEvent?.isTrusted) {
+      setIsStreamUnlocked(true);
+    }
+    showHudFeedback(`▶ Resuming Ep ${savedDramaProgress.ep} from ${formatTimeSeconds(savedDramaProgress.currentTime)}`);
+  };
+
+  const handleSceneSnapshot = () => {
+    const vid = videoRef.current;
+    const t = vid ? vid.currentTime : 0;
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const stampCollectorOverlay = () => {
+      const grad = ctx.createLinearGradient(0, canvas.height - 110, 0, canvas.height);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.85)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, canvas.height - 110, canvas.width, 110);
+
+      ctx.fillStyle = '#e50914';
+      ctx.fillRect(28, canvas.height - 62, 130, 34);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 17px sans-serif';
+      ctx.fillText('ASIAFLIX PRIME', 38, canvas.height - 39);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 24px sans-serif';
+      const labelText = `${drama.title} • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp ?? 1}`} [${formatTimeSeconds(t)}]`;
+      ctx.fillText(labelText.slice(0, 72), 174, canvas.height - 37);
+    };
+
+    const triggerDownload = (dataUrl: string) => {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `${createDramaSlug(drama)}-ep${activeStreamEp ?? 1}-${Math.floor(t)}s.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showHudFeedback('📸 HD Scene Snapshot Saved!');
+    };
+
+    try {
+      if (vid && vid.videoWidth > 0 && resolvedPlayerSource?.type === 'video') {
+        ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+        stampCollectorOverlay();
+        const url = canvas.toDataURL('image/png');
+        triggerDownload(url);
+        return;
+      }
+    } catch {
+      // Tainted cross-origin video canvas -> fallback cleanly to stylized Collector Card PNG
+    }
+
+    const bgGrad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    bgGrad.addColorStop(0, '#0a0b12');
+    bgGrad.addColorStop(0.5, '#250912');
+    bgGrad.addColorStop(1, '#08090f');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('✨ ASIAFLIX PRIME VIP SCENE COLLECTOR CARD', 60, 120);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 50px sans-serif';
+    ctx.fillText(drama.title.slice(0, 38), 60, 220);
+
+    ctx.fillStyle = '#e4e4e7';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(`${isMovie ? 'Full Movie' : `Episode ${activeStreamEp ?? 1}`}  •  Timestamp ${formatTimeSeconds(t)}`, 60, 290);
+
+    stampCollectorOverlay();
+    triggerDownload(canvas.toDataURL('image/png'));
+  };
+
+  const handleToggleABLoop = () => {
+    const vid = videoRef.current;
+    if (!vid || resolvedPlayerSource?.type === 'iframe') {
+      setIframeControlNotice(true);
+      return;
+    }
+    const nowT = Math.floor(vid.currentTime * 10) / 10;
+    if (loopPointA === null) {
+      setLoopPointA(nowT);
+      setLoopPointB(null);
+      showHudFeedback(`🔁 Loop Point A Set (${formatTimeSeconds(nowT)})`);
+    } else if (loopPointB === null) {
+      const pointA = loopPointA;
+      const pointB = nowT <= pointA + 0.5 ? pointA + 5 : nowT;
+      setLoopPointB(pointB);
+      showHudFeedback(`🔁 Looping ${formatTimeSeconds(pointA)} → ${formatTimeSeconds(pointB)}`);
+    } else {
+      setLoopPointA(null);
+      setLoopPointB(null);
+      showHudFeedback('🔁 A–B Scene Loop Cleared');
+    }
+  };
+
+  const handleCopyClipLink = () => {
+    if (activeStreamEp === null) return;
+    const t = Math.floor(loopPointA ?? videoRef.current?.currentTime ?? 0);
+    const clipUrl = `https://asiaflixprime.pages.dev/watch/${createDramaSlug(drama)}/ep-${activeStreamEp}?t=${t}`;
+    navigator.clipboard?.writeText(clipUrl).catch(() => {});
+    triggerShareToast(`🔗 Clip Link Copied (${formatTimeSeconds(t)})!`);
+    showHudFeedback(`🔗 Clip Link Copied (${formatTimeSeconds(t)})`);
+  };
+
+  const handleSaveMoment = () => {
+    if (!drama || activeStreamEp === null) return;
+    const t = Math.floor(videoRef.current?.currentTime ?? 0);
+    const bm: SceneBookmark = {
+      id: `bm-${Date.now()}`,
+      ep: activeStreamEp,
+      time: t,
+      label: `Ep ${activeStreamEp} • ${formatTimeSeconds(t)}`,
+      createdAt: Date.now(),
+    };
+    const next = saveSceneBookmark(drama.id, bm);
+    setSceneBookmarks(next);
+    showHudFeedback(`🔖 Saved ${bm.label}`);
+  };
+
+  const handleJumpToBookmark = (bm: SceneBookmark) => {
+    pendingRestoreTimeRef.current = { time: bm.time, shouldPlay: true };
+    if (activeStreamEp === bm.ep && videoRef.current) {
+      videoRef.current.currentTime = bm.time;
+      if (isExternalAudioActive && audioRef.current) {
+        try {
+          audioRef.current.currentTime = Math.max(0, bm.time + audioSyncOffset);
+        } catch {}
+      }
+      videoRef.current.play().catch(() => {});
+      pendingRestoreTimeRef.current = null;
+    } else {
+      setActiveStreamEp(bm.ep);
+      onActiveEpisodeChange?.(bm.ep);
+      setIsStreamUnlocked(true);
+    }
+    showHudFeedback(`🔖 Jumped to ${bm.label}`);
+  };
+
+  const handleStartWatchParty = () => {
+    if (activeStreamEp === null) return;
+    const code = watchPartyRoom || Math.random().toString(36).slice(2, 7).toUpperCase();
+    setWatchPartyRoom(code);
+    const t = Math.floor(videoRef.current?.currentTime ?? 0);
+    const trackParam =
+      activeAudio === 'Hindi Dubbed' ? 't1' : activeAudio.includes('Fan') ? 't2' : 't3';
+    const partyUrl = `https://asiaflixprime.pages.dev/watch/${createDramaSlug(drama)}/ep-${activeStreamEp}?party=${code}&t=${t}&track=${trackParam}`;
+    navigator.clipboard?.writeText(partyUrl).catch(() => {});
+    triggerShareToast(`👯‍♂️ Watch Party Room #${code} Link Copied!`);
+    showHudFeedback(`👯‍♂️ Party #${code} Active!`);
+  };
+
+  const handleSendPartyBurst = (emoji: string) => {
+    const id = `pr-${Date.now()}-${Math.random()}`;
+    const leftPct = 15 + Math.random() * 70;
+    setPartyReactions((prev) => [...prev.slice(-10), { id, emoji, leftPct }]);
+    window.setTimeout(() => {
+      setPartyReactions((prev) => prev.filter((p) => p.id !== id));
+    }, 2200);
+  };
+
+  const handleStampDanmaku = (text: string) => {
+    if (!drama || activeStreamEp === null) return;
+    const t = videoRef.current?.currentTime ?? 0;
+    const updated = addDanmakuCue(drama.id, activeStreamEp, t, text);
+    setDanmakuCues(updated);
+    const floatId = `dm-now-${Date.now()}`;
+    const topPct = 14 + Math.floor(Math.random() * 14);
+    setFloatingDanmaku((prev) => [...prev.slice(-6), { id: floatId, text, topPct }]);
+    window.setTimeout(() => {
+      setFloatingDanmaku((prev) => prev.filter((d) => d.id !== floatId));
+    }, 6600);
+    if (watchPartyRoom) {
+      handleSendPartyBurst(text.split(' ')[0] || '🔥');
+    }
+  };
+
+  const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = typeof reader.result === 'string' ? reader.result : '';
+      const cues = parseSrtOrVttContent(content);
+      setUploadedSubCues({ label: file.name.slice(0, 20), cues });
+      setActiveSubtitleUrl('uploaded');
+      setParsedSubCues(cues);
+      showHudFeedback(`💬 Loaded ${cues.length} CC lines`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleNativePiP = () => {
+    if (videoRef.current && document.pictureInPictureEnabled) {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture().catch(() => {});
+      } else {
+        videoRef.current.requestPictureInPicture().catch(() => {});
+      }
+    }
+  };
+
+  // Recommended "More Like This" dramas (Part C)
+  const moreLikeThisDramas = useMemo(() => {
+    if (!drama || !allDramas || allDramas.length === 0) return [];
+    const baseTags = new Set([...(drama.tags || []), ...(drama.hashtags || [])].map((t) => t.toLowerCase()));
+    return allDramas
+      .filter((d) => d.id !== drama.id)
+      .map((d) => {
+        let score = 0;
+        if (d.category === drama.category) score += 4;
+        if (d.subCategory && drama.subCategory && d.subCategory === drama.subCategory) score += 3;
+        const dTags = [...(d.tags || []), ...(d.hashtags || [])];
+        dTags.forEach((t) => {
+          if (baseTags.has(t.toLowerCase())) score += 2;
+        });
+        score += (d.rating || 8) * 0.1;
+        return { drama: d, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((x) => x.drama);
+  }, [drama?.id, allDramas]);
+
+  const sheetSubtitleTracks = useMemo(() => {
+    const epSubs = currentEpObj?.subtitleTracks || [];
+    const dramaSubs = drama.subtitleTracks || [];
+    const merged = [...epSubs];
+    dramaSubs.forEach((s) => {
+      if (!merged.some((x) => x.url === s.url)) merged.push(s);
+    });
+    return merged;
+  }, [currentEpObj, drama.subtitleTracks]);
+
+  const hasActiveStudioEffects =
+    audioEqMode !== 'normal' ||
+    volumeBoost > 100 ||
+    videoFitMode !== 'contain' ||
+    isAmbilightOn ||
+    isEyeCareOn ||
+    loopPointA !== null ||
+    activeSubtitleUrl !== 'off' ||
+    sleepTimerMode !== 'off' ||
+    Boolean(watchPartyRoom);
+
   // Episodes matching active audio track
   const episodesForActiveAudio = drama.episodes.filter((ep) =>
     activeAudio === 'Hindi Fan Dubbed' || activeAudio === 'Fan Dubbed'
@@ -995,40 +1633,116 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   const isPlayerActive = activeStreamEp !== null && Boolean(currentPlayingStream);
 
+  // Docked Floating Mini-Player fallback: if user activates Mini-Player without an open stream, auto-unlock first stream
+  useEffect(() => {
+    if (isMiniPlayer && !isPlayerActive && heroStreamTarget) {
+      setActiveAudio(heroStreamTarget.track);
+      setActiveStreamEp(heroStreamTarget.ep.epNum);
+      setIsStreamUnlocked(true);
+    }
+  }, [isMiniPlayer, isPlayerActive]);
+
+  const videoFitClass =
+    videoFitMode === 'cover'
+      ? 'object-cover scale-[1.03]'
+      : videoFitMode === 'cinema219'
+      ? 'object-cover aspect-[21/9] my-auto'
+      : videoFitMode === 'stretch'
+      ? 'object-fill'
+      : 'object-contain';
+
+  const baseQualityFilter =
+    QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
+    'contrast(1.07) saturate(1.14) brightness(1.02)';
+  const combinedVideoFilter = isEyeCareOn
+    ? `${baseQualityFilter} sepia(0.16) brightness(0.95)`
+    : baseQualityFilter;
+
   return (
     <div
-      className={`relative w-full min-w-full min-h-screen text-white flex flex-col animate-fade-in transition-colors duration-300 ${
-        isLightsOff && isPlayerActive ? 'bg-black' : 'bg-[#050508]'
-      }`}
+      className={
+        isMiniPlayer
+          ? 'fixed bottom-6 right-6 z-[65] w-[350px] sm:w-[410px] rounded-2xl border-2 border-[#e50914] bg-[#0a0b10] shadow-[0_20px_60px_rgba(0,0,0,0.95)] overflow-hidden text-white'
+          : `relative w-full min-w-full min-h-screen text-white flex flex-col animate-fade-in transition-colors duration-300 ${
+              isLightsOff && isPlayerActive ? 'bg-black' : 'bg-[#050508]'
+            }`
+      }
     >
-      {/* Sticky Full-Width Page Top Navigation Bar */}
-      <header className="sticky top-0 z-40 w-full px-4 sm:px-8 py-3.5 bg-[#08090f]/95 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between gap-3 shrink-0 shadow-[0_8px_30px_rgba(0,0,0,0.85)]">
-        <button
-          onClick={onClose}
-          className="px-5 py-2.5 text-base sm:text-lg font-black rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 flex items-center gap-2 transition-all cursor-pointer shrink-0 shadow-lg"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          <span>Back to Home</span>
-        </button>
-
-        <div className="flex items-center justify-center gap-2.5 min-w-0 flex-1 px-2">
-          <h1 className="text-base sm:text-xl font-black text-white truncate">{drama.title}</h1>
-          <span className="hidden sm:inline-flex px-2.5 py-1 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[11px] font-black text-amber-300 uppercase tracking-wider shrink-0">
-            {activeAudioBadgeText}
-          </span>
+      {/* Mini-Player Compact Header Bar */}
+      {isMiniPlayer && (
+        <div className="px-3 py-2 bg-[#11131e] border-b border-white/10 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-[#e50914] animate-pulse shrink-0" />
+            <span className="text-xs font-black text-white truncate">
+              {drama.title} • {isMovie ? 'Movie' : `Ep ${activeStreamEp ?? 1}`}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {resolvedPlayerSource?.type === 'video' && (
+              <button
+                onClick={() => {
+                  const vid = videoRef.current;
+                  if (!vid) return;
+                  if (vid.paused) vid.play().catch(() => {});
+                  else vid.pause();
+                }}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+                title={isVideoPlaying ? 'Pause' : 'Play'}
+              >
+                {isVideoPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+              </button>
+            )}
+            {onToggleMiniPlayer && (
+              <button
+                onClick={onToggleMiniPlayer}
+                className="px-2 py-1 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-[10px] font-black cursor-pointer flex items-center gap-1"
+                title="Expand Full Cinema Page"
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span>Expand</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-red-600 text-white cursor-pointer"
+              title="Close Mini-Player"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
+      )}
 
-        <button
-          onClick={onClose}
-          className="p-3 rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 transition-all cursor-pointer shrink-0 shadow-lg"
-          aria-label="Close Drama Page"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </header>
+      {/* Sticky Full-Width Page Top Navigation Bar */}
+      {!isMiniPlayer && (
+        <header className="sticky top-0 z-40 w-full px-4 sm:px-8 py-3.5 bg-[#08090f]/95 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between gap-3 shrink-0 shadow-[0_8px_30px_rgba(0,0,0,0.85)]">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 text-base sm:text-lg font-black rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 flex items-center gap-2 transition-all cursor-pointer shrink-0 shadow-lg"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>Back to Home</span>
+          </button>
+
+          <div className="flex items-center justify-center gap-2.5 min-w-0 flex-1 px-2">
+            <h1 className="text-base sm:text-xl font-black text-white truncate">{drama.title}</h1>
+            <span className="hidden sm:inline-flex px-2.5 py-1 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[11px] font-black text-amber-300 uppercase tracking-wider shrink-0">
+              {activeAudioBadgeText}
+            </span>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-3 rounded-xl bg-white/10 hover:bg-[#e50914] text-white border border-white/15 transition-all cursor-pointer shrink-0 shadow-lg"
+            aria-label="Close Drama Page"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </header>
+      )}
 
       {/* Glowing Share / Deep-Link Copy Toast */}
-      {shareToast && (
+      {shareToast && !isMiniPlayer && (
         <div className="fixed top-20 right-4 sm:right-8 z-50 px-4 py-2.5 rounded-xl bg-emerald-950/95 border border-emerald-400/50 text-emerald-200 text-xs sm:text-sm font-black shadow-[0_0_25px_rgba(16,185,129,0.45)] flex items-center gap-2 backdrop-blur-xl animate-fade-in">
           <Check className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{shareToast}</span>
@@ -1036,7 +1750,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       )}
 
       {/* Lights-Off Cinema Overlay Dimmer inside page */}
-      {isLightsOff && isPlayerActive && (
+      {isLightsOff && isPlayerActive && !isMiniPlayer && (
         <div
           onClick={() => setIsLightsOff(false)}
           className="absolute inset-0 z-20 bg-black/92 backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
@@ -1045,12 +1759,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       )}
 
       <div
-        className={`relative w-full mx-auto min-h-screen bg-[#050508] text-white pb-20 flex-1 flex flex-col transition-all duration-300 ${
-          isTheaterMode ? 'max-w-none' : 'max-w-[1600px]'
-        }`}
+        className={
+          isMiniPlayer
+            ? 'w-full flex flex-col'
+            : `relative w-full mx-auto min-h-screen bg-[#050508] text-white pb-20 flex-1 flex flex-col transition-all duration-300 ${
+                isTheaterMode ? 'max-w-none' : 'max-w-[1600px]'
+              }`
+        }
       >
-        {/* Top Hero Backdrop Banner — HIDDEN cleanly while Video Player is active so player takes over the very top */}
-        {!isPlayerActive && (
+        {/* Top Hero Backdrop Banner — HIDDEN cleanly while Video Player or Mini-Player is active */}
+        {!isPlayerActive && !isMiniPlayer && (
           <div className="relative w-full h-72 sm:h-96 shrink-0 overflow-hidden bg-zinc-950 sm:rounded-b-2xl">
             <img
               src={drama.backdrop || drama.poster}
@@ -1140,6 +1858,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
               {/* Quick Actions */}
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {savedDramaProgress && savedDramaProgress.currentTime >= 2 && (
+                  <button
+                    onClick={handleResumeSavedProgress}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black text-xs font-black shadow-[0_0_25px_rgba(245,158,11,0.5)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/60"
+                  >
+                    <Play className="w-4 h-4 fill-black" />
+                    <span>
+                      ▶ Resume Ep {savedDramaProgress.ep} from {formatTimeSeconds(savedDramaProgress.currentTime)}
+                    </span>
+                  </button>
+                )}
+
                 {heroStreamTarget && (
                   <button
                     onClick={(e) =>
@@ -1207,91 +1937,117 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
         {/* Page Body Container */}
         <div
-          className={`space-y-6 flex-1 ${isPlayerActive ? 'p-3 sm:p-6 pt-4' : 'p-4 sm:p-8'}`}
+          className={
+            isMiniPlayer
+              ? 'w-full'
+              : `space-y-6 flex-1 ${isPlayerActive ? 'p-3 sm:p-6 pt-4' : 'p-4 sm:p-8'}`
+          }
         >
           {/* ============================================================
               NETFLIX CRIMSON + ROYAL GOLD + OBSIDIAN PROTECTED VIDEO PLAYER DECK
              ============================================================ */}
           {isPlayerActive && currentPlayingStream && (
-            <div className="relative z-30 rounded-2xl border border-white/15 bg-[#0a0b10] shadow-[0_20px_70px_rgba(0,0,0,0.95)] overflow-hidden animate-fade-in">
-              <div className="bg-[#0a0b10] overflow-hidden flex flex-col">
-                {/* 1. Prominent Obsidian & Crimson Episode Header Bar */}
-                <div className="px-4 py-3 bg-[#0f1018] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2.5 min-w-0">
-                    {/* Glowing Crimson Episode Pill + Animated Equalizer Bars */}
-                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#e50914] text-white text-xs sm:text-sm font-black uppercase tracking-wider shadow-[0_0_20px_rgba(229,9,20,0.45)] border border-red-400/40 shrink-0">
-                      <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
-                        <span className="w-[3px] h-2 bg-white rounded-full animate-pulse" />
-                        <span className="w-[3px] h-3.5 bg-amber-300 rounded-full animate-bounce" />
-                        <span className="w-[3px] h-2.5 bg-white rounded-full animate-pulse" />
-                      </span>
-                      <span>
-                        {isMovie
-                          ? '🎬 FULL MOVIE • HD STREAM'
-                          : `🎬 EPISODE ${String(activeStreamEp).padStart(2, '0')} / ${totalEpisodesNum}`}
-                      </span>
-                    </div>
-
-                    {/* Drama Title + Active Audio Badge */}
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <h3 className="text-sm sm:text-base font-black text-white truncate max-w-[280px] sm:max-w-[380px]">
-                        {drama.title}
-                      </h3>
-                      <span className="px-2.5 py-0.5 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[10px] font-black text-amber-300 uppercase tracking-wider shrink-0">
-                        {activeAudioBadgeText}
-                      </span>
-                      <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 text-[10px] font-black uppercase tracking-wider shrink-0">
-                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                        <span>PRIVACY SHIELD</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Right Action Buttons: Copy Ep Link, Back to Drama Info + Close Player */}
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {activeStreamEp !== null && (
-                      <button
-                        onClick={handleCopyEpisodeLink}
-                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
-                          epLinkCopied
-                            ? 'bg-emerald-500/25 border-emerald-400/50 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
-                            : 'bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-amber-200 border-[#f59e0b]/40'
-                        }`}
-                        title="Copy Direct Episode Link for Telegram"
-                      >
-                        {epLinkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
-                        <span>
-                          {epLinkCopied
-                            ? `Copied Ep ${activeStreamEp}!`
-                            : isMovie
-                            ? 'Copy Movie Link'
-                            : `Copy Ep ${activeStreamEp} Link`}
-                        </span>
-                      </button>
-                    )}
-                    <button
-                      onClick={handleClosePlayer}
-                      className="px-3 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/15 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Back to Drama Info</span>
-                      <span className="sm:hidden">Info</span>
-                    </button>
-                    <button
-                      onClick={handleClosePlayer}
-                      className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-[#e50914] text-red-200 hover:text-white border border-red-500/40 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Close Player</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. 16:9 Protected Video Viewport */}
+            <div className={isMiniPlayer ? 'relative z-30' : 'relative z-30'}>
+              {/* Ambilight Reactive Cinema Backlight (outside overflow-hidden player shell) */}
+              {isAmbilightOn && !isMiniPlayer && (
                 <div
-                  ref={playerContainerRef}
-                  className="aspect-video w-full bg-black relative overflow-hidden"
-                >
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -inset-4 sm:-inset-6 -z-10 rounded-3xl blur-3xl opacity-65 animate-pulse bg-gradient-to-r from-[#e50914]/50 via-[#f59e0b]/40 to-[#a855f7]/50"
+                />
+              )}
+
+              <div
+                className={
+                  isMiniPlayer
+                    ? 'bg-[#0a0b10] overflow-hidden flex flex-col'
+                    : 'rounded-2xl border border-white/15 bg-[#0a0b10] shadow-[0_20px_70px_rgba(0,0,0,0.95)] overflow-hidden animate-fade-in'
+                }
+              >
+                <div className="bg-[#0a0b10] overflow-hidden flex flex-col">
+                  {/* 1. Prominent Obsidian & Crimson Episode Header Bar (Hidden in Mini-Player) */}
+                  {!isMiniPlayer && !isTouchLocked && (
+                    <div className="px-4 py-3 bg-[#0f1018] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                        {/* Glowing Crimson Episode Pill + Animated Equalizer Bars */}
+                        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#e50914] text-white text-xs sm:text-sm font-black uppercase tracking-wider shadow-[0_0_20px_rgba(229,9,20,0.45)] border border-red-400/40 shrink-0">
+                          <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
+                            <span className="w-[3px] h-2 bg-white rounded-full animate-pulse" />
+                            <span className="w-[3px] h-3.5 bg-amber-300 rounded-full animate-bounce" />
+                            <span className="w-[3px] h-2.5 bg-white rounded-full animate-pulse" />
+                          </span>
+                          <span>
+                            {isMovie
+                              ? '🎬 FULL MOVIE • HD STREAM'
+                              : `🎬 EPISODE ${String(activeStreamEp).padStart(2, '0')} / ${totalEpisodesNum}`}
+                          </span>
+                        </div>
+
+                        {/* Drama Title + Active Audio Badge */}
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <h3 className="text-sm sm:text-base font-black text-white truncate max-w-[280px] sm:max-w-[380px]">
+                            {drama.title}
+                          </h3>
+                          <span className="px-2.5 py-0.5 rounded-lg bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-[10px] font-black text-amber-300 uppercase tracking-wider shrink-0">
+                            {activeAudioBadgeText}
+                          </span>
+                          <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 text-[10px] font-black uppercase tracking-wider shrink-0">
+                            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                            <span>PRIVACY SHIELD</span>
+                          </span>
+                          {watchPartyRoom && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-purple-500/25 border border-purple-400/50 text-purple-200 text-[10px] font-black uppercase tracking-wider shrink-0 animate-pulse">
+                              <span>👯‍♂️ PARTY #{watchPartyRoom}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Action Buttons: Copy Ep Link, Back to Drama Info + Close Player */}
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {activeStreamEp !== null && (
+                          <button
+                            onClick={handleCopyEpisodeLink}
+                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                              epLinkCopied
+                                ? 'bg-emerald-500/25 border-emerald-400/50 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                                : 'bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-amber-200 border-[#f59e0b]/40'
+                            }`}
+                            title="Copy Direct Episode Link for Telegram"
+                          >
+                            {epLinkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
+                            <span>
+                              {epLinkCopied
+                                ? `Copied Ep ${activeStreamEp}!`
+                                : isMovie
+                                ? 'Copy Movie Link'
+                                : `Copy Ep ${activeStreamEp} Link`}
+                            </span>
+                          </button>
+                        )}
+                        <button
+                          onClick={handleClosePlayer}
+                          className="px-3 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/15 text-[11px] font-black flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Back to Drama Info</span>
+                          <span className="sm:hidden">Info</span>
+                        </button>
+                        <button
+                          onClick={handleClosePlayer}
+                          className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-[#e50914] text-red-200 hover:text-white border border-red-500/40 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Close Player</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. 16:9 Protected Video Viewport */}
+                  <div
+                    ref={playerContainerRef}
+                    className="aspect-video w-full bg-black relative overflow-hidden"
+                  >
                   {/* Top-Left On-Screen Episode HUD Watermark Overlay — ONLY for Episode Series */}
                   {!isMovie &&
                     drama.category !== 'Asian Movies' &&
@@ -1332,6 +2088,120 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
+                  {/* Live Floating Danmaku Reactions Overlay */}
+                  {isDanmakuOn && !isMiniPlayer && floatingDanmaku.length > 0 && (
+                    <div className="pointer-events-none absolute inset-x-0 top-12 h-28 z-30 overflow-hidden">
+                      {floatingDanmaku.map((dm) => (
+                        <div
+                          key={dm.id}
+                          style={{ top: `${dm.topPct}%` }}
+                          className="absolute right-0 whitespace-nowrap px-3.5 py-1 rounded-full bg-black/75 border border-amber-400/50 text-xs sm:text-sm font-black text-white shadow-[0_0_15px_rgba(245,158,11,0.4)] animate-danmaku"
+                        >
+                          {dm.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Floating Watch Party Emoji Bursts */}
+                  {watchPartyRoom && partyReactions.length > 0 && (
+                    <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+                      {partyReactions.map((pr) => (
+                        <div
+                          key={pr.id}
+                          style={{ left: `${pr.leftPct}%` }}
+                          className="absolute bottom-14 text-2xl sm:text-3xl animate-bounce drop-shadow-[0_0_12px_rgba(229,9,20,0.8)]"
+                        >
+                          {pr.emoji}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Double-Tap Left/Right Seek Ripple Feedback */}
+                  {seekRipple && (
+                    <div
+                      key={seekRipple.nonce}
+                      className={`pointer-events-none absolute top-1/2 -translate-y-1/2 z-30 px-5 py-3 rounded-2xl bg-black/80 border border-[#e50914]/60 text-white text-sm sm:text-base font-black shadow-[0_0_30px_rgba(229,9,20,0.5)] animate-ping ${
+                        seekRipple.side === 'left' ? 'left-8' : 'right-8'
+                      }`}
+                    >
+                      {seekRipple.side === 'left' ? '⏪ -10s' : '⏩ +10s'}
+                    </div>
+                  )}
+
+                  {/* Styled Custom Subtitles (CC) Overlay */}
+                  {activeSubText && !isMiniPlayer && (
+                    <div className="pointer-events-none absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 z-30 max-w-[90%] text-center px-3">
+                      <span
+                        className={`inline-block px-3.5 py-1.5 rounded-lg bg-black/85 backdrop-blur-sm font-extrabold leading-snug shadow-lg whitespace-pre-line ${
+                          subSize === 'S'
+                            ? 'text-xs sm:text-sm'
+                            : subSize === 'L'
+                            ? 'text-base sm:text-xl'
+                            : 'text-sm sm:text-base'
+                        } ${
+                          subColor === 'yellow'
+                            ? 'text-amber-300'
+                            : subColor === 'cyan'
+                            ? 'text-cyan-300'
+                            : 'text-white'
+                        }`}
+                      >
+                        {activeSubText}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Mobile Touch-Lock Screen Shield */}
+                  {isTouchLocked && (
+                    <div
+                      onClick={() => {
+                        const now = Date.now();
+                        if (now - lastTapUnlockRef.current <= 500) {
+                          setIsTouchLocked(false);
+                          lastTapUnlockRef.current = 0;
+                          showHudFeedback('🔓 Screen Touch Unlocked');
+                        } else {
+                          lastTapUnlockRef.current = now;
+                        }
+                      }}
+                      className="absolute inset-0 z-40 flex items-end justify-center pb-6 cursor-pointer select-none"
+                    >
+                      <div className="px-4 py-2 rounded-full bg-black/85 border border-amber-400/60 text-amber-200 text-xs font-black shadow-[0_0_25px_rgba(0,0,0,0.9)] flex items-center gap-2 backdrop-blur-md">
+                        <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                        <span>🔓 Tap Twice to Unlock Screen</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 5-Second Auto-Next Countdown Overlay */}
+                  {autoNextCountdown !== null && nextStreamItem && (
+                    <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center gap-4">
+                      <div className="px-4 py-1 rounded-full bg-[#e50914]/25 border border-[#e50914]/50 text-xs font-black text-red-200 uppercase tracking-wider">
+                        Up Next Automatically
+                      </div>
+                      <h4 className="text-lg sm:text-2xl font-black text-white">
+                        ⏭ Playing Episode {nextStreamItem.epNum} in {autoNextCountdown}s...
+                      </h4>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setAutoNextCountdown(0)}
+                          className="px-5 py-2.5 rounded-xl bg-[#e50914] hover:bg-[#f6121d] text-white text-xs sm:text-sm font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] cursor-pointer flex items-center gap-2"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                          <span>Play Now</span>
+                        </button>
+                        <button
+                          onClick={() => setAutoNextCountdown(null)}
+                          className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs sm:text-sm font-black border border-white/15 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {!isStreamUnlocked || !resolvedPlayerSource ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center overflow-hidden">
                       <img
@@ -1357,11 +2227,48 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       </div>
                     </div>
                   ) : resolvedPlayerSource.type === 'video' ? (
-                    <div className="relative w-full h-full bg-black">
+                    <div className="relative w-full h-full bg-black flex items-center justify-center">
+                      {/* Double-Tap Left/Right Seek Gesture Zones (keep bottom 56px native scrubber clear) */}
+                      {!isTouchLocked && !isMiniPlayer && isVideoPlaying && (
+                        <>
+                          <div
+                            onClick={() => {
+                              const now = Date.now();
+                              if (now - lastTapLeftRef.current <= 320) {
+                                handleSeek(-10, '⏪ -10s Rewind');
+                                setSeekRipple({ side: 'left', nonce: now });
+                                window.setTimeout(() => setSeekRipple(null), 650);
+                                lastTapLeftRef.current = 0;
+                              } else {
+                                lastTapLeftRef.current = now;
+                              }
+                            }}
+                            className="absolute top-0 bottom-14 left-0 w-[30%] z-20 cursor-pointer"
+                            aria-label="Double tap left to rewind 10 seconds"
+                          />
+                          <div
+                            onClick={() => {
+                              const now = Date.now();
+                              if (now - lastTapRightRef.current <= 320) {
+                                handleSeek(10, '⏩ +10s Forward');
+                                setSeekRipple({ side: 'right', nonce: now });
+                                window.setTimeout(() => setSeekRipple(null), 650);
+                                lastTapRightRef.current = 0;
+                              } else {
+                                lastTapRightRef.current = now;
+                              }
+                            }}
+                            className="absolute top-0 bottom-14 right-0 w-[30%] z-20 cursor-pointer"
+                            aria-label="Double tap right to forward 10 seconds"
+                          />
+                        </>
+                      )}
+
                       <video
                         ref={videoRef}
-                        key={`${resolvedPlayerSource.src}-${streamReloadNonce}`}
+                        key={`${resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
                         src={resolvedPlayerSource.src}
+                        crossOrigin={!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
                         poster=""
                         controls
                         autoPlay
@@ -1382,6 +2289,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           } else {
                             vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                             vid.muted = isAudioMuted;
+                            applyStudioEqGraph(vid);
                           }
                           const pending = pendingRestoreTimeRef.current;
                           if (pending) {
@@ -1401,18 +2309,25 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           setIsVideoLoading(false);
                           syncAudioToVideo();
                         }}
-                        onPlay={() => syncAudioToVideo(true)}
+                        onPlay={() => {
+                          lastPlaybackTickMsRef.current = Date.now();
+                          syncAudioToVideo(true);
+                        }}
                         onPlaying={() => {
                           setIsVideoPlaying(true);
                           setIsVideoLoading(false);
+                          lastPlaybackTickMsRef.current = Date.now();
                           syncAudioToVideo(true);
                         }}
                         onPause={() => {
+                          setIsVideoPlaying(false);
+                          lastPlaybackTickMsRef.current = null;
                           if (audioRef.current && !audioRef.current.paused) {
                             audioRef.current.pause();
                           }
                         }}
                         onWaiting={() => {
+                          lastPlaybackTickMsRef.current = null;
                           if (audioRef.current && !audioRef.current.paused) {
                             audioRef.current.pause();
                           }
@@ -1434,12 +2349,114 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             audioRef.current.muted = vid.muted;
                           }
                         }}
+                        onEnded={() => {
+                          setIsVideoPlaying(false);
+                          lastPlaybackTickMsRef.current = null;
+                          recordEpisodeCompleted();
+                          if (sleepTimerMode === 'end_of_ep') {
+                            setSleepTimerMode('off');
+                            showHudFeedback('🌙 Sleep Timer: Episode Finished');
+                            return;
+                          }
+                          if (nextStreamItem && !isMovie) {
+                            setAutoNextCountdown(5);
+                          }
+                        }}
                         onTimeUpdate={(e) => {
                           const vid = e.currentTarget;
                           if (vid.currentTime > 0.1) {
                             setIsVideoPlaying(true);
                             setIsVideoLoading(false);
                           }
+
+                          // 1. A-B Scene Looper
+                          if (loopPointA !== null && loopPointB !== null && vid.currentTime >= loopPointB) {
+                            vid.currentTime = loopPointA;
+                            if (isExternalAudioActive && audioRef.current) {
+                              try {
+                                audioRef.current.currentTime = Math.max(0, loopPointA + audioSyncOffset);
+                              } catch {}
+                            }
+                          }
+
+                          // 2. Active Subtitle Cue Matcher
+                          if (activeSubtitleUrl !== 'off' && parsedSubCues.length > 0) {
+                            const tNow = vid.currentTime;
+                            const cue = parsedSubCues.find((c) => tNow >= c.start && tNow <= c.end);
+                            setActiveSubText(cue ? cue.text : '');
+                          } else if (activeSubText) {
+                            setActiveSubText('');
+                          }
+
+                          // 3. Live Danmaku Matching
+                          if (isDanmakuOn && danmakuCues.length > 0 && !vid.paused) {
+                            const tNow = vid.currentTime;
+                            const wallNow = Date.now();
+                            danmakuCues.forEach((cue) => {
+                              if (
+                                Math.abs(tNow - cue.time) <= 1.2 &&
+                                wallNow - (lastDanmakuIdShownRef.current[cue.id] || 0) > 12000
+                              ) {
+                                lastDanmakuIdShownRef.current[cue.id] = wallNow;
+                                const floatId = `${cue.id}-${wallNow}`;
+                                const topPct = 14 + (Math.abs(cue.time * 7) % 16);
+                                setFloatingDanmaku((prev) => [...prev.slice(-6), { id: floatId, text: cue.text, topPct }]);
+                                window.setTimeout(() => {
+                                  setFloatingDanmaku((prev) => prev.filter((x) => x.id !== floatId));
+                                }, 6600);
+                              }
+                            });
+                          }
+
+                          // 4. Exact Timestamp Auto-Resume Save (every 3s when currentTime >= 2)
+                          const nowWall = Date.now();
+                          if (currentPlayingStream && vid.currentTime >= 2 && nowWall - lastSavedTsWallRef.current >= 3000) {
+                            lastSavedTsWallRef.current = nowWall;
+                            saveWatchTimestamp(drama.id, {
+                              ep: currentPlayingStream.epNum,
+                              track: activeAudio,
+                              currentTime: vid.currentTime,
+                              duration: Number.isFinite(vid.duration) ? vid.duration : 0,
+                              updatedAt: nowWall,
+                            });
+                          }
+
+                          // 5. VIP Watch Minutes & Daily Streak Accumulator
+                          if (!vid.paused) {
+                            if (lastPlaybackTickMsRef.current !== null) {
+                              const dt = (nowWall - lastPlaybackTickMsRef.current) / 1000;
+                              if (dt > 0 && dt < 5) {
+                                watchSecondsAccRef.current += dt;
+                                if (watchSecondsAccRef.current >= 15) {
+                                  const flush = watchSecondsAccRef.current;
+                                  watchSecondsAccRef.current = 0;
+                                  recordWatchSeconds(flush);
+                                }
+                              }
+                            }
+                            lastPlaybackTickMsRef.current = nowWall;
+                          }
+
+                          // 6. 85% Smart Pre-Loader for Next Episode
+                          if (
+                            nextStreamItem &&
+                            Number.isFinite(vid.duration) &&
+                            vid.duration > 30 &&
+                            vid.currentTime / vid.duration >= 0.85 &&
+                            preloadedNextUrlRef.current !== nextStreamItem.streamUrl
+                          ) {
+                            preloadedNextUrlRef.current = nextStreamItem.streamUrl;
+                            const nextMeta = resolveVideoPlayerSource(nextStreamItem.streamUrl, 0);
+                            if (nextMeta.type === 'video' && nextMeta.src) {
+                              const link = document.createElement('link');
+                              link.rel = 'preload';
+                              link.as = 'video';
+                              link.href = nextMeta.src;
+                              document.head.appendChild(link);
+                            }
+                          }
+
+                          // 7. External Audio Sync
                           if (isExternalAudioActive && audioRef.current) {
                             const aud = audioRef.current;
                             if (!vid.paused) {
@@ -1460,22 +2477,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           }
                         }}
                         {...({ referrerpolicy: 'origin' } as Record<string, string>)}
-                        style={{
-                          filter:
-                            QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
-                            'contrast(1.07) saturate(1.14) brightness(1.02)',
-                        }}
-                        className="w-full h-full object-contain bg-black transition-[filter] duration-300"
+                        style={{ filter: combinedVideoFilter }}
+                        className={`w-full h-full ${videoFitClass} bg-black transition-[filter] duration-300`}
                       />
 
                       {/* Track-Specific Synced External Dubbed Audio Element (Hindi / FanDub / Orig) */}
                       {isExternalAudioActive && trackCustomAudio && (
                         <audio
                           ref={audioRef}
-                          key={`${activeAudio}-${activeStreamEp}-${trackCustomAudio}`}
+                          key={`${activeAudio}-${activeStreamEp}-${trackCustomAudio}-${wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
                           src={trackCustomAudio}
+                          crossOrigin={wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
                           preload="auto"
-                          onLoadedMetadata={() => syncAudioToVideo()}
+                          onLoadedMetadata={() => {
+                            if (audioRef.current) applyStudioEqGraph(audioRef.current);
+                            syncAudioToVideo();
+                          }}
                           onCanPlay={() => syncAudioToVideo()}
                           className="hidden"
                         />
@@ -1591,291 +2608,812 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   )}
                 </div>
 
-                {/* 3. ALWAYS-VISIBLE MATTE CARBON-BLACK CINEMA CONTROL DECK */}
-                <div className="bg-[#0a0b10] border-t border-b border-white/10 p-4 flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    {/* Seek, Skip Intro & Reload Group */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
-                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                      >
-                        ⏪ -10s
-                      </button>
-                      <button
-                        onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
-                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                      >
-                        +10s ⏩
-                      </button>
-                      <button
-                        onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
-                        className="bg-[#e50914] hover:bg-[#f6121d] text-white border border-red-400/40 shadow-[0_0_16px_rgba(229,9,20,0.4)] font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                      >
-                        ⚡ Skip Intro (+85s)
-                      </button>
-                      <button
-                        onClick={handleReloadStream}
-                        className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                        title="Reload current video stream"
-                      >
-                        <RotateCw className="w-3.5 h-3.5" />
-                        <span>🔄 Reload Stream</span>
-                      </button>
-                    </div>
-
-                    {/* SPEED Pod (0.5x – 2x) */}
-                    <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
-                      <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-wider flex items-center gap-1 mr-1">
-                        <Gauge className="w-3.5 h-3.5 text-[#f59e0b]" />
-                        <span>⚡ SPEED</span>
-                      </span>
-                      {SPEED_OPTIONS.map((spd) => {
-                        const active = playbackSpeed === spd;
-                        return (
+                {/* 3. SYSTEMATIC 2-TIER PLAYER CONTROL ARCHITECTURE (Hidden in Mini-Player or Touch-Lock) */}
+                {!isMiniPlayer && !isTouchLocked && (
+                  <>
+                    <div className="bg-[#0a0b10] border-t border-b border-white/10 p-4 flex flex-col gap-3">
+                      {/* TIER 1 PRIMARY BAR */}
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
                           <button
-                            key={`spd-${spd}`}
-                            onClick={() => handleSpeedChange(spd)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
-                              active
-                                ? 'bg-[#f59e0b] text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]'
-                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                            onClick={() => handleSeek(-10, '⏪ -10s Rewind')}
+                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                          >
+                            ⏪ -10s
+                          </button>
+                          <button
+                            onClick={() => handleSeek(10, '⏩ +10s Fast Forward')}
+                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                          >
+                            +10s ⏩
+                          </button>
+                          <button
+                            onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
+                            className="bg-[#e50914] hover:bg-[#f6121d] text-white border border-red-400/40 shadow-[0_0_16px_rgba(229,9,20,0.4)] font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                          >
+                            ⚡ Skip Intro (+85s)
+                          </button>
+                          <button
+                            onClick={handleReloadStream}
+                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                            title="Reload current video stream"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>🔄 Reload</span>
+                          </button>
+
+                          <button
+                            onClick={() => setIsStudioToolsOpen((prev) => !prev)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                              isStudioToolsOpen || hasActiveStudioEffects
+                                ? 'bg-gradient-to-r from-amber-500/25 to-red-500/25 border-amber-400/60 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
+                                : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
                             }`}
                           >
-                            {spd}x
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* QUALITY Pod */}
-                    <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
-                      <span className="text-[10px] font-black text-red-400 uppercase tracking-wider flex items-center gap-1 mr-1">
-                        <Gem className="w-3.5 h-3.5 text-[#e50914]" />
-                        <span>💎 QUALITY</span>
-                      </span>
-                      {QUALITY_OPTIONS.map((q) => {
-                        const active = selectedQuality === q.id;
-                        return (
-                          <button
-                            key={q.id}
-                            onClick={() => handleQualityChange(q.id)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
-                              active
-                                ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.45)]'
-                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                            }`}
-                          >
-                            {q.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Admin-Only Master Audio Sync & Lip-Sync Calibration Bar (Hidden from regular visitors) */}
-                  {isAdmin && (resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
-                    <div className="px-3.5 py-2.5 rounded-xl bg-[#11131d] border border-white/10 flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                            isExternalAudioActive
-                              ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300'
-                              : 'bg-white/[0.05] border-white/10 text-zinc-300'
-                          }`}
-                        >
-                          <Headphones className="w-3.5 h-3.5" />
-                          <span>
-                            {isExternalAudioActive
-                              ? `Custom ${activeAudio} Synced`
-                              : 'Built-in Stream Audio'}
-                          </span>
-                        </span>
-
-                        <button
-                          onClick={() => setIsAudioMuted((m) => !m)}
-                          className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                            isAudioMuted
-                              ? 'bg-red-500/20 border-red-400/40 text-red-300'
-                              : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/10 text-white'
-                          }`}
-                          title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
-                        >
-                          {isAudioMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                        </button>
-
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.05}
-                            value={isAudioMuted ? 0 : audioVolume}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value);
-                              setAudioVolume(val);
-                              if (val > 0 && isAudioMuted) setIsAudioMuted(false);
-                            }}
-                            aria-label="Master Audio Volume"
-                            className="w-24 sm:w-28 accent-[#e50914] cursor-pointer h-1.5"
-                          />
-                          <span className="text-[11px] font-black text-zinc-300 w-9 tabular-nums">
-                            {Math.round((isAudioMuted ? 0 : audioVolume) * 100)}%
-                          </span>
-                        </div>
-                      </div>
-
-                      {Boolean(trackCustomAudio) && resolvedPlayerSource?.type === 'video' && (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider mr-1">
-                            Lip-Sync:
-                          </span>
-                          <button
-                            onClick={() => {
-                              setAudioSyncOffset((prev) => Number((prev - 0.2).toFixed(1)));
-                              showHudFeedback('🎧 Audio Sync -0.2s');
-                            }}
-                            className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
-                          >
-                            -0.2s
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAudioSyncOffset(0);
-                              showHudFeedback('🎧 Audio Sync Reset (0.0s)');
-                            }}
-                            className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-amber-300 text-[11px] font-black tabular-nums cursor-pointer"
-                            title="Reset Lip-Sync Offset to 0.0s"
-                          >
-                            {audioSyncOffset > 0 ? `+${audioSyncOffset.toFixed(1)}s` : `${audioSyncOffset.toFixed(1)}s`}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAudioSyncOffset((prev) => Number((prev + 0.2).toFixed(1)));
-                              showHudFeedback('🎧 Audio Sync +0.2s');
-                            }}
-                            className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
-                          >
-                            +0.2s
-                          </button>
-                          <button
-                            onClick={() => {
-                              setForceBuiltinAudio((prev) => !prev);
-                              showHudFeedback(forceBuiltinAudio ? '🎧 External Dub Active' : '🔊 Built-in Audio Active');
-                            }}
-                            className={`ml-1 px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
-                              forceBuiltinAudio
-                                ? 'bg-amber-500/20 border-amber-400/45 text-amber-200'
-                                : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/15 text-zinc-300'
-                            }`}
-                          >
-                            {forceBuiltinAudio ? 'Use External Dub' : 'Use Built-in Audio'}
+                            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                            <span>✨ VIP Studio Tools {isStudioToolsOpen ? '▴' : '▾'}</span>
+                            {hasActiveStudioEffects && (
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                            )}
                           </button>
                         </div>
-                      )}
-                    </div>
-                  )}
 
-                  {/* Honest 1-line Cloud Embed Mode helper whenever stream is a third-party iframe */}
-                  {resolvedPlayerSource?.type === 'iframe' && (
-                    <div
-                      className={`px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
-                        iframeControlNotice
-                          ? 'bg-[#f59e0b]/15 border-[#f59e0b]/50 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
-                          : 'bg-white/[0.03] border-white/10 text-zinc-400'
-                      }`}
-                    >
-                      <span>
-                        ℹ️ Cloud Embed Mode: Use the timeline bar &amp; ⚙️ icon inside the video frame to seek or change speed (or use Direct MP4 links for external button control)
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 4. Cloud Servers (India No-VPN) + Episode Navigation, Audio Switcher & Utility Modes */}
-                <div className="px-4 py-3 bg-[#090a10] space-y-2.5">
-                  {/* Cloud Server Switcher Row (shown whenever mirrors exist) */}
-                  {currentSourceMeta && currentSourceMeta.mirrors.length > 0 && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/[0.07]">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 mr-1">
-                          <Server className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>🇮🇳 Cloud Servers:</span>
-                        </span>
-                        {currentSourceMeta.mirrors.map((mirror, idx) => {
-                          const isMirrorActive = activeMirrorIndex === idx;
-                          return (
-                            <button
-                              key={`${mirror.label}-${idx}`}
-                              onClick={() => handleMirrorSelect(idx, mirror.label)}
-                              className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer whitespace-nowrap ${
-                                isMirrorActive
-                                  ? 'bg-emerald-600 text-white border-emerald-400/50 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 hover:text-white border-white/15'
-                              }`}
-                            >
-                              {mirror.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <span className="text-[11px] font-semibold text-zinc-400">
-                        💡 No VPN needed on Server 1/2 in India
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex flex-wrap items-center justify-between gap-2.5">
-                    {/* Left: Prev/Next Ep + 1-Click Audio Switcher */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {!isMovie && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            onClick={(e) =>
-                              prevStreamItem &&
-                              handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
-                            }
-                            disabled={!prevStreamItem}
-                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                              prevStreamItem
-                                ? 'bg-white/[0.08] hover:bg-white/[0.15] text-white border-white/15 cursor-pointer'
-                                : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                            }`}
-                          >
-                            <SkipBack className="w-3.5 h-3.5" />
-                            <span>Prev Ep</span>
-                          </button>
-
-                          <button
-                            onClick={(e) =>
-                              nextStreamItem &&
-                              handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
-                            }
-                            disabled={!nextStreamItem}
-                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
-                              nextStreamItem
-                                ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40 shadow cursor-pointer'
-                                : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                            }`}
-                          >
-                            <span>Next Ep</span>
-                            <SkipForward className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-
-                      {playerTrackSwitcherList.length > 0 && (
-                        <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/10">
-                          {playerTrackSwitcherList.map((item) => {
-                            const isTrackActive = activeAudio === item.track;
+                        {/* SPEED Pod (0.5x – 2x) */}
+                        <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
+                          <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-wider flex items-center gap-1 mr-1">
+                            <Gauge className="w-3.5 h-3.5 text-[#f59e0b]" />
+                            <span>⚡ SPEED</span>
+                          </span>
+                          {SPEED_OPTIONS.map((spd) => {
+                            const active = playbackSpeed === spd;
                             return (
                               <button
-                                key={item.track}
-                                onClick={() => handleSwitchPlayerTrack(item.track)}
-                                className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
-                                  isTrackActive
-                                    ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow'
+                                key={`spd-${spd}`}
+                                onClick={() => handleSpeedChange(spd)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
+                                  active
+                                    ? 'bg-[#f59e0b] text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]'
                                     : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                                }`}
+                              >
+                                {spd}x
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* QUALITY Pod */}
+                        <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
+                          <span className="text-[10px] font-black text-red-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+                            <Gem className="w-3.5 h-3.5 text-[#e50914]" />
+                            <span>💎 QUALITY</span>
+                          </span>
+                          {QUALITY_OPTIONS.map((q) => {
+                            const active = selectedQuality === q.id;
+                            return (
+                              <button
+                                key={q.id}
+                                onClick={() => handleQualityChange(q.id)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                                  active
+                                    ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.45)]'
+                                    : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                                }`}
+                              >
+                                {q.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* TIER 2 EXPANDABLE 4-TAB VIP STUDIO DECK */}
+                      {isStudioToolsOpen && (
+                        <div className="rounded-2xl bg-[#0e1019] border border-white/15 p-3.5 space-y-3 animate-fade-in">
+                          {/* Category Tabs */}
+                          <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-2.5">
+                            {(
+                              [
+                                { id: 'audio' as StudioTab, label: '🔊 Audio & 200% Boost' },
+                                { id: 'screen' as StudioTab, label: '🎬 Screen, Zoom & Ambilight' },
+                                { id: 'vault' as StudioTab, label: '🔖 Scene Snap, Loop & Vault' },
+                                { id: 'party' as StudioTab, label: '👯‍♂️ Watch Party, CC & Timer' },
+                              ] as const
+                            ).map((tab) => (
+                              <button
+                                key={tab.id}
+                                onClick={() => setActiveStudioTab(tab.id)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                                  activeStudioTab === tab.id
+                                    ? 'bg-[#e50914] text-white border-red-400/50 shadow-[0_0_14px_rgba(229,9,20,0.4)]'
+                                    : 'bg-white/[0.04] hover:bg-white/[0.09] text-zinc-300 border-white/10'
+                                }`}
+                              >
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* TAB 1: Audio EQ & 200% Volume Booster */}
+                          {activeStudioTab === 'audio' && (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider mr-1">
+                                  🎛️ Cinema EQ:
+                                </span>
+                                {(
+                                  [
+                                    { id: 'normal' as AudioEqMode, label: 'Normal', msg: '🎛️ EQ: Normal Studio' },
+                                    { id: 'dialogue' as AudioEqMode, label: '🗣️ Clear Dialogue', msg: '🗣️ Dialogue Vocal Booster (+7dB) ON' },
+                                    { id: 'bass3d' as AudioEqMode, label: '🔊 3D Cinema Bass', msg: '🔊 3D Surround Bass (+8dB) ON' },
+                                    { id: 'night' as AudioEqMode, label: '🌙 Night Mode', msg: '🌙 Night Volume Compressor ON' },
+                                  ] as const
+                                ).map((eq) => (
+                                  <button
+                                    key={eq.id}
+                                    onClick={() => {
+                                      setAudioEqMode(eq.id);
+                                      showHudFeedback(eq.msg);
+                                    }}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                      audioEqMode === eq.id
+                                        ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.45)]'
+                                        : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                    }`}
+                                  >
+                                    {eq.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[11px] font-black text-amber-300 uppercase tracking-wider mr-1">
+                                    ⚡ Volume Boost:
+                                  </span>
+                                  {([100, 150, 200] as const).map((lvl) => (
+                                    <button
+                                      key={lvl}
+                                      onClick={() => {
+                                        setVolumeBoost(lvl);
+                                        showHudFeedback(`🔊 Volume Boost: ${lvl}%`);
+                                      }}
+                                      className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                        volumeBoost === lvl
+                                          ? 'bg-amber-400 text-black border-amber-200 shadow-[0_0_14px_rgba(251,191,36,0.5)]'
+                                          : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                      }`}
+                                    >
+                                      {lvl === 200 ? '200% ULTRA' : `${lvl}%`}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {wantsAudioStudio && !audibleCorsSupported && resolvedPlayerSource?.type === 'video' && (
+                                  <span className="text-[10px] font-bold text-zinc-400">
+                                    ℹ️ Direct playback safe mode active on this CDN host
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* TAB 2: Screen Fit, Ambilight, Eye-Care, Touch Lock & Mini-Player */}
+                          {activeStudioTab === 'screen' && (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider mr-1">
+                                  📐 Screen Fit:
+                                </span>
+                                {(
+                                  [
+                                    { id: 'contain' as VideoFitMode, label: 'Default (16:9)' },
+                                    { id: 'cover' as VideoFitMode, label: '🔍 Fill / Zoom' },
+                                    { id: 'cinema219' as VideoFitMode, label: '🎥 21:9 CinemaScope' },
+                                    { id: 'stretch' as VideoFitMode, label: '↔ Stretch' },
+                                  ] as const
+                                ).map((fit) => (
+                                  <button
+                                    key={fit.id}
+                                    onClick={() => {
+                                      setVideoFitMode(fit.id);
+                                      showHudFeedback(`📐 Screen Fit: ${fit.label}`);
+                                    }}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                      videoFitMode === fit.id
+                                        ? 'bg-sky-500 text-black border-sky-300 shadow-[0_0_12px_rgba(56,189,248,0.45)]'
+                                        : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                    }`}
+                                  >
+                                    {fit.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setIsAmbilightOn((v) => !v);
+                                    showHudFeedback(!isAmbilightOn ? '🌈 Ambilight Glow ON' : '🌈 Ambilight Glow OFF');
+                                  }}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                    isAmbilightOn
+                                      ? 'bg-gradient-to-r from-[#e50914] to-[#a855f7] text-white border-purple-300/60 shadow-[0_0_16px_rgba(168,85,247,0.45)]'
+                                      : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                  }`}
+                                >
+                                  🌈 Ambilight Glow
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setIsEyeCareOn((v) => !v);
+                                    showHudFeedback(!isEyeCareOn ? '🕶️ 2 AM Eye-Care Filter ON' : '🕶️ Eye-Care Filter OFF');
+                                  }}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                                    isEyeCareOn
+                                      ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.45)]'
+                                      : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                  }`}
+                                >
+                                  🕶️ 2 AM Eye-Care
+                                </button>
+
+                                <button
+                                  onClick={() => setIsTouchLocked(true)}
+                                  className="px-3 py-1.5 rounded-xl text-xs font-black bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border border-white/15 flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>🔒 Lock Screen Touch</span>
+                                </button>
+
+                                {onToggleMiniPlayer && (
+                                  <button
+                                    onClick={onToggleMiniPlayer}
+                                    className="px-3 py-1.5 rounded-xl text-xs font-black bg-emerald-500/20 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-400/45 flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <PictureInPicture2 className="w-3.5 h-3.5" />
+                                    <span>🖼️ Mini-Player (Browse Home)</span>
+                                  </button>
+                                )}
+
+                                {resolvedPlayerSource?.type === 'video' && (
+                                  <button
+                                    onClick={handleNativePiP}
+                                    className="px-3 py-1.5 rounded-xl text-xs font-black bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border border-white/15 cursor-pointer"
+                                  >
+                                    📺 OS PiP Window
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* TAB 3: HD Scene Snapshot, A-B Looper & Personal Scene Vault */}
+                          {activeStudioTab === 'vault' && (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  onClick={handleSceneSnapshot}
+                                  className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-[#141622] hover:bg-[#1e2235] text-white border border-white/15 flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Camera className="w-3.5 h-3.5 text-sky-400" />
+                                  <span>📸 Snap HD Scene</span>
+                                </button>
+
+                                <button
+                                  onClick={handleToggleABLoop}
+                                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 cursor-pointer transition-all ${
+                                    loopPointA !== null
+                                      ? 'bg-purple-600 text-white border-purple-300/60 shadow-[0_0_15px_rgba(168,85,247,0.45)]'
+                                      : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                  }`}
+                                >
+                                  <Repeat className="w-3.5 h-3.5" />
+                                  <span>
+                                    {loopPointA === null
+                                      ? '🔁 Set Loop A'
+                                      : loopPointB === null
+                                      ? `🔁 Set Loop B (A: ${formatTimeSeconds(loopPointA)})`
+                                      : `🔁 Clear Loop (${formatTimeSeconds(loopPointA)} → ${formatTimeSeconds(loopPointB)})`}
+                                  </span>
+                                </button>
+
+                                {loopPointA !== null && (
+                                  <button
+                                    onClick={handleCopyClipLink}
+                                    className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/45 flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <Link2 className="w-3.5 h-3.5" />
+                                    <span>🔗 Copy Clip Link</span>
+                                  </button>
+                                )}
+
+                                <button
+                                  onClick={handleSaveMoment}
+                                  className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-[#e50914]/20 hover:bg-[#e50914] text-red-200 hover:text-white border border-red-400/40 flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Bookmark className="w-3.5 h-3.5" />
+                                  <span>🔖 Save Moment</span>
+                                </button>
+                              </div>
+
+                              {sceneBookmarks.length > 0 ? (
+                                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-white/10">
+                                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
+                                    Scene Vault:
+                                  </span>
+                                  {sceneBookmarks.map((bm) => (
+                                    <div
+                                      key={bm.id}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-white/[0.06] border border-white/15 pl-2.5 pr-1 py-1 text-[11px] font-black text-zinc-200"
+                                    >
+                                      <button
+                                        onClick={() => handleJumpToBookmark(bm)}
+                                        className="hover:text-amber-300 cursor-pointer"
+                                      >
+                                        🔖 {bm.label}
+                                      </button>
+                                      <button
+                                        onClick={() => setSceneBookmarks(deleteSceneBookmark(drama.id, bm.id))}
+                                        className="p-0.5 text-zinc-400 hover:text-red-400 cursor-pointer"
+                                        title="Remove Bookmark"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-zinc-400">
+                                  Tap 🔖 Save Moment during your favorite scene to jump back anytime.
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* TAB 4: Watch Party, Custom Subtitles (CC), Danmaku & Sleep Timer */}
+                          {activeStudioTab === 'party' && (
+                            <div className="space-y-3">
+                              {/* Watch Party & Live Danmaku Row */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  onClick={handleStartWatchParty}
+                                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 cursor-pointer ${
+                                    watchPartyRoom
+                                      ? 'bg-purple-600 text-white border-purple-300/60 shadow-[0_0_14px_rgba(168,85,247,0.45)]'
+                                      : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                                  }`}
+                                >
+                                  <Users className="w-3.5 h-3.5" />
+                                  <span>
+                                    {watchPartyRoom ? `👯‍♂️ Copy Party #${watchPartyRoom} Link` : '👯‍♂️ 1-Click Watch Party'}
+                                  </span>
+                                </button>
+
+                                <button
+                                  onClick={() => setIsDanmakuOn((v) => !v)}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-black border cursor-pointer ${
+                                    isDanmakuOn
+                                      ? 'bg-amber-500/20 text-amber-200 border-amber-400/45'
+                                      : 'bg-white/[0.04] text-zinc-400 border-white/10'
+                                  }`}
+                                >
+                                  💬 Live Hype: {isDanmakuOn ? 'ON' : 'OFF'}
+                                </button>
+
+                                {(['🔥 Goosebumps!', '😍 Best Scene!', '🤯 Plot Twist!', '😭 Crying!'] as const).map((stamp) => (
+                                  <button
+                                    key={stamp}
+                                    onClick={() => handleStampDanmaku(stamp)}
+                                    className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-[#e50914] text-white text-[11px] font-black border border-white/10 cursor-pointer transition-all"
+                                  >
+                                    {stamp}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Custom Subtitles (CC) & Sleep Timer Row */}
+                              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                                    <Captions className="w-3.5 h-3.5" />
+                                    <span>CC:</span>
+                                  </span>
+                                  <button
+                                    onClick={() => setActiveSubtitleUrl('off')}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                      activeSubtitleUrl === 'off'
+                                        ? 'bg-sky-500 text-black border-sky-300'
+                                        : 'bg-[#141622] text-zinc-300 border-white/10'
+                                    }`}
+                                  >
+                                    Off
+                                  </button>
+                                  {sheetSubtitleTracks.map((sub, i) => (
+                                    <button
+                                      key={`${sub.url}-${i}`}
+                                      onClick={() => setActiveSubtitleUrl(sub.url)}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                        activeSubtitleUrl === sub.url
+                                          ? 'bg-sky-500 text-black border-sky-300'
+                                          : 'bg-[#141622] text-zinc-300 border-white/10'
+                                      }`}
+                                    >
+                                      {sub.label}
+                                    </button>
+                                  ))}
+                                  {uploadedSubCues && (
+                                    <button
+                                      onClick={() => setActiveSubtitleUrl('uploaded')}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                        activeSubtitleUrl === 'uploaded'
+                                          ? 'bg-sky-500 text-black border-sky-300'
+                                          : 'bg-[#141622] text-zinc-300 border-white/10'
+                                      }`}
+                                    >
+                                      📄 {uploadedSubCues.label}
+                                    </button>
+                                  )}
+                                  <input
+                                    ref={subtitleFileInputRef}
+                                    type="file"
+                                    accept=".srt,.vtt"
+                                    onChange={handleSubtitleFileUpload}
+                                    className="hidden"
+                                  />
+                                  <button
+                                    onClick={() => subtitleFileInputRef.current?.click()}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/15 cursor-pointer"
+                                  >
+                                    + Upload .SRT/.VTT
+                                  </button>
+
+                                  {activeSubtitleUrl !== 'off' && (
+                                    <>
+                                      <span className="text-zinc-600 mx-0.5">|</span>
+                                      {(['S', 'M', 'L'] as SubtitleSize[]).map((sz) => (
+                                        <button
+                                          key={sz}
+                                          onClick={() => setSubSize(sz)}
+                                          className={`px-2 py-0.5 rounded text-[10px] font-black cursor-pointer ${
+                                            subSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
+                                          }`}
+                                        >
+                                          {sz}
+                                        </button>
+                                      ))}
+                                      {(['white', 'yellow', 'cyan'] as SubtitleColor[]).map((col) => (
+                                        <button
+                                          key={col}
+                                          onClick={() => setSubColor(col)}
+                                          className={`px-2 py-0.5 rounded text-[10px] font-black capitalize cursor-pointer border ${
+                                            subColor === col ? 'border-white scale-105' : 'border-white/15 opacity-70'
+                                          } ${col === 'yellow' ? 'text-amber-300' : col === 'cyan' ? 'text-cyan-300' : 'text-white'}`}
+                                        >
+                                          {col}
+                                        </button>
+                                      ))}
+                                    </>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[11px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                                    <Moon className="w-3.5 h-3.5" />
+                                    <span>Sleep:</span>
+                                  </span>
+                                  {(
+                                    [
+                                      { id: 'off' as SleepTimerMode, label: 'OFF' },
+                                      { id: '30m' as SleepTimerMode, label: '30m' },
+                                      { id: '60m' as SleepTimerMode, label: '60m' },
+                                      { id: 'end_of_ep' as SleepTimerMode, label: 'End of Ep' },
+                                    ] as const
+                                  ).map((st) => (
+                                    <button
+                                      key={st.id}
+                                      onClick={() => {
+                                        setSleepTimerMode(st.id);
+                                        showHudFeedback(st.id === 'off' ? '🌙 Sleep Timer Off' : `🌙 Sleep Timer: ${st.label}`);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
+                                        sleepTimerMode === st.id
+                                          ? 'bg-indigo-500 text-white border-indigo-300'
+                                          : 'bg-[#141622] text-zinc-300 border-white/10'
+                                      }`}
+                                    >
+                                      {st.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Admin-Only Master Audio Sync & Lip-Sync Calibration Bar (Hidden from regular visitors) */}
+                      {isAdmin && (resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
+                        <div className="px-3.5 py-2.5 rounded-xl bg-[#11131d] border border-white/10 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                                isExternalAudioActive
+                                  ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300'
+                                  : 'bg-white/[0.05] border-white/10 text-zinc-300'
+                              }`}
+                            >
+                              <Headphones className="w-3.5 h-3.5" />
+                              <span>
+                                {isExternalAudioActive
+                                  ? `Custom ${activeAudio} Synced`
+                                  : 'Built-in Stream Audio'}
+                              </span>
+                            </span>
+
+                            <button
+                              onClick={() => setIsAudioMuted((m) => !m)}
+                              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                isAudioMuted
+                                  ? 'bg-red-500/20 border-red-400/40 text-red-300'
+                                  : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/10 text-white'
+                              }`}
+                              title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
+                            >
+                              {isAudioMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                            </button>
+
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.05}
+                                value={isAudioMuted ? 0 : audioVolume}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  setAudioVolume(val);
+                                  if (val > 0 && isAudioMuted) setIsAudioMuted(false);
+                                }}
+                                aria-label="Master Audio Volume"
+                                className="w-24 sm:w-28 accent-[#e50914] cursor-pointer h-1.5"
+                              />
+                              <span className="text-[11px] font-black text-zinc-300 w-9 tabular-nums">
+                                {Math.round((isAudioMuted ? 0 : audioVolume) * 100)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {Boolean(trackCustomAudio) && resolvedPlayerSource?.type === 'video' && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider mr-1">
+                                Lip-Sync:
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setAudioSyncOffset((prev) => Number((prev - 0.2).toFixed(1)));
+                                  showHudFeedback('🎧 Audio Sync -0.2s');
+                                }}
+                                className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
+                              >
+                                -0.2s
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAudioSyncOffset(0);
+                                  showHudFeedback('🎧 Audio Sync Reset (0.0s)');
+                                }}
+                                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-amber-300 text-[11px] font-black tabular-nums cursor-pointer"
+                                title="Reset Lip-Sync Offset to 0.0s"
+                              >
+                                {audioSyncOffset > 0 ? `+${audioSyncOffset.toFixed(1)}s` : `${audioSyncOffset.toFixed(1)}s`}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAudioSyncOffset((prev) => Number((prev + 0.2).toFixed(1)));
+                                  showHudFeedback('🎧 Audio Sync +0.2s');
+                                }}
+                                className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
+                              >
+                                +0.2s
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setForceBuiltinAudio((prev) => !prev);
+                                  showHudFeedback(forceBuiltinAudio ? '🎧 External Dub Active' : '🔊 Built-in Audio Active');
+                                }}
+                                className={`ml-1 px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
+                                  forceBuiltinAudio
+                                    ? 'bg-amber-500/20 border-amber-400/45 text-amber-200'
+                                    : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/15 text-zinc-300'
+                                }`}
+                              >
+                                {forceBuiltinAudio ? 'Use External Dub' : 'Use Built-in Audio'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Honest 1-line Cloud Embed Mode helper whenever stream is a third-party iframe */}
+                      {resolvedPlayerSource?.type === 'iframe' && (
+                        <div
+                          className={`px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
+                            iframeControlNotice
+                              ? 'bg-[#f59e0b]/15 border-[#f59e0b]/50 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                              : 'bg-white/[0.03] border-white/10 text-zinc-400'
+                          }`}
+                        >
+                          <span>
+                            ℹ️ Cloud Embed Mode: Use the timeline bar &amp; ⚙️ icon inside the video frame to seek or change speed (or use Direct MP4 links for external button control)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4. Cloud Servers (India No-VPN) + Episode Navigation, Audio Switcher & Utility Modes */}
+                    <div className="px-4 py-3 bg-[#090a10] space-y-2.5">
+                      {/* Cloud Server Switcher Row (shown whenever mirrors exist) */}
+                      {currentSourceMeta && currentSourceMeta.mirrors.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/[0.07]">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 mr-1">
+                              <Server className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>🇮🇳 Cloud Servers:</span>
+                            </span>
+                            {currentSourceMeta.mirrors.map((mirror, idx) => {
+                              const isMirrorActive = activeMirrorIndex === idx;
+                              return (
+                                <button
+                                  key={`${mirror.label}-${idx}`}
+                                  onClick={() => handleMirrorSelect(idx, mirror.label)}
+                                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer whitespace-nowrap ${
+                                    isMirrorActive
+                                      ? 'bg-emerald-600 text-white border-emerald-400/50 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                                      : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 hover:text-white border-white/15'
+                                  }`}
+                                >
+                                  {mirror.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <span className="text-[11px] font-semibold text-zinc-400">
+                            💡 No VPN needed on Server 1/2 in India
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2.5">
+                        {/* Left: Prev/Next Ep + 1-Click Audio Switcher */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!isMovie && (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={(e) =>
+                                  prevStreamItem &&
+                                  handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
+                                }
+                                disabled={!prevStreamItem}
+                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
+                                  prevStreamItem
+                                    ? 'bg-white/[0.08] hover:bg-white/[0.15] text-white border-white/15 cursor-pointer'
+                                    : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                                }`}
+                              >
+                                <SkipBack className="w-3.5 h-3.5" />
+                                <span>Prev Ep</span>
+                              </button>
+
+                              <button
+                                onClick={(e) =>
+                                  nextStreamItem &&
+                                  handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
+                                }
+                                disabled={!nextStreamItem}
+                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1 border transition-all whitespace-nowrap ${
+                                  nextStreamItem
+                                    ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/40 shadow cursor-pointer'
+                                    : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                                }`}
+                              >
+                                <span>Next Ep</span>
+                                <SkipForward className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          {playerTrackSwitcherList.length > 0 && (
+                            <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/10">
+                              {playerTrackSwitcherList.map((item) => {
+                                const isTrackActive = activeAudio === item.track;
+                                return (
+                                  <button
+                                    key={item.track}
+                                    onClick={() => handleSwitchPlayerTrack(item.track)}
+                                    className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                                      isTrackActive
+                                        ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white shadow'
+                                        : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
+                                    }`}
+                                  >
+                                    {item.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right: Lights Off, Theater, Fullscreen & Telegram Backup Link */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            onClick={() => setIsLightsOff((prev) => !prev)}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                              isLightsOff
+                                ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                                : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                            }`}
+                          >
+                            <Lightbulb className="w-3.5 h-3.5" />
+                            <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => setIsTheaterMode((prev) => !prev)}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                              isTheaterMode
+                                ? 'bg-[#f59e0b] text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+                                : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
+                            }`}
+                          >
+                            {isTheaterMode ? (
+                              <Minimize2 className="w-3.5 h-3.5" />
+                            ) : (
+                              <Maximize2 className="w-3.5 h-3.5" />
+                            )}
+                            <span>Theater</span>
+                          </button>
+
+                          <button
+                            onClick={handleFullscreen}
+                            className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-white border border-white/15 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                          >
+                            <Maximize className="w-3.5 h-3.5" />
+                            <span>Fullscreen</span>
+                          </button>
+
+                          {currentPlayingStream.telegramUrl && (
+                            <a
+                              href={currentPlayingStream.telegramUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 rounded-lg bg-[#e50914]/90 hover:bg-[#e50914] text-white text-[11px] font-black flex items-center gap-1.5 shadow whitespace-nowrap"
+                            >
+                              <Send className="w-3 h-3" />
+                              <span>Telegram Backup Link</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Horizontal Quick Episode Selector Pills */}
+                      {activeTrackStreamables.length > 0 && (
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-white/[0.06]">
+                          <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider shrink-0 mr-1">
+                            Episodes:
+                          </span>
+                          {activeTrackStreamables.map((item) => {
+                            const isPlayingThis = item.epNum === currentPlayingStream.epNum;
+                            return (
+                              <button
+                                key={`quick-ep-${activeAudio}-${item.epNum}`}
+                                onClick={(e) => handleOpenStream(item.epNum, activeAudio, item.episodeKey, e)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black shrink-0 border transition-all cursor-pointer ${
+                                  isPlayingThis
+                                    ? 'bg-[#e50914] text-white border-red-400/50 shadow-[0_0_14px_rgba(229,9,20,0.45)]'
+                                    : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
                                 }`}
                               >
                                 {item.label}
@@ -1886,102 +3424,30 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       )}
                     </div>
 
-                    {/* Right: Lights Off, Theater, Fullscreen & Telegram Backup Link */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        onClick={() => setIsLightsOff((prev) => !prev)}
-                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                          isLightsOff
-                            ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                        }`}
-                      >
-                        <Lightbulb className="w-3.5 h-3.5" />
-                        <span>{isLightsOff ? 'Lights On' : 'Lights Off'}</span>
-                      </button>
-
-                      <button
-                        onClick={() => setIsTheaterMode((prev) => !prev)}
-                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                          isTheaterMode
-                            ? 'bg-[#f59e0b] text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
-                            : 'bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border-white/10'
-                        }`}
-                      >
-                        {isTheaterMode ? (
-                          <Minimize2 className="w-3.5 h-3.5" />
-                        ) : (
-                          <Maximize2 className="w-3.5 h-3.5" />
-                        )}
-                        <span>Theater</span>
-                      </button>
-
-                      <button
-                        onClick={handleFullscreen}
-                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-white border border-white/15 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
-                      >
-                        <Maximize className="w-3.5 h-3.5" />
-                        <span>Fullscreen</span>
-                      </button>
-
-                      {currentPlayingStream.telegramUrl && (
-                        <a
-                          href={currentPlayingStream.telegramUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg bg-[#e50914]/90 hover:bg-[#e50914] text-white text-[11px] font-black flex items-center gap-1.5 shadow whitespace-nowrap"
+                    {/* 5. DMCA Safe-Harbor & Third-Party Host Disclaimer Bar */}
+                    <div className="px-4 py-2.5 bg-[#05060a] border-t border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        🛡️ Fair-Use &amp; DMCA Safe-Harbor Notice: AsiaFlix Prime does not host, upload, or store any video files on its servers. This player only embeds third-party cloud links provided by independent web hosts.
+                      </p>
+                      {onReportIssue && (
+                        <button
+                          onClick={onReportIssue}
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 text-[11px] font-black flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                         >
-                          <Send className="w-3 h-3" />
-                          <span>Telegram Backup Link</span>
-                        </a>
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>Report / DMCA Takedown</span>
+                        </button>
                       )}
                     </div>
-                  </div>
-
-                  {/* Horizontal Quick Episode Selector Pills */}
-                  {activeTrackStreamables.length > 0 && (
-                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-white/[0.06]">
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider shrink-0 mr-1">
-                        Episodes:
-                      </span>
-                      {activeTrackStreamables.map((item) => {
-                        const isPlayingThis = item.epNum === currentPlayingStream.epNum;
-                        return (
-                          <button
-                            key={`quick-ep-${activeAudio}-${item.epNum}`}
-                            onClick={(e) => handleOpenStream(item.epNum, activeAudio, item.episodeKey, e)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black shrink-0 border transition-all cursor-pointer ${
-                              isPlayingThis
-                                ? 'bg-[#e50914] text-white border-red-400/50 shadow-[0_0_14px_rgba(229,9,20,0.45)]'
-                                : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
-                            }`}
-                          >
-                            {item.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* 5. DMCA Safe-Harbor & Third-Party Host Disclaimer Bar */}
-                <div className="px-4 py-2.5 bg-[#05060a] border-t border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <p className="text-[11px] text-zinc-400 leading-relaxed">
-                    🛡️ Fair-Use &amp; DMCA Safe-Harbor Notice: AsiaFlix Prime does not host, upload, or store any video files on its servers. This player only embeds third-party cloud links provided by independent web hosts.
-                  </p>
-                  {onReportIssue && (
-                    <button
-                      onClick={onReportIssue}
-                      className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 text-[11px] font-black flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>Report / DMCA Takedown</span>
-                    </button>
-                  )}
-                </div>
+                  </>
+                )}
+              </div>
               </div>
             </div>
           )}
+
+          {!isMiniPlayer && (
+            <>
 
           {frontSuccess && (
             <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-black flex items-center justify-between animate-fade-in shadow-lg">
@@ -2173,6 +3639,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {savedDramaProgress && savedDramaProgress.currentTime >= 2 && (
+                  <button
+                    onClick={handleResumeSavedProgress}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black text-xs font-black shadow-[0_0_18px_rgba(245,158,11,0.45)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer border border-amber-300/60"
+                  >
+                    <Play className="w-4 h-4 fill-black" />
+                    <span>
+                      ▶ Resume Ep {savedDramaProgress.ep} from {formatTimeSeconds(savedDramaProgress.currentTime)}
+                    </span>
+                  </button>
+                )}
+
                 {activeTrackStreamables.length > 0 && (
                   <button
                     onClick={(e) =>
@@ -2418,11 +3896,25 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           {/* Episodes List & Dual Online Stream + Telegram Deep Links */}
           {!isMovie && (
             <div>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <h4 className="text-xs font-black text-zinc-300 uppercase tracking-wider flex items-center gap-2">
                   <span>Episode Upload Packs &amp; Online Stream Links</span>
                 </h4>
-                <span className="text-[11px] text-zinc-400">Watched: {watchedEpisodes.length} episodes</span>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => setIsAntiSpoilerOn((v) => !v)}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-black border flex items-center gap-1.5 cursor-pointer transition-all ${
+                      isAntiSpoilerOn
+                        ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                        : 'bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 border-white/10'
+                    }`}
+                    title="Blur titles & thumbnails of unwatched future episodes"
+                  >
+                    {isAntiSpoilerOn ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>🛡️ Anti-Spoiler Shield: {isAntiSpoilerOn ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <span className="text-[11px] text-zinc-400">Watched: {watchedEpisodes.length} episodes</span>
+                </div>
               </div>
 
               <div className="space-y-2.5">
@@ -2436,6 +3928,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     const isCurrentlyPlaying = activeStreamEp === numericEp;
                     const epCustomThumbnail =
                       ep.thumbnailUrl || drama.episodeThumbnails?.[numericEp] || drama.thumbnailUrl;
+                    const isSpoilerBlurred =
+                      isAntiSpoilerOn && !isWatched && !isCurrentlyPlaying && !revealedSpoilerEpKeys[ep.id];
 
                     return (
                       <div
@@ -2475,7 +3969,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 src={epCustomThumbnail}
                                 alt={ep.title}
                                 referrerPolicy="no-referrer"
-                                className="w-full h-full object-cover object-center"
+                                className={`w-full h-full object-cover object-center transition-all ${
+                                  isSpoilerBlurred ? 'blur-md brightness-50 scale-110' : ''
+                                }`}
                               />
                               {hasStreamLink && (
                                 <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
@@ -2488,8 +3984,25 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           )}
 
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-black text-white truncate block">{ep.title}</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`text-xs font-black text-white truncate block transition-all ${
+                                  isSpoilerBlurred ? 'blur-sm select-none' : ''
+                                }`}
+                              >
+                                {ep.title}
+                              </span>
+                              {isSpoilerBlurred && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRevealedSpoilerEpKeys((prev) => ({ ...prev, [ep.id]: true }));
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-black cursor-pointer"
+                                >
+                                  👁 Reveal Ep {numericEp}
+                                </button>
+                              )}
                               {isCurrentlyPlaying && (
                                 <span className="text-[9px] bg-[#e50914] text-white px-1.5 py-0.2 rounded font-black uppercase shrink-0">
                                   Playing
@@ -2635,6 +4148,127 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 )}
               </div>
             </div>
+          )}
+
+          {/* PART C-1: 1-TAP AUDIENCE HYPE VIBE METER */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <span>⚡ Audience Hype Vibe Meter</span>
+              </h4>
+              <span className="text-[11px] text-zinc-400 font-semibold">Tap to cast your vibe vote</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {HYPE_REACTIONS.map((item) => {
+                const count = hypeState.counts[item.key] || 0;
+                const voted = Boolean(hypeState.userVoted[item.key]);
+                const totalAll = Math.max(
+                  1,
+                  Object.values(hypeState.counts).reduce((acc, v) => acc + v, 0)
+                );
+                const pct = Math.round((count / totalAll) * 100);
+                return (
+                  <button
+                    key={item.key}
+                    onClick={() => setHypeState(toggleHypeVote(drama.id, item.key, drama.rating))}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-2 ${
+                      voted
+                        ? item.glowClass
+                        : 'bg-white/[0.02] hover:bg-white/[0.06] border-white/10 text-zinc-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black flex items-center gap-1.5">
+                        <span>{item.emoji}</span>
+                        <span>{item.label}</span>
+                      </span>
+                      <span className="text-xs font-black tabular-nums">{count}</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-[#e50914] to-amber-400 transition-all duration-300"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* PART C-2: SPOILER-FREE QUICK STORY & AUDIO GUIDE */}
+          <div className="rounded-2xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
+            <button
+              onClick={() => setShowStoryGuide((v) => !v)}
+              className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/[0.04] transition-colors cursor-pointer"
+            >
+              <span className="text-xs font-black text-zinc-200 uppercase tracking-wider flex items-center gap-2">
+                <span>📖 Spoiler-Free Story &amp; Audio Track Guide</span>
+              </span>
+              <span className="text-xs font-black text-amber-300">{showStoryGuide ? 'Hide ▴' : 'Open ▾'}</span>
+            </button>
+            {showStoryGuide && (
+              <div className="px-4 pb-4 pt-1 border-t border-white/[0.06] text-xs text-zinc-300 space-y-2 leading-relaxed">
+                <p>
+                  <strong className="text-white">Genre &amp; Vibe:</strong> {drama.category}
+                  {drama.subCategory ? ` • ${drama.subCategory}` : ''} ({drama.releaseYear}) —{' '}
+                  {(drama.tags || []).slice(0, 5).join(', ')}.
+                </p>
+                <p>
+                  <strong className="text-white">Available Audio Tracks:</strong>{' '}
+                  {availableTrackList.join(' • ') || drama.defaultAudio}. Switch tracks anytime inside the player without losing your timestamp!
+                </p>
+                <p className="text-zinc-400">
+                  💡 Tip: Toggle <strong className="text-amber-300">Anti-Spoiler Shield</strong> above the episode list to blur unwatched future episodes.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* PART C-3: MORE LIKE THIS (3 RECOMMENDED DRAMAS) */}
+          {moreLikeThisDramas.length > 0 && onSelectDrama && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                  <span>🎬 More Like This</span>
+                  <span className="text-[11px] font-bold text-zinc-400">Similar VIP picks for you</span>
+                </h4>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {moreLikeThisDramas.map((rec) => (
+                  <div
+                    key={`rec-${rec.id}`}
+                    onClick={() => onSelectDrama(rec)}
+                    className="group rounded-2xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 hover:border-[#e50914]/60 overflow-hidden cursor-pointer transition-all flex items-center gap-3 p-2.5"
+                  >
+                    <img
+                      src={rec.poster}
+                      alt={rec.title}
+                      referrerPolicy="no-referrer"
+                      className="w-16 h-24 rounded-xl object-cover shrink-0 bg-zinc-900 border border-white/10 group-hover:scale-105 transition-transform"
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <h5 className="text-xs sm:text-sm font-black text-white truncate group-hover:text-red-400 transition-colors">
+                        {rec.title}
+                      </h5>
+                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-bold">
+                        <span>{rec.category}</span>
+                        <span>•</span>
+                        <span className="text-amber-300 flex items-center gap-0.5">
+                          <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          {rec.rating}
+                        </span>
+                      </div>
+                      <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded bg-[#e50914]/20 text-red-300 border border-red-500/30">
+                        {rec.defaultAudio}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+            </>
           )}
         </div>
       </div>

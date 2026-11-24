@@ -3,6 +3,12 @@ import { DramaItem, AudioType } from '../types/drama';
 import { Play, Bookmark, BookmarkCheck, Star, Send } from 'lucide-react';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { getTrackEpisodeCounts } from '../services/scheduleHelper';
+import {
+  getWatchTimestampForDrama,
+  formatTimeSeconds,
+  TIMESTAMPS_UPDATED_EVENT,
+  WatchTimestampEntry,
+} from '../services/vipPlayerHelper';
 
 const detectPhoneOrPortrait = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -46,17 +52,26 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   isGrid = false,
 }) => {
   const [detectedPhone, setDetectedPhone] = useState<boolean>(() => detectPhoneOrPortrait());
+  const [savedProgress, setSavedProgress] = useState<WatchTimestampEntry | null>(() =>
+    getWatchTimestampForDrama(drama.id)
+  );
 
   useEffect(() => {
+    setSavedProgress(getWatchTimestampForDrama(drama.id));
+    const syncTs = () => setSavedProgress(getWatchTimestampForDrama(drama.id));
     const update = () => setDetectedPhone(detectPhoneOrPortrait());
     update();
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
+    window.addEventListener(TIMESTAMPS_UPDATED_EVENT, syncTs);
+    window.addEventListener('storage', syncTs);
     return () => {
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
+      window.removeEventListener(TIMESTAMPS_UPDATED_EVENT, syncTs);
+      window.removeEventListener('storage', syncTs);
     };
-  }, []);
+  }, [drama.id]);
 
   const effectiveIsPhone = Boolean(isPhoneDevice || detectedPhone);
   const isRankOne = isTopOne || rank === 1 || drama.spotlightTag === 'TOP #1';
@@ -450,6 +465,29 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </div>
         )}
 
+        {/* Resume Timestamp Badge if viewer has watched >= 2s */}
+        {savedProgress && savedProgress.currentTime >= 2 && (
+          <div
+            className={`absolute left-2.5 pointer-events-none z-10 ${
+              drama.issueFixedText || drama.issueText
+                ? effectiveIsPhone
+                  ? 'bottom-24'
+                  : 'bottom-16'
+                : effectiveIsPhone
+                ? 'bottom-14'
+                : 'bottom-10'
+            }`}
+          >
+            <span
+              className={`inline-flex items-center gap-1 rounded-lg bg-[#e50914]/95 backdrop-blur-md text-white font-black border border-red-300/40 shadow-[0_0_12px_rgba(229,9,20,0.65)] ${
+                effectiveIsPhone ? 'text-[13px] px-3 py-1' : 'text-[9px] px-2 py-0.5'
+              }`}
+            >
+              ▶ Ep {savedProgress.ep} • {formatTimeSeconds(savedProgress.currentTime)}
+            </span>
+          </div>
+        )}
+
         {/* Bottom of Poster: Smart Audio-Aware Status Pill & Right Gold Rating Pill */}
         <div
           className={`absolute bottom-3 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none z-10 ${
@@ -482,15 +520,28 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </span>
         </div>
 
-        {/* Bottom Edge Neon Progress Bar for Ongoing Series */}
-        {showOngoingProgress && (
+        {/* Netflix-style Crimson Resume Progress Bar OR Ongoing Episode Progress Bar */}
+        {savedProgress && savedProgress.currentTime >= 2 ? (
+          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/15 z-20">
+            <div
+              className="h-full bg-[#e50914] shadow-[0_0_10px_rgba(229,9,20,0.9)]"
+              style={{
+                width: `${
+                  savedProgress.duration > 0
+                    ? Math.min(100, Math.max(5, Math.round((savedProgress.currentTime / savedProgress.duration) * 100)))
+                    : 25
+                }%`,
+              }}
+            />
+          </div>
+        ) : showOngoingProgress ? (
           <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/10 z-20">
             <div
               className="h-full bg-gradient-to-r from-[#e50914] via-[#ff2b54] to-[#a855f7] shadow-[0_0_8px_rgba(229,9,20,0.75)]"
               style={{ width: `${ongoingProgressPct}%` }}
             />
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Symmetric Card Body (No Nested Gray Border Boxes) */}

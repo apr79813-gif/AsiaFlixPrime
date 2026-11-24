@@ -1,5 +1,12 @@
 export type AudioType = 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Fan Dubbed' | 'Original / Eng Sub';
 
+export type MoodFilterType = 'all' | 'romance' | 'thriller' | 'fantasy' | 'short';
+
+export interface SubtitleTrack {
+  label: string;
+  url: string;
+}
+
 export type DramaCategory = 
   | 'K-Drama' 
   | 'C-Drama' 
@@ -23,6 +30,7 @@ export interface EpisodeItem {
   hindiCustomAudioLink?: string;
   fanDubCustomAudioLink?: string;
   origCustomAudioLink?: string;
+  subtitleTracks?: SubtitleTrack[];
   duration?: string;
   quality?: string;
   thumbnailUrl?: string;
@@ -42,6 +50,7 @@ export interface DramaItem {
   backdrop: string;
   thumbnailUrl?: string;
   episodeThumbnails?: Record<number, string>;
+  subtitleTracks?: SubtitleTrack[];
   synopsis: string;
   cast: string[];
   tags: string[];

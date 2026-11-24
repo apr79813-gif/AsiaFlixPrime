@@ -129,12 +129,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div onClick={handleLogoClick} className="flex items-center gap-2.5 group cursor-pointer select-none shrink-0">
             <div className="relative w-10 h-10 min-w-[40px] min-h-[40px] max-w-[40px] max-h-[40px] shrink-0 overflow-hidden rounded-xl bg-zinc-900 border border-white/15 shadow-[0_0_20px_rgba(229,9,20,0.5)]">
               <img 
-                src={logoUrl || "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png"} 
+                src={logoUrl || "/logo.png"} 
                 alt="AsiaFlix Prime" 
                 referrerPolicy="no-referrer"
                 className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 object-cover group-hover:scale-105 transition-transform"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png";
+                  const img = e.target as HTMLImageElement;
+                  if (!img.dataset.fallbackApplied) {
+                    img.dataset.fallbackApplied = '1';
+                    img.src = "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png";
+                  }
                 }}
               />
               <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />

@@ -3403,6 +3403,7 @@ export default function App() {
             onMoveToFront={handleMoveDramaToFront}
             isAdminAuthenticated={isAdminAuthenticated}
             isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
+            logoUrl={customLogoUrl}
             onSubscribeDubAlert={handleSubscribeDubAlert}
             onReportIssue={() => {
               handleCloseDrama();

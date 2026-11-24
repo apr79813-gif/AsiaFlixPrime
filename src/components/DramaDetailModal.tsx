@@ -92,6 +92,7 @@ interface DramaDetailModalProps {
   onMoveToFront?: (dramaId: string) => void;
   isAdminAuthenticated?: boolean;
   isTopOne?: boolean;
+  logoUrl?: string;
   onSubscribeDubAlert?: (dramaTitle: string, audio: string) => void;
   onReportIssue?: () => void;
 }
@@ -305,6 +306,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   onMoveToFront,
   isAdminAuthenticated = false,
   isTopOne = false,
+  logoUrl,
   onReportIssue,
 }) => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -537,7 +539,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [parsedSubCues, setParsedSubCues] = useState<Array<{ id: number; start: number; end: number; text: string }>>([]);
   const [activeCue, setActiveCue] = useState<{ id: number; start: number; end: number; text: string } | null>(null);
   const [subBackdropMode, setSubBackdropMode] = useState<'auto' | 'blur' | 'transparent'>('auto');
-  const [hasHardcodedSubtitles, setHasHardcodedSubtitles] = useState<boolean>(false);
+  const [hasHardcodedSubtitles, setHasHardcodedSubtitles] = useState<boolean>(true);
   const [detectedHardcodedSubs, setDetectedHardcodedSubs] = useState<boolean>(false);
   const [isPlayerControlsActive, setIsPlayerControlsActive] = useState<boolean>(false);
   const [subFontSize, setSubFontSize] = useState<'sm' | 'md' | 'lg'>('md');
@@ -1144,10 +1146,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return;
 
-      const sx = Math.floor(vid.videoWidth * 0.18);
-      const sw = Math.max(16, Math.floor(vid.videoWidth * 0.64));
-      const sy = Math.floor(vid.videoHeight * 0.78);
-      const sh = Math.max(8, Math.floor(vid.videoHeight * 0.14));
+      const sx = Math.floor(vid.videoWidth * 0.14);
+      const sw = Math.max(16, Math.floor(vid.videoWidth * 0.72));
+      const sy = Math.floor(vid.videoHeight * 0.76);
+      const sh = Math.max(8, Math.floor(vid.videoHeight * 0.2));
 
       ctx.drawImage(vid, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
       const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -1160,18 +1162,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         for (let x = 0; x < canvas.width; x++) {
           const idx = (y * canvas.width + x) * 4;
           const luma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-          if (x > 0 && ((luma >= 210 && Math.abs(luma - prevLuma) >= 75) || (prevLuma >= 210 && Math.abs(luma - prevLuma) >= 75))) {
+          if (x > 0 && ((luma >= 180 && Math.abs(luma - prevLuma) >= 65) || (prevLuma >= 180 && Math.abs(luma - prevLuma) >= 65))) {
             rowHits++;
           }
           prevLuma = luma;
         }
-        if (rowHits >= 4 && rowHits <= 70) {
+        if (rowHits >= 4 && rowHits <= 80) {
           rowsWithText++;
           brightContrastHits += rowHits;
         }
       }
 
-      const detected = rowsWithText >= 2 && brightContrastHits >= 14;
+      const detected = rowsWithText >= 2 && brightContrastHits >= 12;
       setDetectedHardcodedSubs((prev) => (prev === detected ? prev : detected));
     } catch {
       hardSubCorsBlockedRef.current = true;
@@ -2241,16 +2243,28 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   )}
 
                   {/* Top-Right Official AsiaFlix Prime Channel Watermark Logo (visible on all videos & movies) */}
-                  <div className="absolute top-3.5 right-4 z-30 pointer-events-none select-none">
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/55 backdrop-blur-md border border-white/15 shadow-[0_4px_20px_rgba(0,0,0,0.6)] opacity-85">
-                      <div className="w-5 h-5 rounded-lg bg-gradient-to-br from-[#e50914] to-[#f59e0b] flex items-center justify-center shadow-[0_0_12px_rgba(229,9,20,0.6)]">
-                        <Play className="w-2.5 h-2.5 text-white fill-white ml-0.5" />
-                      </div>
-                      <span className="text-xs sm:text-sm font-black tracking-tight text-white">AsiaFlix</span>
-                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[#e50914] text-white tracking-wider">
-                        PRIME
-                      </span>
-                    </div>
+                  <div className="absolute top-3 right-3.5 sm:top-4 sm:right-5 z-30 pointer-events-none select-none">
+                    <img
+                      src={
+                        logoUrl && !logoUrl.includes('asiaflix-bot/main/logo.png')
+                          ? logoUrl
+                          : '/logo-watermark.png'
+                      }
+                      alt="AsiaFlix Prime"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        if (!img.dataset.fallbackApplied) {
+                          img.dataset.fallbackApplied = '1';
+                          img.src = '/logo.png';
+                        }
+                      }}
+                      className={
+                        isMiniPlayer
+                          ? 'h-7 w-auto object-contain opacity-90 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]'
+                          : 'h-11 sm:h-14 md:h-16 w-auto object-contain opacity-90 drop-shadow-[0_4px_14px_rgba(0,0,0,0.85)]'
+                      }
+                    />
                   </div>
 
                   {/* Center-Screen Animated Gold/Obsidian HUD Overlay (for native video seek/speed/quality) */}
@@ -2316,44 +2330,49 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {activeSubLang !== 'off' && !isMiniPlayer && activeCue?.text ? (
                     <div
                       className={`pointer-events-none absolute inset-x-0 z-30 flex justify-center px-3 transition-all duration-200 ${
-                        isPlayerControlsActive ? 'bottom-[13%] sm:bottom-[14%]' : 'bottom-[7%]'
+                        isPlayerControlsActive ? 'bottom-[13%] sm:bottom-[14%]' : 'bottom-[3.5%] sm:bottom-[4.5%]'
                       }`}
                     >
                       <div
                         style={
                           shouldBlurSubArea
                             ? {
-                                backdropFilter: 'blur(16px)',
-                                WebkitBackdropFilter: 'blur(16px)',
-                                background: 'rgba(0, 0, 0, 0.15)',
-                                borderRadius: '6px',
-                                padding: '6px 24px',
+                                minWidth: 'min(82%, 920px)',
+                                minHeight: '78px',
+                                padding: '14px 36px',
+                                borderRadius: '10px',
+                                background: 'rgba(6, 6, 10, 0.86)',
+                                backdropFilter: 'blur(28px) brightness(0.25)',
+                                WebkitBackdropFilter: 'blur(28px) brightness(0.25)',
                               }
                             : {
                                 background: 'transparent',
-                                padding: '2px 12px',
+                                padding: '4px 16px',
                               }
                         }
-                        className="inline-flex items-center justify-center text-center max-w-[90%] sm:max-w-[82%] transition-all duration-200"
+                        className="inline-flex items-center justify-center text-center max-w-[94%] sm:max-w-[90%] transition-all duration-200"
                       >
                         <span
                           style={{
-                            textShadow: '0 2px 6px rgba(0,0,0,0.95), 0 0 3px #000',
-                            WebkitTextStroke: '0.4px rgba(0,0,0,0.85)',
+                            fontSize:
+                              subFontSize === 'sm'
+                                ? 'clamp(1.1rem, 2.0vw, 1.75rem)'
+                                : subFontSize === 'lg'
+                                ? 'clamp(1.55rem, 3.0vw, 2.65rem)'
+                                : 'clamp(1.35rem, 2.5vw, 2.25rem)',
+                            fontWeight: 800,
+                            lineHeight: 1.38,
+                            letterSpacing: '0.01em',
+                            color:
+                              subColor === 'yellow'
+                                ? '#ffea3b'
+                                : subColor === 'cyan'
+                                ? '#00f2fe'
+                                : '#ffffff',
+                            textShadow: '0 3px 8px rgba(0,0,0,0.98), 0 0 4px #000',
+                            WebkitTextStroke: '0.5px rgba(0,0,0,0.9)',
                           }}
-                          className={`font-extrabold leading-snug whitespace-pre-line ${
-                            subFontSize === 'sm'
-                              ? 'text-xs sm:text-sm'
-                              : subFontSize === 'lg'
-                              ? 'text-base sm:text-2xl'
-                              : 'text-sm sm:text-lg'
-                          } ${
-                            subColor === 'yellow'
-                              ? 'text-[#facc15]'
-                              : subColor === 'cyan'
-                              ? 'text-[#00f2fe]'
-                              : 'text-white'
-                          }`}
+                          className="whitespace-pre-line"
                         >
                           {activeCue.text}
                         </span>
@@ -3048,7 +3067,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 <span className="font-black text-zinc-400">🎨 Text Style:</span>
                                 {(
                                   [
-                                    { id: 'yellow', label: 'Yellow', cls: 'text-[#facc15]' },
+                                    { id: 'yellow', label: 'Yellow', cls: 'text-[#ffea3b]' },
                                     { id: 'white', label: 'White', cls: 'text-white' },
                                     { id: 'cyan', label: 'Cyan', cls: 'text-[#00f2fe]' },
                                   ] as const

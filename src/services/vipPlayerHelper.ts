@@ -433,7 +433,11 @@ function parseTimestampToken(token: string): number | null {
 
 export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
   if (!rawText) return [];
-  const normalized = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const normalized = rawText
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
   const blocks = normalized.split(/\n{2,}/);
   const cues: SubtitleCue[] = [];
 
@@ -451,7 +455,7 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
     if (timeLineIdx < 0) continue;
 
     const timeMatch = lines[timeLineIdx].match(
-      /(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})/
+      /(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)/
     );
     if (!timeMatch) continue;
 
@@ -462,6 +466,8 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
     const textLines = lines
       .slice(timeLineIdx + 1)
       .join('\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\{\\[^}]*\}/g, '')
       .replace(/<\/?[^>]+(>|$)/g, '')
       .trim();
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { DramaItem, EpisodeItem, AudioType, WatchlistStatus } from '../types/drama';
+import { DramaItem, EpisodeItem, AudioType, WatchlistStatus, SubtitleTrackItem } from '../types/drama';
 import {
   X,
   Play,
@@ -283,8 +283,6 @@ type AudioEqMode = 'normal' | 'dialogue' | 'bass3d' | 'night';
 type VideoFitMode = 'contain' | 'cover' | 'cinema219' | 'stretch';
 type StudioTab = 'audio' | 'screen' | 'vault' | 'party';
 type SleepTimerMode = 'off' | '30m' | '60m' | 'end_of_ep';
-type SubtitleSize = 'S' | 'M' | 'L';
-type SubtitleColor = 'white' | 'yellow' | 'cyan';
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
@@ -528,13 +526,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama ? getSceneBookmarks(drama.id) : []
   );
 
-  // Custom Subtitles (CC)
-  const [activeSubtitleUrl, setActiveSubtitleUrl] = useState<string>('off');
+  // Multi-Language Subtitles (CC) & Smart Hard-Sub Eraser Shield
+  const [activeSubLang, setActiveSubLang] = useState<string>('off');
   const [uploadedSubCues, setUploadedSubCues] = useState<{ label: string; cues: SubtitleCue[] } | null>(null);
-  const [parsedSubCues, setParsedSubCues] = useState<SubtitleCue[]>([]);
-  const [activeSubText, setActiveSubText] = useState<string>('');
-  const [subSize, setSubSize] = useState<SubtitleSize>('M');
-  const [subColor, setSubColor] = useState<SubtitleColor>('white');
+  const [parsedSubCues, setParsedSubCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
+  const [activeCueText, setActiveCueText] = useState<string>('');
+  const [hardSubEraserMode, setHardSubEraserMode] = useState<'solid' | 'blur' | 'off'>('solid');
+  const [eraserBottomOffset, setEraserBottomOffset] = useState<'low' | 'mid' | 'high'>('low');
+  const [eraserWidthMode, setEraserWidthMode] = useState<'box' | 'fullbar'>('fullbar');
+  const [subFontSize, setSubFontSize] = useState<'sm' | 'md' | 'lg'>('md');
+  const [subColor, setSubColor] = useState<'white' | 'yellow' | 'cyan'>('yellow');
+  const [isSubLoading, setIsSubLoading] = useState<boolean>(false);
 
   // Danmaku Live Hype & Watch Party
   const [isDanmakuOn, setIsDanmakuOn] = useState<boolean>(true);
@@ -588,7 +590,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setLoopPointB(null);
     setAutoNextCountdown(null);
     setFloatingDanmaku([]);
-    setActiveSubText('');
+    setActiveCueText('');
     preloadedNextUrlRef.current = null;
     lastPlaybackTickMsRef.current = null;
     if (drama && activeStreamEp !== null) {
@@ -625,8 +627,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setLoopPointB(null);
     setAutoNextCountdown(null);
     setWatchPartyRoom(initialPartyRoom || null);
-    setActiveSubtitleUrl('off');
+    setActiveSubLang('off');
     setParsedSubCues([]);
+    setActiveCueText('');
     setUploadedSubCues(null);
     setRevealedSpoilerEpKeys({});
     pendingRestoreTimeRef.current =
@@ -794,6 +797,56 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     drama.thumbnailUrl;
 
   const activeEpNumForLookup = currentPlayingStream?.epNum ?? activeStreamEp;
+
+  const sheetSubtitleTracks = useMemo(() => {
+    const epSubs = currentEpObj?.subtitleTracks || [];
+    const dramaSubs = drama.subtitleTracks || [];
+    const merged = [...epSubs];
+    dramaSubs.forEach((s) => {
+      if (!merged.some((x) => x.url === s.url)) merged.push(s);
+    });
+    return merged;
+  }, [currentEpObj, drama.subtitleTracks]);
+
+  const availableSubLanguages = useMemo(() => {
+    const epMatch =
+      (currentEpObj?.subtitles && Object.keys(currentEpObj.subtitles).length > 0 ? currentEpObj : undefined) ||
+      (activeEpNumForLookup !== null
+        ? drama.episodes.find(
+            (ep) =>
+              extractNumericEp(ep.episodeNumber) === activeEpNumForLookup &&
+              ep.subtitles &&
+              Object.keys(ep.subtitles).length > 0
+          )
+        : undefined);
+
+    const subMap: Record<string, SubtitleTrackItem> =
+      epMatch?.subtitles ||
+      (drama.subtitles && Object.keys(drama.subtitles).length > 0 ? drama.subtitles : {});
+
+    const items = Object.values(subMap).map((item) => {
+      const capCode = item.code.charAt(0).toUpperCase() + item.code.slice(1);
+      const epTag = activeEpNumForLookup !== null && !isMovie ? `${capCode}${activeEpNumForLookup}` : capCode;
+      return {
+        ...item,
+        displayLabel: `${item.label} (${epTag})`,
+      };
+    });
+
+    if (items.length === 0 && sheetSubtitleTracks.length > 0) {
+      sheetSubtitleTracks.forEach((legacy, idx) => {
+        const code = `sub${idx + 1}`;
+        items.push({
+          code,
+          label: legacy.label,
+          url: legacy.url,
+          displayLabel: legacy.label,
+        });
+      });
+    }
+
+    return items;
+  }, [currentEpObj, activeEpNumForLookup, drama.episodes, drama.subtitles, sheetSubtitleTracks, isMovie]);
   const trackCustomAudio = (() => {
     if (activeEpNumForLookup === null) return undefined;
     const lookupField =
@@ -1054,37 +1107,71 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, isAudioCorsFallback, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio]);
 
-  // Fetch and parse remote Subtitle URL (Sheet Sub1/Sub2) whenever activeSubtitleUrl changes
+  const handleSelectSubLang = (langCode: string) => {
+    setActiveSubLang(langCode);
+    setActiveCueText('');
+    if (langCode !== 'off' && langCode !== 'eng' && langCode !== 'en') {
+      setHardSubEraserMode('solid');
+    }
+    if (langCode === 'off') {
+      showHudFeedback('💬 Subtitles: Off');
+    } else if (langCode === 'local') {
+      showHudFeedback('💬 Subtitles: Local File Active');
+    } else {
+      const matched = availableSubLanguages.find((s) => s.code === langCode);
+      if (matched) showHudFeedback(`💬 ${matched.displayLabel} Active`);
+    }
+  };
+
+  // Auto-Fetch & Parse Remote .SRT / .VTT Subtitle File whenever activeSubLang or episode changes
   useEffect(() => {
-    if (activeSubtitleUrl === 'off') {
+    if (activeSubLang === 'off') {
       setParsedSubCues([]);
-      setActiveSubText('');
+      setActiveCueText('');
+      setIsSubLoading(false);
       return;
     }
-    if (activeSubtitleUrl === 'uploaded' && uploadedSubCues) {
+    if (activeSubLang === 'local' && uploadedSubCues) {
       setParsedSubCues(uploadedSubCues.cues);
+      setIsSubLoading(false);
       return;
     }
-    if (/^https?:\/\//i.test(activeSubtitleUrl)) {
+    const track =
+      currentEpObj?.subtitles?.[activeSubLang] ||
+      availableSubLanguages.find((s) => s.code === activeSubLang);
+    if (track && /^https?:\/\//i.test(track.url)) {
       let cancelled = false;
-      fetch(activeSubtitleUrl)
-        .then((r) => r.text())
+      setIsSubLoading(true);
+      fetch(track.url)
+        .then((r) => {
+          if (!r.ok) throw new Error('Subtitle fetch failed');
+          return r.text();
+        })
         .then((txt) => {
           if (!cancelled) {
-            setParsedSubCues(parseSrtOrVttContent(txt));
+            const cues = parseSrtOrVttContent(txt);
+            setParsedSubCues(cues);
+            setIsSubLoading(false);
+            if (cues.length === 0) {
+              showHudFeedback('⚠️ Subtitle file empty or unsupported format');
+            }
           }
         })
         .catch(() => {
           if (!cancelled) {
             setParsedSubCues([]);
-            showHudFeedback('⚠️ Unable to load subtitle URL (use .srt/.vtt upload)');
+            setIsSubLoading(false);
+            showHudFeedback('⚠️ Unable to load subtitle URL (try Load .SRT File)');
           }
         });
       return () => {
         cancelled = true;
       };
+    } else {
+      setParsedSubCues([]);
+      setIsSubLoading(false);
     }
-  }, [activeSubtitleUrl, uploadedSubCues]);
+  }, [activeSubLang, availableSubLanguages, currentEpObj, uploadedSubCues]);
 
   // Auto-Next 5-Second Countdown interval
   useEffect(() => {
@@ -1555,8 +1642,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     reader.onload = () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
       const cues = parseSrtOrVttContent(content);
-      setUploadedSubCues({ label: file.name.slice(0, 20), cues });
-      setActiveSubtitleUrl('uploaded');
+      setUploadedSubCues({ label: file.name.slice(0, 22), cues });
+      setActiveSubLang('local');
+      setHardSubEraserMode('solid');
       setParsedSubCues(cues);
       showHudFeedback(`💬 Loaded ${cues.length} CC lines`);
     };
@@ -1596,16 +1684,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       .map((x) => x.drama);
   }, [drama?.id, allDramas]);
 
-  const sheetSubtitleTracks = useMemo(() => {
-    const epSubs = currentEpObj?.subtitleTracks || [];
-    const dramaSubs = drama.subtitleTracks || [];
-    const merged = [...epSubs];
-    dramaSubs.forEach((s) => {
-      if (!merged.some((x) => x.url === s.url)) merged.push(s);
-    });
-    return merged;
-  }, [currentEpObj, drama.subtitleTracks]);
-
   const hasActiveStudioEffects =
     audioEqMode !== 'normal' ||
     volumeBoost > 100 ||
@@ -1613,7 +1691,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     isAmbilightOn ||
     isEyeCareOn ||
     loopPointA !== null ||
-    activeSubtitleUrl !== 'off' ||
+    activeSubLang !== 'off' ||
     sleepTimerMode !== 'off' ||
     Boolean(watchPartyRoom);
 
@@ -2130,26 +2208,50 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </div>
                   )}
 
-                  {/* Styled Custom Subtitles (CC) Overlay */}
-                  {activeSubText && !isMiniPlayer && (
-                    <div className="pointer-events-none absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 z-30 max-w-[90%] text-center px-3">
-                      <span
-                        className={`inline-block px-3.5 py-1.5 rounded-lg bg-black/85 backdrop-blur-sm font-extrabold leading-snug shadow-lg whitespace-pre-line ${
-                          subSize === 'S'
-                            ? 'text-xs sm:text-sm'
-                            : subSize === 'L'
-                            ? 'text-base sm:text-xl'
-                            : 'text-sm sm:text-base'
+                  {/* Smart Hard-Sub Eraser Shield + Live Multi-Language Subtitle Overlay */}
+                  {activeSubLang !== 'off' && !isMiniPlayer && (hardSubEraserMode !== 'off' || Boolean(activeCueText)) && (
+                    <div
+                      className={`pointer-events-none absolute inset-x-0 z-30 flex justify-center px-3 transition-all duration-200 ${
+                        eraserBottomOffset === 'high'
+                          ? 'bottom-[14%]'
+                          : eraserBottomOffset === 'mid'
+                          ? 'bottom-[9%]'
+                          : 'bottom-[5%]'
+                      }`}
+                    >
+                      <div
+                        className={`flex items-center justify-center text-center transition-all duration-200 ${
+                          eraserWidthMode === 'fullbar'
+                            ? 'w-[92%] sm:w-[86%] mx-auto'
+                            : 'w-auto max-w-[86%] sm:max-w-[78%] min-w-[240px] sm:min-w-[340px] mx-auto'
                         } ${
-                          subColor === 'yellow'
-                            ? 'text-amber-300'
-                            : subColor === 'cyan'
-                            ? 'text-cyan-300'
-                            : 'text-white'
+                          hardSubEraserMode === 'solid'
+                            ? 'min-h-[44px] sm:min-h-[58px] rounded-xl px-5 py-2 bg-[#050508]/95 border border-white/10 shadow-[0_4px_25px_rgba(0,0,0,0.95)]'
+                            : hardSubEraserMode === 'blur'
+                            ? 'min-h-[44px] sm:min-h-[58px] rounded-xl px-5 py-2 bg-black/80 backdrop-blur-2xl border border-white/10 shadow-[0_4px_25px_rgba(0,0,0,0.85)]'
+                            : 'px-4 py-1.5 rounded-xl bg-black/80 backdrop-blur-sm shadow-lg'
                         }`}
                       >
-                        {activeSubText}
-                      </span>
+                        {activeCueText ? (
+                          <span
+                            className={`font-extrabold leading-snug whitespace-pre-line drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] ${
+                              subFontSize === 'sm'
+                                ? 'text-xs sm:text-sm'
+                                : subFontSize === 'lg'
+                                ? 'text-base sm:text-2xl'
+                                : 'text-sm sm:text-lg'
+                            } ${
+                              subColor === 'yellow'
+                                ? 'text-[#facc15]'
+                                : subColor === 'cyan'
+                                ? 'text-[#00f2fe]'
+                                : 'text-white'
+                            }`}
+                          >
+                            {activeCueText}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   )}
 
@@ -2380,12 +2482,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           }
 
                           // 2. Active Subtitle Cue Matcher
-                          if (activeSubtitleUrl !== 'off' && parsedSubCues.length > 0) {
+                          if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
                             const tNow = vid.currentTime;
                             const cue = parsedSubCues.find((c) => tNow >= c.start && tNow <= c.end);
-                            setActiveSubText(cue ? cue.text : '');
-                          } else if (activeSubText) {
-                            setActiveSubText('');
+                            setActiveCueText(cue ? cue.text : '');
+                          } else if (activeCueText) {
+                            setActiveCueText('');
                           }
 
                           // 3. Live Danmaku Matching
@@ -2707,6 +2809,192 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </div>
                       </div>
 
+                      {/* 💬 SUBTITLES (CC) & SMART HARD-SUB ERASER CAPSULE */}
+                      <div className="rounded-xl bg-[#0e1019] border border-sky-400/20 px-3.5 py-2.5 flex flex-col gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1.5 mr-1">
+                            <Captions className="w-3.5 h-3.5 text-sky-400" />
+                            <span>💬 Subtitles (CC) & Hard-Sub Eraser</span>
+                            {isSubLoading && (
+                              <span className="text-[10px] text-amber-300 animate-pulse normal-case font-bold">
+                                (Loading...)
+                              </span>
+                            )}
+                          </span>
+
+                          <button
+                            onClick={() => handleSelectSubLang('off')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
+                              activeSubLang === 'off'
+                                ? 'bg-[#e50914] text-white border-red-400/60 shadow-[0_0_12px_rgba(229,9,20,0.4)]'
+                                : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
+                            }`}
+                          >
+                            🚫 Off
+                          </button>
+
+                          {availableSubLanguages.map((sub) => (
+                            <button
+                              key={`cc-pill-${sub.code}-${sub.url}`}
+                              onClick={() => handleSelectSubLang(sub.code)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
+                                activeSubLang === sub.code
+                                  ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
+                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                              }`}
+                            >
+                              {sub.displayLabel}
+                            </button>
+                          ))}
+
+                          {uploadedSubCues && (
+                            <button
+                              onClick={() => handleSelectSubLang('local')}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
+                                activeSubLang === 'local'
+                                  ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
+                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
+                              }`}
+                            >
+                              📄 {uploadedSubCues.label}
+                            </button>
+                          )}
+
+                          <input
+                            ref={subtitleFileInputRef}
+                            type="file"
+                            accept=".srt,.vtt"
+                            onChange={handleSubtitleFileUpload}
+                            className="hidden"
+                          />
+                          <button
+                            onClick={() => subtitleFileInputRef.current?.click()}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.14] text-amber-200 border border-amber-400/30 transition-all cursor-pointer"
+                          >
+                            📂 Load .SRT File
+                          </button>
+                        </div>
+
+                        {activeSubLang !== 'off' && (
+                          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/10 text-[11px]">
+                            {/* Hard-Sub Eraser Mode */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-black text-amber-300">🪄 Hide Video's Burned-In Sub:</span>
+                              {(
+                                [
+                                  { id: 'solid', label: 'Solid Blackout (100% Hide)' },
+                                  { id: 'blur', label: 'Frosted Blur' },
+                                  { id: 'off', label: 'Off' },
+                                ] as const
+                              ).map((mode) => (
+                                <button
+                                  key={`eraser-${mode.id}`}
+                                  onClick={() => setHardSubEraserMode(mode.id)}
+                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                    hardSubEraserMode === mode.id
+                                      ? 'bg-amber-400 text-black border-amber-200'
+                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {mode.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Eraser Vertical Position */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className="font-black text-zinc-400">↕️ Eraser Position:</span>
+                              {(
+                                [
+                                  { id: 'low', label: 'Low' },
+                                  { id: 'mid', label: 'Mid' },
+                                  { id: 'high', label: 'High' },
+                                ] as const
+                              ).map((pos) => (
+                                <button
+                                  key={`pos-${pos.id}`}
+                                  onClick={() => setEraserBottomOffset(pos.id)}
+                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                    eraserBottomOffset === pos.id
+                                      ? 'bg-emerald-400 text-black border-emerald-200'
+                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {pos.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Shield Width */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className="font-black text-zinc-400">↔️ Width:</span>
+                              {(
+                                [
+                                  { id: 'fullbar', label: 'Full Bar' },
+                                  { id: 'box', label: 'Box' },
+                                ] as const
+                              ).map((wMode) => (
+                                <button
+                                  key={`width-${wMode.id}`}
+                                  onClick={() => setEraserWidthMode(wMode.id)}
+                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                    eraserWidthMode === wMode.id
+                                      ? 'bg-sky-400 text-black border-sky-200'
+                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {wMode.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Text Color & Size */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className="font-black text-zinc-400">🎨 Text Style:</span>
+                              {(
+                                [
+                                  { id: 'yellow', label: 'Yellow', cls: 'text-[#facc15]' },
+                                  { id: 'white', label: 'White', cls: 'text-white' },
+                                  { id: 'cyan', label: 'Cyan', cls: 'text-[#00f2fe]' },
+                                ] as const
+                              ).map((col) => (
+                                <button
+                                  key={`col-${col.id}`}
+                                  onClick={() => setSubColor(col.id)}
+                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${col.cls} ${
+                                    subColor === col.id
+                                      ? 'bg-white/20 border-white'
+                                      : 'bg-[#141622] border-white/10 opacity-75 hover:opacity-100'
+                                  }`}
+                                >
+                                  {col.label}
+                                </button>
+                              ))}
+                              <span className="text-zinc-600 mx-0.5">|</span>
+                              {(
+                                [
+                                  { id: 'sm', label: 'S' },
+                                  { id: 'md', label: 'M' },
+                                  { id: 'lg', label: 'L' },
+                                ] as const
+                              ).map((sz) => (
+                                <button
+                                  key={`sz-${sz.id}`}
+                                  onClick={() => setSubFontSize(sz.id)}
+                                  className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
+                                    subFontSize === sz.id
+                                      ? 'bg-white text-black border-white'
+                                      : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {sz.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
                       {/* TIER 2 EXPANDABLE 4-TAB VIP STUDIO DECK */}
                       {isStudioToolsOpen && (
                         <div className="rounded-2xl bg-[#0e1019] border border-white/15 p-3.5 space-y-3 animate-fade-in">
@@ -3021,33 +3309,33 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                     <span>CC:</span>
                                   </span>
                                   <button
-                                    onClick={() => setActiveSubtitleUrl('off')}
+                                    onClick={() => handleSelectSubLang('off')}
                                     className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                      activeSubtitleUrl === 'off'
+                                      activeSubLang === 'off'
                                         ? 'bg-sky-500 text-black border-sky-300'
                                         : 'bg-[#141622] text-zinc-300 border-white/10'
                                     }`}
                                   >
                                     Off
                                   </button>
-                                  {sheetSubtitleTracks.map((sub, i) => (
+                                  {availableSubLanguages.map((sub) => (
                                     <button
-                                      key={`${sub.url}-${i}`}
-                                      onClick={() => setActiveSubtitleUrl(sub.url)}
+                                      key={`${sub.code}-${sub.url}`}
+                                      onClick={() => handleSelectSubLang(sub.code)}
                                       className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                        activeSubtitleUrl === sub.url
+                                        activeSubLang === sub.code
                                           ? 'bg-sky-500 text-black border-sky-300'
                                           : 'bg-[#141622] text-zinc-300 border-white/10'
                                       }`}
                                     >
-                                      {sub.label}
+                                      {sub.displayLabel}
                                     </button>
                                   ))}
                                   {uploadedSubCues && (
                                     <button
-                                      onClick={() => setActiveSubtitleUrl('uploaded')}
+                                      onClick={() => handleSelectSubLang('local')}
                                       className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
-                                        activeSubtitleUrl === 'uploaded'
+                                        activeSubLang === 'local'
                                           ? 'bg-sky-500 text-black border-sky-300'
                                           : 'bg-[#141622] text-zinc-300 border-white/10'
                                       }`}
@@ -3055,13 +3343,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                       📄 {uploadedSubCues.label}
                                     </button>
                                   )}
-                                  <input
-                                    ref={subtitleFileInputRef}
-                                    type="file"
-                                    accept=".srt,.vtt"
-                                    onChange={handleSubtitleFileUpload}
-                                    className="hidden"
-                                  />
                                   <button
                                     onClick={() => subtitleFileInputRef.current?.click()}
                                     className="px-2.5 py-1 rounded-lg text-[11px] font-black bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/15 cursor-pointer"
@@ -3069,21 +3350,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                     + Upload .SRT/.VTT
                                   </button>
 
-                                  {activeSubtitleUrl !== 'off' && (
+                                  {activeSubLang !== 'off' && (
                                     <>
                                       <span className="text-zinc-600 mx-0.5">|</span>
-                                      {(['S', 'M', 'L'] as SubtitleSize[]).map((sz) => (
+                                      {(['sm', 'md', 'lg'] as const).map((sz) => (
                                         <button
                                           key={sz}
-                                          onClick={() => setSubSize(sz)}
-                                          className={`px-2 py-0.5 rounded text-[10px] font-black cursor-pointer ${
-                                            subSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
+                                          onClick={() => setSubFontSize(sz)}
+                                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase cursor-pointer ${
+                                            subFontSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
                                           }`}
                                         >
-                                          {sz}
+                                          {sz === 'sm' ? 'S' : sz === 'md' ? 'M' : 'L'}
                                         </button>
                                       ))}
-                                      {(['white', 'yellow', 'cyan'] as SubtitleColor[]).map((col) => (
+                                      {(['white', 'yellow', 'cyan'] as const).map((col) => (
                                         <button
                                           key={col}
                                           onClick={() => setSubColor(col)}

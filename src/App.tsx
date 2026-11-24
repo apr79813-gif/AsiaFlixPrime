@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings, MoodFilterType, SubtitleTrack } from './types/drama';
+import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings, MoodFilterType, SubtitleTrack, SubtitleTrackItem } from './types/drama';
 import { INITIAL_DRAMAS, INITIAL_NOTIFICATIONS, INITIAL_TICKETS, INITIAL_HERO_BANNERS } from './data/initialCatalog';
 import { SakuraCanvas, ParticleMode } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
@@ -1323,6 +1323,10 @@ export default function App() {
         ],
         header[14] && (header[14].includes('thumbnail') || header[14] === 'thumb') ? 14 : -1
       );
+      const subtitleIdx = findHeaderCol([
+        (h) => h === 'subtitle' || h === 'subtitles' || h === 'sub' || h === 'subs',
+        (h) => (h.includes('subtitle') || /\bsubs?\b/.test(h)) && !h.includes('category') && !h.includes('genre'),
+      ]);
       const subCategoryIdx = findHeaderCol([
         (h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'),
       ]);
@@ -1458,29 +1462,132 @@ export default function App() {
         const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
         const rawAudioCell = audioIdx >= 0 ? row[audioIdx]?.trim() || '' : '';
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
+        const rawSubtitleCell = subtitleIdx >= 0 ? row[subtitleIdx]?.trim() || '' : '';
 
-        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub), and Sub1/Sub2... (Subtitles)
-        const hindiAudioMap = new Map<number, string>();
-        const fanDubAudioMap = new Map<number, string>();
-        const origAudioMap = new Map<number, string>();
+        const SUBTITLE_LANGUAGE_LABELS: Record<string, string> = {
+          hin: '🇮🇳 Hindi',
+          hi: '🇮🇳 Hindi',
+          hindi: '🇮🇳 Hindi',
+          eng: '🇬🇧 English',
+          en: '🇬🇧 English',
+          ur: '🇵🇰 Urdu',
+          urd: '🇵🇰 Urdu',
+          ben: '🇮🇳 Bengali',
+          bn: '🇮🇳 Bengali',
+          tam: '🇮🇳 Tamil',
+          ta: '🇮🇳 Tamil',
+          tel: '🇮🇳 Telugu',
+          te: '🇮🇳 Telugu',
+          mar: '🇮🇳 Marathi',
+          mr: '🇮🇳 Marathi',
+          ind: '🇮🇩 Indonesian',
+          id: '🇮🇩 Indonesian',
+          kor: '🇰🇷 Korean',
+          ko: '🇰🇷 Korean',
+          chi: '🇨🇳 Chinese',
+          zh: '🇨🇳 Chinese',
+          ara: '🇸🇦 Arabic',
+          ar: '🇸🇦 Arabic',
+          esp: '🇪🇸 Spanish',
+          es: '🇪🇸 Spanish',
+          sub: '💬 CC Sub',
+        };
+
+        const getSubtitleLangLabel = (code: string): string => {
+          const lower = code.toLowerCase();
+          if (SUBTITLE_LANGUAGE_LABELS[lower]) return SUBTITLE_LANGUAGE_LABELS[lower];
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        };
+
+        // Parse Multi-Language Subtitles from dedicated Subtitle column (and Audio column fallback)
+        const episodeSubtitles: Record<number, Record<string, SubtitleTrackItem>> = {};
+        const dramaSubtitles: Record<string, SubtitleTrackItem> = {};
         const parsedSubtitleTracks: SubtitleTrack[] = [];
+        const skippedSubPrefixes = new Set(['ep', 'es', 'hd', 'fd', 'os', 'http', 'https']);
 
-        if (rawAudioCell) {
-          const subRegex = /\bsub(?:title)?\s*[-_#]?\s*(\d+)?\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          let sm: RegExpExecArray | null;
-          while ((sm = subRegex.exec(rawAudioCell)) !== null) {
-            const subUrl = normalizeDirectMediaUrl(sm[2]);
-            if (subUrl && !parsedSubtitleTracks.some((s) => s.url === subUrl)) {
-              const subIdx = sm[1] ? ` ${sm[1]}` : parsedSubtitleTracks.length > 0 ? ` ${parsedSubtitleTracks.length + 1}` : '';
+        const parseSubtitleSourceText = (sourceText: string) => {
+          if (!sourceText) return;
+          const multiLangSubRegex = /\b([a-zA-Z]{2,5})\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/g;
+          let m: RegExpExecArray | null;
+          while ((m = multiLangSubRegex.exec(sourceText)) !== null) {
+            const langCode = m[1].toLowerCase();
+            if (skippedSubPrefixes.has(langCode)) continue;
+            const epNum = parseInt(m[2], 10);
+            const normalizedUrl = normalizeDirectMediaUrl(m[3]);
+            if (Number.isNaN(epNum) || !normalizedUrl) continue;
+
+            const langLabel = getSubtitleLangLabel(langCode);
+            if (!episodeSubtitles[epNum]) episodeSubtitles[epNum] = {};
+            if (!episodeSubtitles[epNum][langCode]) {
+              episodeSubtitles[epNum][langCode] = {
+                code: langCode,
+                label: langLabel,
+                url: normalizedUrl,
+              };
+            }
+            if (!dramaSubtitles[langCode]) {
+              dramaSubtitles[langCode] = {
+                code: langCode,
+                label: langLabel,
+                url: normalizedUrl,
+              };
+            }
+            if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
               parsedSubtitleTracks.push({
-                label: `CC Sub${subIdx}`.trim(),
-                url: subUrl,
+                label: `${langLabel} (Ep ${epNum})`,
+                url: normalizedUrl,
               });
             }
           }
 
+          // Also support unnumbered subtitle tags (e.g. "Hin = https://..." for Movies / single episodes)
+          const withoutNumberedSubs = sourceText.replace(
+            /\b([a-zA-Z]{2,5})\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/g,
+            ' '
+          );
+          const unnumberedSubRegex = /\b([a-zA-Z]{2,5})\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/g;
+          while ((m = unnumberedSubRegex.exec(withoutNumberedSubs)) !== null) {
+            const langCode = m[1].toLowerCase();
+            if (skippedSubPrefixes.has(langCode) || langCode === 't1' || langCode === 't2' || langCode === 't3') continue;
+            const normalizedUrl = normalizeDirectMediaUrl(m[2]);
+            if (!normalizedUrl) continue;
+            const langLabel = getSubtitleLangLabel(langCode);
+            if (!dramaSubtitles[langCode]) {
+              dramaSubtitles[langCode] = {
+                code: langCode,
+                label: langLabel,
+                url: normalizedUrl,
+              };
+            }
+            if (!episodeSubtitles[1]) episodeSubtitles[1] = {};
+            if (!episodeSubtitles[1][langCode]) {
+              episodeSubtitles[1][langCode] = {
+                code: langCode,
+                label: langLabel,
+                url: normalizedUrl,
+              };
+            }
+            if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
+              parsedSubtitleTracks.push({
+                label: langLabel,
+                url: normalizedUrl,
+              });
+            }
+          }
+        };
+
+        parseSubtitleSourceText(rawSubtitleCell);
+        parseSubtitleSourceText(rawAudioCell);
+
+        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub)
+        const hindiAudioMap = new Map<number, string>();
+        const fanDubAudioMap = new Map<number, string>();
+        const origAudioMap = new Map<number, string>();
+
+        if (rawAudioCell) {
+          // Strip subtitle tokens (e.g. Sub1, Hin1, Eng1) from Audio cell before audio parsing
           const cellWithoutSubtitles = rawAudioCell.replace(
-            /\bsub(?:title)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
+            /\b(?!hd\b|fd\b|os\b|ep\b|es\b)([a-zA-Z]{2,5})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
             ' '
           );
 
@@ -1831,7 +1938,8 @@ export default function App() {
         const defaultAudio: AudioType =
           availableAudios[0] || (filteredComingSoonAudios[0] ? filteredComingSoonAudios[0] : 'Hindi Dubbed');
 
-        const applyEpisodeThumbnails = (eps: EpisodeItem[]) => {
+        const applyEpisodeThumbnailsAndSubtitles = (eps: EpisodeItem[]) => {
+          const hasDramaSubs = Object.keys(dramaSubtitles).length > 0;
           eps.forEach((ep) => {
             const epNum =
               typeof ep.episodeNumber === 'number'
@@ -1842,11 +1950,19 @@ export default function App() {
             if (matchedThumb) {
               ep.thumbnailUrl = matchedThumb;
             }
+            const epSubsMap =
+              (epNum > 0 && episodeSubtitles[epNum]) ||
+              ((isFilm || ep.episodeNumber === 'Full Movie') && episodeSubtitles[1]) ||
+              (isFilm && hasDramaSubs ? dramaSubtitles : undefined);
+            if (epSubsMap && Object.keys(epSubsMap).length > 0) {
+              ep.subtitles = { ...epSubsMap };
+              ep.subtitleLink = Object.values(epSubsMap)[0]?.url;
+            }
           });
         };
 
         const parsedEpisodes = [...hindiEpisodes, ...fanEpisodes, ...origEpisodes];
-        applyEpisodeThumbnails(parsedEpisodes);
+        applyEpisodeThumbnailsAndSubtitles(parsedEpisodes);
         if (parsedSubtitleTracks.length > 0) {
           parsedEpisodes.forEach((ep) => {
             ep.subtitleTracks = parsedSubtitleTracks;
@@ -2089,6 +2205,10 @@ export default function App() {
               if (ep.fanDubCustomAudioLink && !existing.fanDubCustomAudioLink) existing.fanDubCustomAudioLink = ep.fanDubCustomAudioLink;
               if (ep.origCustomAudioLink && !existing.origCustomAudioLink) existing.origCustomAudioLink = ep.origCustomAudioLink;
               if (ep.thumbnailUrl && !existing.thumbnailUrl) existing.thumbnailUrl = ep.thumbnailUrl;
+              if (ep.subtitles) {
+                existing.subtitles = { ...(existing.subtitles || {}), ...ep.subtitles };
+              }
+              if (ep.subtitleLink && !existing.subtitleLink) existing.subtitleLink = ep.subtitleLink;
             }
           });
           if (prev.thumbnailUrl || prev.episodeThumbnails) {
@@ -2106,6 +2226,10 @@ export default function App() {
           if (resolvedMovieHindiStream && !prev.movieStreamLink) prev.movieStreamLink = resolvedMovieHindiStream;
           if (resolvedMovieFanDubStream && !prev.movieFanDubStreamLink) prev.movieFanDubStreamLink = resolvedMovieFanDubStream;
           if (resolvedMovieOrigStream && !prev.movieEngSubStreamLink) prev.movieEngSubStreamLink = resolvedMovieOrigStream;
+          if (Object.keys(dramaSubtitles).length > 0) {
+            prev.subtitles = { ...(prev.subtitles || {}), ...dramaSubtitles };
+            if (!prev.subtitleLink) prev.subtitleLink = Object.values(dramaSubtitles)[0]?.url;
+          }
           if (parsedSubtitleTracks.length > 0) {
             const existingSubs = prev.subtitleTracks || [];
             const mergedSubs = [...existingSubs];
@@ -2150,6 +2274,10 @@ export default function App() {
                 audio: defaultAudio,
                 telegramUrl: primaryLink,
                 thumbnailUrl: parsedDefaultThumbnail || parsedEpisodeThumbnails?.[1],
+                subtitles:
+                  episodeSubtitles[1] || (Object.keys(dramaSubtitles).length > 0 ? dramaSubtitles : undefined),
+                subtitleLink:
+                  Object.values(episodeSubtitles[1] || dramaSubtitles)[0]?.url,
                 duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
                 quality: '1080p FHD',
                 isMerged: !isFilm,
@@ -2205,6 +2333,8 @@ export default function App() {
           movieStreamLink: resolvedMovieHindiStream,
           movieFanDubStreamLink: resolvedMovieFanDubStream,
           movieEngSubStreamLink: resolvedMovieOrigStream,
+          subtitles: Object.keys(dramaSubtitles).length > 0 ? dramaSubtitles : undefined,
+          subtitleLink: Object.values(dramaSubtitles)[0]?.url,
           subtitleTracks: parsedSubtitleTracks.length > 0 ? parsedSubtitleTracks : undefined,
           episodes: dramaEpisodes,
           

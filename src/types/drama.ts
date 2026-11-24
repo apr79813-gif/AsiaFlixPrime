@@ -7,6 +7,12 @@ export interface SubtitleTrack {
   url: string;
 }
 
+export interface SubtitleTrackItem {
+  code: string;
+  label: string;
+  url: string;
+}
+
 export type DramaCategory = 
   | 'K-Drama' 
   | 'C-Drama' 
@@ -30,6 +36,8 @@ export interface EpisodeItem {
   hindiCustomAudioLink?: string;
   fanDubCustomAudioLink?: string;
   origCustomAudioLink?: string;
+  subtitles?: Record<string, SubtitleTrackItem>;
+  subtitleLink?: string;
   subtitleTracks?: SubtitleTrack[];
   duration?: string;
   quality?: string;
@@ -50,6 +58,8 @@ export interface DramaItem {
   backdrop: string;
   thumbnailUrl?: string;
   episodeThumbnails?: Record<number, string>;
+  subtitles?: Record<string, SubtitleTrackItem>;
+  subtitleLink?: string;
   subtitleTracks?: SubtitleTrack[];
   synopsis: string;
   cast: string[];

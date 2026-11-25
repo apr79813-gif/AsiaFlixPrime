@@ -865,26 +865,50 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Force 100% exact Laptop layout on phones & small screens (1360px proportional scaling)
+  // Keep 100% exact Laptop layout (1360px scaling) on Home Page, and switch to crisp native viewport on mobile DramaDetailModal
   useEffect(() => {
-    const applyDesktopScale = () => {
-      document.body.style.minWidth = '1360px';
-      if (window.innerWidth < 1360) {
-        const scale = window.innerWidth / 1360;
-        (document.documentElement.style as any).zoom = String(scale);
-      } else {
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+    const isMobileModalOpen = Boolean(
+      selectedDrama &&
+        !isMiniPlayer &&
+        (window.innerWidth < 1024 ||
+          (window.screen && window.screen.width < 1024) ||
+          /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent))
+    );
+
+    const applyViewportAndScale = () => {
+      if (isMobileModalOpen) {
+        if (viewportMeta) {
+          viewportMeta.setAttribute(
+            'content',
+            'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=2.0, user-scalable=yes'
+          );
+        }
+        document.body.style.minWidth = '0px';
         (document.documentElement.style as any).zoom = '1';
+      } else {
+        if (viewportMeta) {
+          viewportMeta.setAttribute(
+            'content',
+            'width=1360, initial-scale=0.28, minimum-scale=0.2, maximum-scale=2.0, user-scalable=yes'
+          );
+        }
+        document.body.style.minWidth = '1360px';
+        if (window.innerWidth < 1360) {
+          const scale = window.innerWidth / 1360;
+          (document.documentElement.style as any).zoom = String(scale);
+        } else {
+          (document.documentElement.style as any).zoom = '1';
+        }
       }
     };
 
-    applyDesktopScale();
-    window.addEventListener('resize', applyDesktopScale);
+    applyViewportAndScale();
+    window.addEventListener('resize', applyViewportAndScale);
     return () => {
-      window.removeEventListener('resize', applyDesktopScale);
-      document.body.style.minWidth = '';
-      (document.documentElement.style as any).zoom = '1';
+      window.removeEventListener('resize', applyViewportAndScale);
     };
-  }, []);
+  }, [selectedDrama, isMiniPlayer]);
 
   // Initial sync: Restore cloud watchlist & read notifications if user is logged in, then sync catalog & notifications
   useEffect(() => {
@@ -992,10 +1016,51 @@ export default function App() {
     lastSyncedTime: 'Ready',
   }));
 
+  const applyBuiltInAudioFallbacks = (list: DramaItem[]): DramaItem[] => {
+    const FAMILY_MATTERS_URLS = [
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E01.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E02.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E03.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E04.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E05.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E06.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
+    ];
+
+    let hasFamilyMatters = false;
+    const mapped = list.map((d) => {
+      if (!d.title || !d.title.toLowerCase().includes('family matters')) return d;
+      hasFamilyMatters = true;
+      const updatedEps = (d.episodes || []).map((ep) => {
+        const epNum =
+          typeof ep.episodeNumber === 'number'
+            ? ep.episodeNumber
+            : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+        if (epNum >= 1 && epNum <= 6 && !ep.hindiCustomAudioLink && (ep.audio === 'Hindi Dubbed' || !ep.engSubStreamLink)) {
+          return {
+            ...ep,
+            hindiCustomAudioLink: FAMILY_MATTERS_URLS[epNum - 1],
+          };
+        }
+        return ep;
+      });
+      return { ...d, episodes: updatedEps };
+    });
+
+    if (!hasFamilyMatters) {
+      const builtInFamilyMatters = INITIAL_DRAMAS.find((d) =>
+        d.title.toLowerCase().includes('family matters')
+      );
+      if (builtInFamilyMatters) {
+        return [...mapped, builtInFamilyMatters];
+      }
+    }
+    return mapped;
+  };
+
   // Merge external items (Google Sheets):
   // Fresh Google Sheet data always takes 1st priority and completely overwrites old cached items.
   const mergePreservingCuratedAndCustom = (incoming: DramaItem[]) => {
-    setDramas((prev) => {
+    setDramas(() => {
       // 1. Get custom dramas from storage (preserve user-created custom dramas)
       const savedCustom = localStorage.getItem('asiaflix_custom_dramas');
       let customDramas: DramaItem[] = [];
@@ -1012,7 +1077,7 @@ export default function App() {
 
       const incomingIds = new Set(incoming.map((item) => item.id));
       const filteredCustom = customDramas.filter((c) => !incomingIds.has(c.id));
-      const result = applyAdminSubtitleOverrides([...filteredCustom, ...incoming]);
+      const result = applyBuiltInAudioFallbacks(applyAdminSubtitleOverrides([...filteredCustom, ...incoming]));
 
       localStorage.setItem('asiaflix_curated_dramas_v4', JSON.stringify(result));
       return result;
@@ -1675,6 +1740,19 @@ export default function App() {
               hindiAudioMap.set(epNum, aUrl);
             }
           }
+
+          // Filename S01E01..S01E99 extraction for raw Hugging Face .mp3 URLs listed without explicit HD<n> prefix
+          const allRawAudioUrls = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
+          allRawAudioUrls.forEach((rawUrl) => {
+            const seMatch = rawUrl.match(/S\d{1,2}E(\d{1,3})/i);
+            if (seMatch) {
+              const epNum = parseInt(seMatch[1], 10);
+              const aUrl = normalizeDirectMediaUrl(rawUrl);
+              if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+                hindiAudioMap.set(epNum, aUrl);
+              }
+            }
+          });
 
           // Unnumbered track prefixes or single direct movie/episode URL
           const hdUnnumbered = cellWithoutSubtitles.match(/\bhd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
@@ -3403,8 +3481,8 @@ export default function App() {
             onMoveToFront={handleMoveDramaToFront}
             isAdminAuthenticated={isAdminAuthenticated}
             isTopOne={dramas[0]?.id === selectedDrama.id || selectedDrama.spotlightTag === 'TOP #1'}
-            logoUrl={customLogoUrl}
             onSubscribeDubAlert={handleSubscribeDubAlert}
+            customLogoUrl={customLogoUrl}
             onReportIssue={() => {
               handleCloseDrama();
               setIsSupportOpen(true);

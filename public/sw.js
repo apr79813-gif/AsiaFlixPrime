@@ -1,7 +1,7 @@
 // AsiaFlix Prime Background Service Worker for Native OS Push Notifications
 // Runs even when tabs are minimized or closed.
 
-const LOGO_URL = '/pwa-192x192.png';
+const LOGO_URL = 'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
 const TARGET_SITE_URL = 'https://asiaflixprime.pages.dev/';
 
 let SUPABASE_URL = 'https://wzkipjjgbszldkvwkydv.supabase.co';

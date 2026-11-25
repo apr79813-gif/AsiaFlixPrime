@@ -2,6 +2,120 @@ import { DramaItem, ReleaseNotification, SupportTicket, HeroBannerSlide } from "
 
 export const INITIAL_DRAMAS: DramaItem[] = [
   {
+    "id": "sheet-family-matters-2026",
+    "title": "Family Matters (2026)",
+    "category": "K-Drama",
+    "releaseYear": 2026,
+    "status": "Completed (Full Series)",
+    "rating": 9.1,
+    "poster": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700",
+    "backdrop": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200",
+    "synopsis": "Watch Family Matters (2026) in Clean Hindi Audio & 1080p FHD on AsiaFlix Prime Private Channel.",
+    "cast": [
+      "Bae Doona",
+      "Ryoo Seung-bum",
+      "Baek Yoon-sik"
+    ],
+    "tags": [
+      "K-Drama",
+      "Thriller",
+      "Hindi Dubbed"
+    ],
+    "scheduleInfo": "6 Episodes",
+    "details": "6 Episodes",
+    "totalEpisodes": 6,
+    "availableAudios": [
+      "Hindi Dubbed"
+    ],
+    "defaultAudio": "Hindi Dubbed",
+    "isFeatured": false,
+    "isTrending": false,
+    "isSpotlight": false,
+    "qualityBadge": "Hindi Dubbed",
+    "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+    "episodes": [
+      {
+        "id": "ep-sheet-family-matters-2026-1",
+        "episodeNumber": 1,
+        "title": "Family Matters (2026) — Episode 1 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E01.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      },
+      {
+        "id": "ep-sheet-family-matters-2026-2",
+        "episodeNumber": 2,
+        "title": "Family Matters (2026) — Episode 2 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E02.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      },
+      {
+        "id": "ep-sheet-family-matters-2026-3",
+        "episodeNumber": 3,
+        "title": "Family Matters (2026) — Episode 3 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E03.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      },
+      {
+        "id": "ep-sheet-family-matters-2026-4",
+        "episodeNumber": 4,
+        "title": "Family Matters (2026) — Episode 4 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E04.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      },
+      {
+        "id": "ep-sheet-family-matters-2026-5",
+        "episodeNumber": 5,
+        "title": "Family Matters (2026) — Episode 5 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E05.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      },
+      {
+        "id": "ep-sheet-family-matters-2026-6",
+        "episodeNumber": 6,
+        "title": "Family Matters (2026) — Episode 6 (Hindi Dubbed)",
+        "audio": "Hindi Dubbed",
+        "telegramUrl": "https://t.me/+yJH68LvfrT9hZDVl",
+        "hindiCustomAudioLink": "https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E06.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true",
+        "duration": "6 Episodes",
+        "quality": "1080p FHD",
+        "isMerged": false,
+        "format": "single"
+      }
+    ],
+    "telegramHindi": "",
+    "telegramFanDub": "",
+    "telegramOrig": "",
+    "schedule": "",
+    "leadCast": ["Bae Doona", "Ryoo Seung-bum", "Baek Yoon-sik"],
+    "hashtags": ["FamilyMatters", "KDrama", "HindiDubbed"],
+    "isMovie": false
+  },
+  {
     "id": "sheet-descendantsofthesun",
     "title": "Descendants of the Sun (2016)",
     "category": "K-Drama",

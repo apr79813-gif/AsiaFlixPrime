@@ -114,3 +114,68 @@
   animation: danmakuFloat 6.5s linear forwards;
 }
 
+/* Official Channel Logo Watermark 5-Second Center Intro + Continuous 3D Motion */
+@keyframes logoFloat3D {
+  0%, 100% {
+    transform: perspective(600px) translateY(0px) rotateY(-5deg) scale(1);
+    filter: drop-shadow(0 0 10px rgba(255, 43, 84, 0.5)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.85));
+  }
+  50% {
+    transform: perspective(600px) translateY(-3px) rotateY(5deg) scale(1.045);
+    filter: drop-shadow(0 0 16px rgba(245, 158, 11, 0.65)) drop-shadow(0 3px 10px rgba(229, 9, 20, 0.65));
+  }
+}
+
+@keyframes logoSheenSweep {
+  0% {
+    transform: translateX(-140%) skewX(-22deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.75;
+  }
+  55% {
+    transform: translateX(180%) skewX(-22deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(180%) skewX(-22deg);
+    opacity: 0;
+  }
+}
+
+@keyframes logoCenterPop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.55);
+  }
+  16% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+  32% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  75% {
+    opacity: 0.96;
+    transform: translate(-50%, -50%) scale(1.03);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(44vw - 50%), calc(-38% - 50%)) scale(0.45);
+  }
+}
+
+.animate-logo-float-3d {
+  animation: logoFloat3D 4.2s ease-in-out infinite;
+}
+
+.animate-logo-sheen {
+  animation: logoSheenSweep 5.5s ease-in-out infinite;
+}
+
+.animate-logo-intro {
+  animation: logoCenterPop 5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+

@@ -47,7 +47,8 @@ import {
   AdConfig,
   DEFAULT_AD_CONFIG
 } from '../services/supabaseService';
-import { sendTelegramBroadcast, sendNativePushNotification } from '../services/notificationService';
+import { sendTelegramBroadcast, sendBrandedTelegramEpisodePost, sendNativePushNotification } from '../services/notificationService';
+import { createDramaSlug } from '../services/urlHelper';
 import {
   parseSrtOrVttContent,
   normalizeSubtitleUrl,
@@ -162,6 +163,17 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [notifButtonText, setNotifButtonText] = useState('▶ Stream 1080p Episodes');
   const [notifButtonUrl, setNotifButtonUrl] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [autoPostNewDramaTelegram, setAutoPostNewDramaTelegram] = useState(true);
+
+  // Quick Add Episode Stream Link + Branded Telegram Auto-Post State
+  const [quickEpDramaId, setQuickEpDramaId] = useState<string>(() => dramas[0]?.id || '');
+  const [quickEpNumber, setQuickEpNumber] = useState<string>('1');
+  const [quickEpAudio, setQuickEpAudio] = useState<AudioType>('Hindi Dubbed');
+  const [quickEpStreamUrl, setQuickEpStreamUrl] = useState('');
+  const [quickEpCustomAudioUrl, setQuickEpCustomAudioUrl] = useState('');
+  const [quickEpTelegramUrl, setQuickEpTelegramUrl] = useState('');
+  const [quickEpAutoPostTelegram, setQuickEpAutoPostTelegram] = useState(true);
+  const [isPushingQuickEp, setIsPushingQuickEp] = useState(false);
 
   useEffect(() => {
     if (googleSheetUrl) {
@@ -1065,19 +1077,132 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       }
     }
 
-    if (sheetAppended) {
+    let tgPosted = false;
+    let tgErrMsg = '';
+    if (autoPostNewDramaTelegram && botDraft.botToken?.trim() && botDraft.channelId?.trim()) {
+      const slug = createDramaSlug({ title: title.trim(), id: newDrama.id });
+      const watchUrl = `https://asiaflixprime.pages.dev/watch/${slug}`;
+      const tgRes = await sendBrandedTelegramEpisodePost(botDraft.botToken, botDraft.channelId, {
+        title: newDrama.title,
+        audioLabel: audio,
+        totalEpisodesText: `${episodesCount} Episodes`,
+        genres: category,
+        ageRating: 'UA 13+',
+        statusText: 'Now Streaming',
+        imageUrl: newDrama.thumbnailUrl || newDrama.poster,
+        watchUrl,
+      });
+      if (tgRes.success) tgPosted = true;
+      else tgErrMsg = tgRes.error || '';
+    }
+
+    if (tgPosted) {
+      setSuccessMessage(`Title "${title}" live hai + Branded 16:9 Telegram Channel Post deliver ho gaya! 🚀📣`);
+    } else if (sheetAppended) {
       setSuccessMessage(`Title "${title}" add ho gaya, live portal par #1 set ho gaya aur Google Sheet me bhi auto-save dispatch ho gaya! ⚡📊`);
     } else if (sbResult.success) {
       setSuccessMessage(`Title "${title}" add ho gaya aur sabse aage (#1 position) par live hai! 🚀`);
     } else {
-      setSuccessMessage(`Title "${title}" add ho gaya aur sabse aage (#1 position) par live hai! 🌸`);
+      setSuccessMessage(
+        tgErrMsg
+          ? `Title "${title}" live hai! (Telegram Auto-Post skipped: ${tgErrMsg})`
+          : `Title "${title}" add ho gaya aur sabse aage (#1 position) par live hai! 🌸`
+      );
     }
 
     setTitle('');
     setPoster('');
     setTelegramUrl('');
     setSynopsis('');
-    setTimeout(() => setSuccessMessage(null), 3500);
+    setTimeout(() => setSuccessMessage(null), 4000);
+  };
+
+  const handlePushQuickEpisode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetDrama = localDramas.find((d) => d.id === quickEpDramaId) || localDramas[0];
+    if (!targetDrama) return;
+    const epNum = Math.max(1, parseInt(quickEpNumber, 10) || 1);
+    const cleanStream = quickEpStreamUrl.trim();
+    const cleanAudio = quickEpCustomAudioUrl.trim();
+    const cleanTg = quickEpTelegramUrl.trim() || targetDrama.telegramUrl || 'https://t.me/+yJH68LvfrT9hZDVl';
+    if (!cleanStream && !cleanAudio && !quickEpTelegramUrl.trim()) {
+      setSuccessMessage('❌ Kam se kam Stream Link, Audio Track URL, ya Telegram Link enter karein.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+      return;
+    }
+
+    setIsPushingQuickEp(true);
+    const updatedEpisodes = [...(targetDrama.episodes || [])];
+    const existingIdx = updatedEpisodes.findIndex((ep) => {
+      const n = typeof ep.episodeNumber === 'number' ? ep.episodeNumber : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+      return n === epNum && ep.audio === quickEpAudio;
+    });
+
+    const epPatch: any = {
+      id: existingIdx >= 0 ? updatedEpisodes[existingIdx].id : `ep-${targetDrama.id}-${quickEpAudio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
+      episodeNumber: epNum,
+      title: `${targetDrama.title} — Episode ${epNum} (${quickEpAudio})`,
+      audio: quickEpAudio,
+      telegramUrl: cleanTg,
+      duration: targetDrama.details || '1080p FHD',
+      quality: '1080p FHD',
+      isMerged: false,
+      format: 'single',
+    };
+    if (cleanStream) {
+      if (quickEpAudio === 'Hindi Dubbed') epPatch.streamLink = cleanStream;
+      else if (quickEpAudio === 'Hindi Fan Dubbed' || quickEpAudio === 'Fan Dubbed') epPatch.hindiFanDubStreamLink = cleanStream;
+      else epPatch.engSubStreamLink = cleanStream;
+    }
+    if (cleanAudio) {
+      if (quickEpAudio === 'Hindi Dubbed') epPatch.hindiCustomAudioLink = cleanAudio;
+      else if (quickEpAudio === 'Hindi Fan Dubbed' || quickEpAudio === 'Fan Dubbed') epPatch.fanDubCustomAudioLink = cleanAudio;
+      else epPatch.origCustomAudioLink = cleanAudio;
+    }
+
+    if (existingIdx >= 0) {
+      updatedEpisodes[existingIdx] = { ...updatedEpisodes[existingIdx], ...epPatch };
+    } else {
+      updatedEpisodes.push(epPatch);
+    }
+
+    const updatedDrama: DramaItem = {
+      ...targetDrama,
+      episodes: updatedEpisodes,
+      availableAudios: targetDrama.availableAudios.includes(quickEpAudio)
+        ? targetDrama.availableAudios
+        : [...targetDrama.availableAudios, quickEpAudio],
+      statusText: `Now Streaming Ep ${epNum}`,
+    };
+
+    const nextDramas = [updatedDrama, ...localDramas.filter((d) => d.id !== updatedDrama.id)];
+    setLocalDramas(nextDramas);
+    onUpdateDramasCuration(nextDramas);
+
+    let tgFeedback = '';
+    if (quickEpAutoPostTelegram && botDraft.botToken?.trim() && botDraft.channelId?.trim()) {
+      const slug = createDramaSlug(updatedDrama);
+      const watchUrl = `https://asiaflixprime.pages.dev/watch/${slug}/ep-${epNum}`;
+      const tgRes = await sendBrandedTelegramEpisodePost(botDraft.botToken, botDraft.channelId, {
+        title: updatedDrama.title,
+        episodeNumber: epNum,
+        audioLabel: quickEpAudio,
+        totalEpisodesText: updatedDrama.details || `${updatedDrama.episodes.length} Episodes`,
+        genres: updatedDrama.subCategory || updatedDrama.category,
+        ageRating: updatedDrama.ageRating || 'UA 13+',
+        statusText: `Now Streaming Ep ${epNum}`,
+        imageUrl: updatedDrama.episodeThumbnails?.[epNum] || updatedDrama.thumbnailUrl || updatedDrama.poster,
+        watchUrl,
+      });
+      tgFeedback = tgRes.success ? ' + Branded 16:9 Telegram Post Sent! 📣' : ` (Telegram: ${tgRes.error})`;
+    }
+
+    setIsPushingQuickEp(false);
+    setQuickEpStreamUrl('');
+    setQuickEpCustomAudioUrl('');
+    setQuickEpTelegramUrl('');
+    setSuccessMessage(`✅ Ep ${epNum} (${updatedDrama.title}) live portal par update ho gaya${tgFeedback}`);
+    setTimeout(() => setSuccessMessage(null), 4000);
   };
 
   const handleSendTestRowToSheet = async () => {
@@ -2259,6 +2384,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
             {/* TAB 3: ADD NEW TITLE */}
             {activeTab === 'new_drama' && (
+              <>
               <form onSubmit={handleCreateDrama} className="space-y-3">
                 <div className="text-[11px] text-zinc-400 bg-white/[0.02] p-2.5 rounded-lg border border-white/5 flex flex-wrap items-center justify-between gap-2">
                   <span>⚡ Title will be saved directly into catalog, Supabase <strong className="text-white">titles</strong>, aur live portal par sabse aage #1 set hoga!</span>
@@ -2393,10 +2519,16 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   />
                 </div>
 
-                {/* Priority #1 Guarantee Note */}
-                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] font-bold flex items-center gap-2">
-                  <span className="text-sm">👑</span>
-                  <span><strong>Automatic #1 Priority:</strong> Ye title add hote hi poori website, Spotlight aur Catalog rows me <strong>sabse aage</strong> set hoga.</span>
+                <div className="p-2.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-xs font-bold">
+                  <label className="flex items-center gap-2 cursor-pointer text-sky-300">
+                    <input
+                      type="checkbox"
+                      checked={autoPostNewDramaTelegram}
+                      onChange={(e) => setAutoPostNewDramaTelegram(e.target.checked)}
+                      className="w-4 h-4 rounded text-sky-500 accent-sky-500 cursor-pointer"
+                    />
+                    <span>📣 Auto-Post Branded 16:9 Banner to Telegram Channel</span>
+                  </label>
                 </div>
 
                 <button
@@ -2408,6 +2540,105 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                   <span>{isSavingSupabase ? 'Inserting...' : '📌 Publish to Live Portal (Sabse Aage #1)'}</span>
                 </button>
               </form>
+
+              {/* Quick Add Episode Stream Link + Branded 16:9 Telegram Channel Auto-Post */}
+              <form
+                onSubmit={handlePushQuickEpisode}
+                className="mt-4 p-4 rounded-xl bg-gradient-to-br from-[#0088cc]/10 via-white/[0.02] to-transparent border border-[#0088cc]/30 space-y-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-white font-black text-xs">
+                    <Send className="w-4 h-4 text-sky-400" />
+                    <span>Quick Add Episode Stream Link &amp; Branded Telegram Auto-Post</span>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">
+                    16:9 Canvas Banner
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-400 mb-1">Target Series</label>
+                    <select
+                      value={quickEpDramaId}
+                      onChange={(e) => setQuickEpDramaId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-[#181924] border border-white/10 text-white text-xs outline-none"
+                    >
+                      {localDramas.map((d) => (
+                        <option key={`qep-${d.id}`} value={d.id}>
+                          {d.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-400 mb-1">Episode #</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={quickEpNumber}
+                      onChange={(e) => setQuickEpNumber(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-zinc-400 mb-1">Audio Track</label>
+                    <select
+                      value={quickEpAudio}
+                      onChange={(e) => setQuickEpAudio(e.target.value as AudioType)}
+                      className="w-full px-3 py-2 rounded-lg bg-[#181924] border border-white/10 text-white text-xs outline-none"
+                    >
+                      <option value="Hindi Dubbed">Hindi Dubbed</option>
+                      <option value="Hindi Fan Dubbed">Hindi Fan Dubbed</option>
+                      <option value="Original / Eng Sub">Original / Eng Sub</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <input
+                    type="url"
+                    value={quickEpStreamUrl}
+                    onChange={(e) => setQuickEpStreamUrl(e.target.value)}
+                    placeholder="Video Stream URL (.mp4 / Streamtape / HF)"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none"
+                  />
+                  <input
+                    type="url"
+                    value={quickEpCustomAudioUrl}
+                    onChange={(e) => setQuickEpCustomAudioUrl(e.target.value)}
+                    placeholder="External Audio URL (.mp3 Optional)"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none"
+                  />
+                  <input
+                    type="url"
+                    value={quickEpTelegramUrl}
+                    onChange={(e) => setQuickEpTelegramUrl(e.target.value)}
+                    placeholder="Telegram Episode Link (Optional)"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/10 text-white text-xs outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-sky-300">
+                    <input
+                      type="checkbox"
+                      checked={quickEpAutoPostTelegram}
+                      onChange={(e) => setQuickEpAutoPostTelegram(e.target.checked)}
+                      className="w-4 h-4 rounded accent-sky-500 cursor-pointer"
+                    />
+                    <span>Send 16:9 Branded Photo + Inline "✨ WATCH NOW ✔️" to Telegram</span>
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={isPushingQuickEp}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#0088cc] to-sky-500 hover:brightness-110 text-white text-xs font-black shadow-md transition-all cursor-pointer"
+                  >
+                    {isPushingQuickEp ? 'Publishing...' : '⚡ Add Episode & Auto-Post'}
+                  </button>
+                </div>
+              </form>
+            </>
             )}
 
             {/* TAB: ADMIN-ONLY SUBTITLES MANAGER (.SRT / .MD.SRT & HUGGING FACE URLS) */}

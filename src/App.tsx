@@ -202,9 +202,28 @@ export default function App() {
     const savedCurated = localStorage.getItem('asiaflix_curated_dramas_v4');
     if (savedCurated) {
       try {
-        const parsed = JSON.parse(savedCurated);
+        const parsed = JSON.parse(savedCurated) as DramaItem[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const nonCustomCurated = parsed.filter((p) => !customList.some((c) => c.id === p.id));
+          const nonCustomCurated = parsed
+            .filter((p: DramaItem) => !customList.some((c) => c.id === p.id))
+            .map((p: DramaItem) => ({
+              ...p,
+              episodes: Array.isArray(p.episodes)
+                ? p.episodes.map((ep: EpisodeItem) => {
+                    const isDeadHf = (u?: string) =>
+                      Boolean(u && u.toLowerCase().includes('huggingface.co/datasets/asiaflixprime/') && /\.mp3(\?|$)/i.test(u));
+                    if (!isDeadHf(ep.hindiCustomAudioLink) && !isDeadHf(ep.fanDubCustomAudioLink) && !isDeadHf(ep.origCustomAudioLink)) {
+                      return ep;
+                    }
+                    return {
+                      ...ep,
+                      hindiCustomAudioLink: isDeadHf(ep.hindiCustomAudioLink) ? undefined : ep.hindiCustomAudioLink,
+                      fanDubCustomAudioLink: isDeadHf(ep.fanDubCustomAudioLink) ? undefined : ep.fanDubCustomAudioLink,
+                      origCustomAudioLink: isDeadHf(ep.origCustomAudioLink) ? undefined : ep.origCustomAudioLink,
+                    };
+                  })
+                : p.episodes,
+            }));
           return applyAdminSubtitleOverrides([...customList, ...nonCustomCurated]);
         }
       } catch (e) {
@@ -1064,31 +1083,28 @@ export default function App() {
   }));
 
   const applyBuiltInAudioFallbacks = (list: DramaItem[]): DramaItem[] => {
-    const FAMILY_MATTERS_URLS = [
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E01.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E02.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E03.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E04.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E05.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-      'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/(Audio)%20Family.Matters.S01E06.1080p.AMZN.WEB-DL.x264.AsiaFlixPrime.mp3?download=true',
-    ];
+    const isDeadHfAudio = (u?: string) =>
+      Boolean(u && u.toLowerCase().includes('huggingface.co/datasets/asiaflixprime/') && /\.mp3(\?|$)/i.test(u));
 
     let hasFamilyMatters = false;
     const mapped = list.map((d) => {
-      if (!d.title || !d.title.toLowerCase().includes('family matters')) return d;
-      hasFamilyMatters = true;
+      if (d.title && d.title.toLowerCase().includes('family matters')) {
+        hasFamilyMatters = true;
+      }
       const updatedEps = (d.episodes || []).map((ep) => {
-        const epNum =
-          typeof ep.episodeNumber === 'number'
-            ? ep.episodeNumber
-            : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
-        if (epNum >= 1 && epNum <= 6 && !ep.hindiCustomAudioLink && (ep.audio === 'Hindi Dubbed' || !ep.engSubStreamLink)) {
-          return {
-            ...ep,
-            hindiCustomAudioLink: FAMILY_MATTERS_URLS[epNum - 1],
-          };
+        if (
+          !isDeadHfAudio(ep.hindiCustomAudioLink) &&
+          !isDeadHfAudio(ep.fanDubCustomAudioLink) &&
+          !isDeadHfAudio(ep.origCustomAudioLink)
+        ) {
+          return ep;
         }
-        return ep;
+        return {
+          ...ep,
+          hindiCustomAudioLink: isDeadHfAudio(ep.hindiCustomAudioLink) ? undefined : ep.hindiCustomAudioLink,
+          fanDubCustomAudioLink: isDeadHfAudio(ep.fanDubCustomAudioLink) ? undefined : ep.fanDubCustomAudioLink,
+          origCustomAudioLink: isDeadHfAudio(ep.origCustomAudioLink) ? undefined : ep.origCustomAudioLink,
+        };
       });
       return { ...d, episodes: updatedEps };
     });

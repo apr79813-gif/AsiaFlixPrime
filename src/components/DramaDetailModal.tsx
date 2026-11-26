@@ -76,6 +76,7 @@ import {
   UniversalResolvedVideo,
   ExtractedQualityStream,
   normalizeUniversalAssetUrl,
+  sanitizeExternalAudioUrl,
   SubtitleCue,
   TIMESTAMPS_UPDATED_EVENT,
   WatchTimestampEntry,
@@ -395,6 +396,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [audioSyncOffset, setAudioSyncOffset] = useState<number>(0);
   const [forceBuiltinAudio, setForceBuiltinAudio] = useState<boolean>(false);
+  const [isExternalAudioConfirmedPlaying, setIsExternalAudioConfirmedPlaying] = useState<boolean>(false);
   const [isAudioCorsFallback, setIsAudioCorsFallback] = useState<boolean>(false);
 
   const [copied, setCopied] = useState(false);
@@ -467,7 +469,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [mobileActiveTab, setMobileActiveTab] = useState<'episodes' | 'audio' | 'info'>('episodes');
   const [isSubtitleAudioOn, setIsSubtitleAudioOn] = useState<boolean>(false);
   const [transparentLogoUrl, setTransparentLogoUrl] = useState<string>(customLogoUrl || OFFICIAL_LOGO_URL);
-  const [mediaErrorState, setMediaErrorState] = useState<{ source: 'video' | 'audio'; reason: string } | null>(null);
+  const [mediaErrorState, setMediaErrorState] = useState<{ source: 'video'; reason: string } | null>(null);
   const [asyncResolvedStream, setAsyncResolvedStream] = useState<{
     key: string;
     status: 'idle' | 'loading' | 'ready' | 'error';
@@ -601,6 +603,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setActiveMirrorIndex(0);
     setIframeControlNotice(false);
     setForceBuiltinAudio(false);
+    setIsExternalAudioConfirmedPlaying(false);
   }, [activeAudio]);
 
   // Synchronize activeAudio & reset/auto-open player from deep link when drama or initialEpisode changes
@@ -617,6 +620,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsVideoLoading(true);
     setAudioSyncOffset(0);
     setForceBuiltinAudio(false);
+    setIsExternalAudioConfirmedPlaying(false);
     setIsAudioCorsFallback(false);
     setIsTouchLocked(false);
     setLoopPointA(null);
@@ -888,7 +892,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       drama.episodes.find(
         (ep) => extractNumericEp(ep.episodeNumber) === activeEpNumForLookup && Boolean(ep[lookupField])
       )?.[lookupField];
-    return raw ? normalizeUniversalAssetUrl(raw) : undefined;
+    return raw ? sanitizeExternalAudioUrl(raw) : undefined;
   })();
 
   const resolvedPlayerSource =
@@ -1044,6 +1048,42 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   const isExternalAudioActive =
     Boolean(trackCustomAudio) && !forceBuiltinAudio && resolvedPlayerSource?.type === 'video';
+  const shouldMuteVideoForExternalAudio = isExternalAudioActive && isExternalAudioConfirmedPlaying;
+
+  // Reset confirmed external audio state whenever episode/track/source changes
+  useEffect(() => {
+    setIsExternalAudioConfirmedPlaying(false);
+  }, [activeStreamEp, activeAudio, trackCustomAudio, forceBuiltinAudio, streamReloadNonce]);
+
+  // Silent fallback timeout: if external .mp3 audio hangs or fails without playing within 3.5s, fall back to built-in video sound silently
+  useEffect(() => {
+    if (!isExternalAudioActive || isExternalAudioConfirmedPlaying || !isStreamUnlocked || !effectiveVideoSrc) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const aud = audioRef.current;
+      if (!aud || aud.error || aud.paused || aud.readyState < 2) {
+        setIsExternalAudioConfirmedPlaying(false);
+        setForceBuiltinAudio(true);
+        const vid = videoRef.current;
+        if (vid) {
+          vid.muted = isAudioMuted;
+          if (!isSubtitleAudioOn) {
+            vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+          }
+        }
+      }
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [
+    isExternalAudioActive,
+    isExternalAudioConfirmedPlaying,
+    isStreamUnlocked,
+    effectiveVideoSrc,
+    isAudioMuted,
+    audioVolume,
+    isSubtitleAudioOn,
+  ]);
 
   const currentSourceMeta = currentPlayingStream
     ? resolveVideoPlayerSource(currentPlayingStream.streamUrl, activeMirrorIndex)
@@ -1089,10 +1129,26 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const syncAudioToVideo = (forcePlay = false, immediateSeek = false) => {
     const vid = videoRef.current;
     const aud = audioRef.current;
-    if (!vid || !aud || !isExternalAudioActive) return;
+    if (!vid) return;
 
-    // Strictly mute video directly & drive playback through standalone <audio> without CORS/MediaElementSource traps
-    vid.muted = true;
+    if (!isExternalAudioActive || !aud) {
+      vid.muted = isAudioMuted;
+      if (!isSubtitleAudioOn) {
+        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
+      return;
+    }
+
+    if (aud.error) {
+      setIsExternalAudioConfirmedPlaying(false);
+      setForceBuiltinAudio(true);
+      vid.muted = isAudioMuted;
+      if (!isSubtitleAudioOn) {
+        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
+      return;
+    }
+
     aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
     aud.muted = isAudioMuted;
     aud.playbackRate = vid.playbackRate || playbackSpeed;
@@ -1107,9 +1163,35 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       }
     }
 
+    // Only mute native <video> when external <audio> is actively playing without error
+    if (isExternalAudioConfirmedPlaying && !aud.paused) {
+      vid.muted = true;
+    } else {
+      vid.muted = isAudioMuted;
+      if (!isSubtitleAudioOn) {
+        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
+    }
+
     if (forcePlay || !vid.paused) {
       if (aud.paused) {
-        aud.play().catch(() => {});
+        aud
+          .play()
+          .then(() => {
+            setIsExternalAudioConfirmedPlaying(true);
+            if (videoRef.current) {
+              videoRef.current.muted = true;
+            }
+          })
+          .catch(() => {
+            setIsExternalAudioConfirmedPlaying(false);
+            if (videoRef.current) {
+              videoRef.current.muted = isAudioMuted;
+              if (!isSubtitleAudioOn) {
+                videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+              }
+            }
+          });
       }
     } else if (!aud.paused) {
       aud.pause();
@@ -1302,12 +1384,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const vid = videoRef.current;
     const nativeVol = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume * (audibleCorsSupported && wantsAudioStudio ? 1 : volumeBoost / 100)));
 
-    voiceEngineRef.current?.setExternalAudioMode(isExternalAudioActive);
+    voiceEngineRef.current?.setExternalAudioMode(shouldMuteVideoForExternalAudio);
     voiceEngineRef.current?.attachVideo(vid);
 
     if (isExternalAudioActive) {
       if (vid) {
-        vid.muted = true;
+        vid.muted = shouldMuteVideoForExternalAudio ? true : isAudioMuted;
+        if (!shouldMuteVideoForExternalAudio && !isSubtitleAudioOn) {
+          vid.volume = audibleCorsSupported && wantsAudioStudio ? (isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume))) : nativeVol;
+        }
       }
       if (aud && vid) {
         aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -1322,7 +1407,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           }
         }
         if (!vid.paused && aud.paused) {
-          aud.play().catch(() => {});
+          aud
+            .play()
+            .then(() => {
+              setIsExternalAudioConfirmedPlaying(true);
+              if (videoRef.current) videoRef.current.muted = true;
+            })
+            .catch(() => {});
         }
       }
     } else {
@@ -1340,7 +1431,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         applyStudioEqGraph(vid);
       }
     }
-  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio, isSubtitleAudioOn]);
+  }, [audioVolume, isAudioMuted, audioSyncOffset, isExternalAudioActive, shouldMuteVideoForExternalAudio, trackCustomAudio, activeAudio, audioEqMode, volumeBoost, audibleCorsSupported, wantsAudioStudio, isSubtitleAudioOn]);
 
   // Detect burned-in subtitles in lower video subtitle zone (78%–92% height) via canvas pixel contrast
   const detectLowerRegionHardSubs = (vid: HTMLVideoElement) => {
@@ -1444,7 +1535,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const curTime = vid?.currentTime ?? 0;
     const isPaused = vid ? vid.paused : true;
     engine.attachVideo(vid);
-    engine.setExternalAudioMode(isExternalAudioActive);
+    engine.setExternalAudioMode(shouldMuteVideoForExternalAudio);
     engine.setPlaybackRate(playbackSpeed);
     engine.setCues(parsedSubCues);
     const matchedIdx = parsedSubCues.findIndex((c) => curTime >= c.start && curTime <= c.end);
@@ -1654,11 +1745,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     clickEvent?: React.MouseEvent
   ) => {
     pendingRestoreTimeRef.current = null;
+    setMediaErrorState(null);
+    setForceBuiltinAudio(false);
+    setIsExternalAudioConfirmedPlaying(false);
     if (trackOverride) {
       setActiveAudio(trackOverride);
     }
     setActiveStreamEp(epNum);
     onActiveEpisodeChange?.(epNum);
+
+    if (videoRef.current && !shouldMuteVideoForExternalAudio) {
+      videoRef.current.muted = isAudioMuted;
+      videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+    }
 
     // Only unlock immediately for trusted human mouse/touch clicks
     if (clickEvent && clickEvent.nativeEvent?.isTrusted) {
@@ -1679,6 +1778,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     e.stopPropagation();
     if (e.nativeEvent?.isTrusted) {
       setIsStreamUnlocked(true);
+      if (videoRef.current && !shouldMuteVideoForExternalAudio) {
+        videoRef.current.muted = isAudioMuted;
+        videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
     }
   };
 
@@ -2458,17 +2561,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 controls
                 autoPlay
                 playsInline
-                muted={isExternalAudioActive ? true : isAudioMuted}
+                muted={shouldMuteVideoForExternalAudio || isAudioMuted}
                 onLoadStart={() => setIsVideoLoading(true)}
                 onLoadedMetadata={(e) => {
                   const vid = e.currentTarget;
                   vid.playbackRate = playbackSpeed;
                   voiceEngineRef.current?.attachVideo(vid);
-                  if (isExternalAudioActive) {
+                  if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
                   } else {
-                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                     vid.muted = isAudioMuted;
+                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                     applyStudioEqGraph(vid);
                   }
                   const pending = pendingRestoreTimeRef.current;
@@ -2485,6 +2588,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                   syncAudioToVideo(false, true);
                   syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
+                }}
+                onLoadedData={() => {
+                  setIsVideoLoading(false);
                 }}
                 onError={() => {
                   // Auto-fallback from OK.ru progressive MP4 to proxied HLS manifest if available
@@ -2510,15 +2616,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     reason: 'This stream link is temporarily unavailable or expired on the host server.',
                   });
                 }}
-                onCanPlay={() => {
+                onCanPlay={(e) => {
+                  const vid = e.currentTarget;
                   setIsVideoLoading(false);
-                  setMediaErrorState((prev) => (prev?.source === 'video' ? null : prev));
+                  setMediaErrorState(null);
+                  if (shouldMuteVideoForExternalAudio) {
+                    vid.muted = true;
+                  } else {
+                    vid.muted = isAudioMuted;
+                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                    applyStudioEqGraph(vid);
+                  }
                   syncAudioToVideo();
                 }}
                 onPlay={() => {
                   lastPlaybackTickMsRef.current = Date.now();
                   bumpPlayerControlsActivity();
                   const vid = videoRef.current;
+                  if (vid && !shouldMuteVideoForExternalAudio) {
+                    vid.muted = isAudioMuted;
+                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                  }
                   voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
                   if (vid) {
@@ -2531,9 +2649,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 onPlaying={() => {
                   setIsVideoPlaying(true);
                   setIsVideoLoading(false);
-                  setMediaErrorState((prev) => (prev?.source === 'video' ? null : prev));
+                  setMediaErrorState(null);
                   lastPlaybackTickMsRef.current = Date.now();
                   const vid = videoRef.current;
+                  if (vid && !shouldMuteVideoForExternalAudio) {
+                    vid.muted = isAudioMuted;
+                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                  }
                   voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
                   if (vid) {
@@ -2584,7 +2706,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onVolumeChange={(e) => {
                   const vid = e.currentTarget;
-                  if (isExternalAudioActive) return;
+                  if (shouldMuteVideoForExternalAudio) return;
                   setAudioVolume(vid.volume);
                   setIsAudioMuted(vid.muted);
                   if (audioRef.current) {
@@ -2730,7 +2852,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 className={`w-full h-full ${videoFitClass} bg-black transition-[filter] duration-300`}
               />
 
-              {/* Track-Specific Synced External Dubbed Audio Element (NO crossOrigin, NO createMediaElementSource) */}
+              {/* Track-Specific Synced External Dubbed Audio Element (Silent Instant Fallback on Error/Timeout) */}
               {isExternalAudioActive && trackCustomAudio && (
                 <audio
                   ref={audioRef}
@@ -2739,27 +2861,47 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   preload="auto"
                   onLoadedMetadata={() => syncAudioToVideo()}
                   onCanPlay={() => {
-                    setMediaErrorState((prev) => (prev?.source === 'audio' ? null : prev));
-                    syncAudioToVideo();
+                    syncAudioToVideo(!videoRef.current?.paused);
+                  }}
+                  onPlaying={() => {
+                    setIsExternalAudioConfirmedPlaying(true);
+                    if (videoRef.current) {
+                      videoRef.current.muted = true;
+                    }
+                  }}
+                  onPause={() => {
+                    setIsExternalAudioConfirmedPlaying(false);
+                    if (videoRef.current) {
+                      videoRef.current.muted = isAudioMuted;
+                      if (!isSubtitleAudioOn) {
+                        videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                      }
+                    }
                   }}
                   onError={() => {
-                    setMediaErrorState({
-                      source: 'audio',
-                      reason: 'External dubbed audio file is unavailable on the host. Switch to Built-in Audio or Watch on Telegram.',
-                    });
+                    setIsExternalAudioConfirmedPlaying(false);
+                    setForceBuiltinAudio(true);
+                    const vid = videoRef.current;
+                    if (vid) {
+                      vid.muted = isAudioMuted;
+                      if (!isSubtitleAudioOn) {
+                        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                      }
+                      if (vid.paused && isStreamUnlocked) {
+                        vid.play().catch(() => {});
+                      }
+                    }
                   }}
                   className="hidden"
                 />
               )}
 
-              {/* Smart Media / Host Failure Recovery Overlay (Prevents Dead Black Player) */}
+              {/* Video Host Failure Recovery Overlay */}
               {mediaErrorState && (
                 <div className="absolute inset-0 z-[35] bg-[#08090f]/95 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center gap-3">
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[11px] font-black">
                     <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>
-                      {mediaErrorState.source === 'audio' ? 'External Audio Host Issue' : 'Stream Server Unavailable'}
-                    </span>
+                    <span>Stream Server Unavailable</span>
                   </div>
                   <p className="text-xs sm:text-sm text-zinc-200 font-semibold max-w-md leading-snug">
                     {mediaErrorState.reason}
@@ -2784,25 +2926,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       <RotateCw className="w-3.5 h-3.5" />
                       <span>🔄 Switch Backup Server</span>
                     </button>
-                    {mediaErrorState.source === 'audio' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setForceBuiltinAudio(true);
-                          setMediaErrorState(null);
-                          showHudFeedback('🔊 Switched to Built-in Video Audio');
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-xs font-black cursor-pointer"
-                      >
-                        🔊 Use Built-in Audio
-                      </button>
-                    )}
                   </div>
                 </div>
               )}
 
-              {/* Floating Speaker Control whenever External .MP3 Audio Track is active */}
-              {isExternalAudioActive && !mediaErrorState && (
+              {/* Floating Speaker Control whenever External .MP3 Audio Track is confirmed playing */}
+              {shouldMuteVideoForExternalAudio && !mediaErrorState && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -2821,12 +2950,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </button>
               )}
 
-              {/* 16:9 Full-Widescreen Custom Thumbnail Overlay + Cyber-Cinema Animated Loader */}
+              {/* 16:9 Full-Widescreen Custom Thumbnail Overlay + AsiaFlix Prime Cyber-Prism & Neon Equalizer */}
               {!isVideoPlaying && !mediaErrorState && (
                 <div
                   onClick={() => {
+                    const vid = videoRef.current;
                     videoAudioNodeRef.current?.ctx.resume().catch(() => {});
-                    videoRef.current?.play().catch(() => {});
+                    if (vid) {
+                      if (!shouldMuteVideoForExternalAudio) {
+                        vid.muted = isAudioMuted;
+                        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                      }
+                      vid.play().catch(() => {});
+                    }
                   }}
                   className="absolute inset-0 z-20 overflow-hidden cursor-pointer group bg-[#050508]"
                 >
@@ -2852,46 +2988,59 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </>
                   )}
 
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center gap-4">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
                     {isVideoLoading ? (
-                      <>
-                        <div className="relative flex items-center justify-center">
-                          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 border-white/10 border-t-[#e50914] border-r-[#f59e0b] animate-spin shadow-[0_0_30px_rgba(229,9,20,0.45)]" />
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/75 border border-white/20 flex items-center justify-center backdrop-blur-md">
-                              <Play className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-white ml-0.5 animate-pulse" />
-                            </div>
-                          </div>
+                      <div className="px-6 py-4 rounded-3xl bg-black/25 backdrop-blur-md border border-white/10 shadow-[0_0_32px_rgba(255,42,133,0.2)] flex flex-col items-center gap-3">
+                        <div className="flex items-end gap-1.5 h-10" aria-hidden="true">
+                          <span
+                            style={{ animationDelay: '0ms', animationDuration: '850ms' }}
+                            className="w-1.5 h-4 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
+                          />
+                          <span
+                            style={{ animationDelay: '150ms', animationDuration: '850ms' }}
+                            className="w-1.5 h-8 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
+                          />
+                          <span
+                            style={{ animationDelay: '300ms', animationDuration: '850ms' }}
+                            className="w-1.5 h-10 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
+                          />
+                          <span
+                            style={{ animationDelay: '450ms', animationDuration: '850ms' }}
+                            className="w-1.5 h-6 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
+                          />
+                          <span
+                            style={{ animationDelay: '600ms', animationDuration: '850ms' }}
+                            className="w-1.5 h-5 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
+                          />
                         </div>
-                        <div className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl bg-black/80 backdrop-blur-xl border border-[#e50914]/50 shadow-[0_0_30px_rgba(229,9,20,0.45)] flex flex-col items-center gap-1.5">
-                          <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-white">
-                            <span className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
-                              <span className="w-[3px] h-2 bg-[#e50914] rounded-full animate-pulse" />
-                              <span className="w-[3px] h-3.5 bg-[#f59e0b] rounded-full animate-bounce" />
-                              <span className="w-[3px] h-2.5 bg-[#e50914] rounded-full animate-pulse" />
-                            </span>
-                            <span className="animate-pulse">⚡ Loading 1080p FHD Stream...</span>
-                            <span className="px-2 py-0.5 rounded-md bg-[#e50914] text-white text-[10px] font-black uppercase tracking-wider">
-                              {isMovie ? 'Full Movie' : `Episode ${activeStreamEp}`}
-                            </span>
-                          </div>
-                          <div className="w-40 sm:w-44 h-1.5 rounded-full bg-white/10 overflow-hidden relative">
-                            <div className="w-24 h-full rounded-full bg-gradient-to-r from-[#e50914] via-[#f59e0b] to-[#ff2b54] animate-cinema-shimmer" />
-                          </div>
-                        </div>
-                      </>
+                        <span className="tracking-[0.25em] text-[10px] font-bold text-white/90 uppercase">
+                          AsiaFlix VIP • Stream Ready
+                        </span>
+                      </div>
                     ) : (
-                      <>
-                        <div className="relative flex items-center justify-center">
-                          <div className="absolute w-24 h-24 rounded-full bg-[#e50914]/30 animate-ping" />
-                          <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#e50914]/90 group-hover:bg-[#f6121d] border-2 border-white/40 shadow-[0_0_35px_rgba(229,9,20,0.7)] flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
-                            <Play className="w-7 h-7 sm:w-9 sm:h-9 text-white fill-white ml-1" />
-                          </div>
+                      <div className="relative flex items-center justify-center">
+                        <div className="absolute w-24 h-24 rounded-3xl bg-gradient-to-tr from-[#ff2a85]/45 via-[#8b5cf6]/40 to-[#ffb800]/35 blur-md animate-pulse pointer-events-none" />
+                        <div className="absolute w-24 h-24 rounded-3xl border border-pink-500/35 animate-ping pointer-events-none" />
+                        <div className="relative w-20 h-20 rounded-3xl bg-black/35 backdrop-blur-xl border border-pink-500/40 shadow-[0_0_35px_rgba(255,42,133,0.45)] flex items-center justify-center group transition-all duration-300 hover:scale-110">
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="w-8 h-8 ml-1 drop-shadow-[0_0_12px_rgba(255,42,133,0.7)]"
+                            aria-hidden="true"
+                          >
+                            <defs>
+                              <linearGradient id="asiaflixPrismPlayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#ff2a85" />
+                                <stop offset="55%" stopColor="#a855f7" />
+                                <stop offset="100%" stopColor="#ffb800" />
+                              </linearGradient>
+                            </defs>
+                            <path
+                              d="M7.5 5.25C7.5 4.35 8.48 3.79 9.26 4.25L19.12 10.0C19.89 10.45 19.89 11.55 19.12 12.0L9.26 17.75C8.48 18.21 7.5 17.65 7.5 16.75V5.25Z"
+                              fill="url(#asiaflixPrismPlayGrad)"
+                            />
+                          </svg>
                         </div>
-                        <div className="px-5 py-2 rounded-full bg-black/80 backdrop-blur-md border border-[#e50914]/50 text-white text-xs sm:text-sm font-black tracking-wide shadow-[0_0_25px_rgba(229,9,20,0.4)]">
-                          ▶ Tap to Watch {isMovie ? 'Full Movie' : `Episode ${activeStreamEp}`}
-                        </div>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>

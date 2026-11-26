@@ -574,6 +574,24 @@ export function normalizeUniversalAssetUrl(rawUrl: string): string {
   return trimmed;
 }
 
+export function isDeadExternalAudioUrl(rawUrl?: string): boolean {
+  if (!rawUrl) return false;
+  const lower = rawUrl.trim().toLowerCase();
+  return (
+    lower.includes('huggingface.co/datasets/asiaflixprime/') &&
+    /\.mp3(\?|$)/i.test(lower)
+  );
+}
+
+export function sanitizeExternalAudioUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  const normalized = normalizeUniversalAssetUrl(rawUrl);
+  if (!normalized || isDeadExternalAudioUrl(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
 export function resolveUniversalVideoSource(rawUrl: string, mirrorIndex = 0): UniversalResolvedVideo {
   let trimmed = (rawUrl || '').trim();
   if (trimmed.includes('huggingface.co') && /\/blob\//i.test(trimmed)) {

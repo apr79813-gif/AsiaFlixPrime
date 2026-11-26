@@ -34,7 +34,8 @@ import {
   Code,
   DollarSign,
   Captions,
-  Upload
+  Upload,
+  Link2
 } from 'lucide-react';
 import { DramaItem, AudioType, DramaCategory, ReleaseNotification, WeekendSettings, HeroBannerSlide, TelegramBotSettings } from '../types/drama';
 import { 
@@ -52,6 +53,7 @@ import { createDramaSlug } from '../services/urlHelper';
 import {
   parseSrtOrVttContent,
   normalizeSubtitleUrl,
+  normalizeUniversalAssetUrl,
   getAdminSubtitleOverrides,
   saveAdminSubtitleOverrides,
   AdminSubtitleEntry,
@@ -80,7 +82,7 @@ interface AdminStudioModalProps {
   onUpdateWeekendSettings: (settings: WeekendSettings) => void;
   heroBanners: HeroBannerSlide[];
   onUpdateHeroBanners: (banners: HeroBannerSlide[]) => void;
-  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security';
+  initialTab?: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'migrator' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security';
   onAuthSuccess?: () => void;
   onAuthLogout?: () => void;
   isAuthenticatedParent?: boolean;
@@ -125,7 +127,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'migrator' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>(initialTab);
 
   // Ads Manager Local Draft State
   const [adDraft, setAdDraft] = useState<AdConfig>(() => adConfig || { ...DEFAULT_AD_CONFIG });
@@ -320,6 +322,341 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       setSubTargetDramaId(localDramas[0].id);
     }
   }, [localDramas, subTargetDramaId]);
+
+  // Bulk Link & Host Migrator State
+  const [migratorOldHost, setMigratorOldHost] = useState<string>(
+    'https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/'
+  );
+  const [migratorNewHost, setMigratorNewHost] = useState<string>('');
+  const [migratorScope, setMigratorScope] = useState<string>('all');
+  const [migratorIncludeSubtitles, setMigratorIncludeSubtitles] = useState<boolean>(true);
+  const [migratorIncludeAudio, setMigratorIncludeAudio] = useState<boolean>(true);
+  const [migratorFeedback, setMigratorFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Batch Episode URL Paster State
+  const [batchTargetDramaId, setBatchTargetDramaId] = useState<string>(() => dramas[0]?.id || '');
+  const [batchTrack, setBatchTrack] = useState<'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub'>('Hindi Dubbed');
+  const [batchField, setBatchField] = useState<'video' | 'audio' | 'subtitle'>('video');
+  const [batchSubLangCode, setBatchSubLangCode] = useState<string>('hin_eng');
+  const [batchUrlsText, setBatchUrlsText] = useState<string>('');
+  const [batchAutoPostTelegram, setBatchAutoPostTelegram] = useState<boolean>(true);
+  const [batchFeedback, setBatchFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!batchTargetDramaId && localDramas.length > 0) {
+      setBatchTargetDramaId(localDramas[0].id);
+    }
+  }, [localDramas, batchTargetDramaId]);
+
+  const migratorMatchSummary = useMemo(() => {
+    const oldTrimmed = migratorOldHost.trim().toLowerCase();
+    if (!oldTrimmed) return { matchedLinks: 0, matchedTitles: 0 };
+    let matchedLinks = 0;
+    let matchedTitles = 0;
+    const targetDramas =
+      migratorScope === 'all' ? localDramas : localDramas.filter((d) => d.id === migratorScope);
+
+    for (const d of targetDramas) {
+      let titleHit = false;
+      const checkUrl = (u?: string) => {
+        if (u && u.toLowerCase().includes(oldTrimmed)) {
+          matchedLinks += 1;
+          titleHit = true;
+        }
+      };
+      checkUrl(d.movieStreamLink);
+      checkUrl(d.movieFanDubStreamLink);
+      checkUrl(d.movieEngSubStreamLink);
+      if (migratorIncludeSubtitles) {
+        checkUrl(d.subtitleLink);
+        Object.values(d.subtitles || {}).forEach((s) => checkUrl(s?.url));
+        (d.subtitleTracks || []).forEach((s) => checkUrl(s?.url));
+      }
+      for (const ep of d.episodes || []) {
+        checkUrl(ep.streamLink);
+        checkUrl(ep.hindiFanDubStreamLink);
+        checkUrl(ep.engSubStreamLink);
+        if (migratorIncludeAudio) {
+          checkUrl(ep.hindiCustomAudioLink);
+          checkUrl(ep.fanDubCustomAudioLink);
+          checkUrl(ep.origCustomAudioLink);
+        }
+        if (migratorIncludeSubtitles) {
+          checkUrl(ep.subtitleLink);
+          Object.values(ep.subtitles || {}).forEach((s) => checkUrl(s?.url));
+          (ep.subtitleTracks || []).forEach((s) => checkUrl(s?.url));
+        }
+      }
+      if (titleHit) matchedTitles += 1;
+    }
+    return { matchedLinks, matchedTitles };
+  }, [localDramas, migratorOldHost, migratorScope, migratorIncludeSubtitles, migratorIncludeAudio]);
+
+  const handleApplyHostMigration = (e: React.FormEvent) => {
+    e.preventDefault();
+    setMigratorFeedback(null);
+    const oldPrefix = migratorOldHost.trim();
+    const newPrefix = migratorNewHost.trim();
+    if (!oldPrefix || !newPrefix) {
+      setMigratorFeedback({
+        type: 'error',
+        message: 'Enter both the Old Host / URL Prefix and the New Host / URL Prefix.',
+      });
+      return;
+    }
+
+    const escapedOld = oldPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefixRegex = new RegExp(escapedOld, 'gi');
+    let replacedCount = 0;
+    let affectedTitles = 0;
+
+    const replaceUrl = (u?: string): string | undefined => {
+      if (!u) return u;
+      if (u.toLowerCase().includes(oldPrefix.toLowerCase())) {
+        replacedCount += 1;
+        return normalizeUniversalAssetUrl(u.replace(prefixRegex, newPrefix));
+      }
+      return u;
+    };
+
+    const updated = localDramas.map((d) => {
+      if (migratorScope !== 'all' && d.id !== migratorScope) return d;
+      const before = replacedCount;
+
+      const nextSubs = d.subtitles
+        ? Object.fromEntries(
+            Object.entries(d.subtitles).map(([k, v]) => [
+              k,
+              migratorIncludeSubtitles && v?.url
+                ? { ...v, url: replaceUrl(v.url) || v.url }
+                : v,
+            ])
+          )
+        : d.subtitles;
+
+      const nextSubTracks = d.subtitleTracks
+        ? d.subtitleTracks.map((t) =>
+            migratorIncludeSubtitles ? { ...t, url: replaceUrl(t.url) || t.url } : t
+          )
+        : d.subtitleTracks;
+
+      const nextEpisodes = (d.episodes || []).map((ep) => {
+        const nextEpSubs = ep.subtitles
+          ? Object.fromEntries(
+              Object.entries(ep.subtitles).map(([k, v]) => [
+                k,
+                migratorIncludeSubtitles && v?.url
+                  ? { ...v, url: replaceUrl(v.url) || v.url }
+                  : v,
+              ])
+            )
+          : ep.subtitles;
+
+        const nextEpSubTracks = ep.subtitleTracks
+          ? ep.subtitleTracks.map((t) =>
+              migratorIncludeSubtitles ? { ...t, url: replaceUrl(t.url) || t.url } : t
+            )
+          : ep.subtitleTracks;
+
+        return {
+          ...ep,
+          streamLink: replaceUrl(ep.streamLink),
+          hindiFanDubStreamLink: replaceUrl(ep.hindiFanDubStreamLink),
+          engSubStreamLink: replaceUrl(ep.engSubStreamLink),
+          hindiCustomAudioLink: migratorIncludeAudio
+            ? replaceUrl(ep.hindiCustomAudioLink)
+            : ep.hindiCustomAudioLink,
+          fanDubCustomAudioLink: migratorIncludeAudio
+            ? replaceUrl(ep.fanDubCustomAudioLink)
+            : ep.fanDubCustomAudioLink,
+          origCustomAudioLink: migratorIncludeAudio
+            ? replaceUrl(ep.origCustomAudioLink)
+            : ep.origCustomAudioLink,
+          subtitleLink: migratorIncludeSubtitles ? replaceUrl(ep.subtitleLink) : ep.subtitleLink,
+          subtitles: nextEpSubs,
+          subtitleTracks: nextEpSubTracks,
+        };
+      });
+
+      const nextDrama: DramaItem = {
+        ...d,
+        movieStreamLink: replaceUrl(d.movieStreamLink),
+        movieFanDubStreamLink: replaceUrl(d.movieFanDubStreamLink),
+        movieEngSubStreamLink: replaceUrl(d.movieEngSubStreamLink),
+        subtitleLink: migratorIncludeSubtitles ? replaceUrl(d.subtitleLink) : d.subtitleLink,
+        subtitles: nextSubs,
+        subtitleTracks: nextSubTracks,
+        episodes: nextEpisodes,
+      };
+
+      if (replacedCount > before) affectedTitles += 1;
+      return nextDrama;
+    });
+
+    if (replacedCount === 0) {
+      setMigratorFeedback({
+        type: 'error',
+        message: 'No existing episode, audio, or subtitle links matched that Old Host prefix.',
+      });
+      return;
+    }
+
+    setLocalDramas(updated);
+    onUpdateDramasCuration(updated);
+    setSuccessMessage(`Migrated ${replacedCount} links across ${affectedTitles} title(s) live!`);
+    setMigratorFeedback({
+      type: 'success',
+      message: `Replaced ${replacedCount} URL(s) across ${affectedTitles} title(s) and saved to live catalog.`,
+    });
+    setTimeout(() => setSuccessMessage(null), 4000);
+  };
+
+  const handleApplyBatchEpisodes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBatchFeedback(null);
+    if (!batchTargetDramaId) {
+      setBatchFeedback({ type: 'error', message: 'Select a target series first.' });
+      return;
+    }
+    const rawLines = batchUrlsText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (rawLines.length === 0) {
+      setBatchFeedback({ type: 'error', message: 'Paste at least one episode URL (one per line, HD1 = URL, or EpNum|URL).' });
+      return;
+    }
+
+    const parsedEntries: Array<{ epNum: number; url: string }> = [];
+    let autoIndex = 1;
+    for (const line of rawLines) {
+      const labeledMatch = line.match(
+        /^(?:(?:hd|fd|os|ep|episode|e|sub|s\d{1,2}e)\s*[-_#]?\s*)?(\d+)\s*[|=,:\t]+\s*(https?:\/\/.+)$/i
+      );
+      const urlRaw = labeledMatch ? labeledMatch[2] : line;
+      const seInsideUrl = !labeledMatch ? urlRaw.match(/S\d{1,2}E(\d{1,3})/i) : null;
+      const epNum = labeledMatch
+        ? Math.max(1, parseInt(labeledMatch[1], 10))
+        : seInsideUrl
+          ? Math.max(1, parseInt(seInsideUrl[1], 10))
+          : autoIndex;
+      const normalized = normalizeUniversalAssetUrl(urlRaw);
+      if (/^https?:\/\//i.test(normalized)) {
+        parsedEntries.push({ epNum, url: normalized });
+      }
+      autoIndex = epNum + 1;
+    }
+
+    if (parsedEntries.length === 0) {
+      setBatchFeedback({
+        type: 'error',
+        message: 'No valid http(s) URLs found. Supports "HD1 = https://...", "1|https://...", or plain URLs.',
+      });
+      return;
+    }
+
+    const targetDrama = localDramas.find((d) => d.id === batchTargetDramaId);
+    if (!targetDrama) return;
+
+    const getEpNumeric = (epNo: number | string) => {
+      if (typeof epNo === 'number') return epNo;
+      const m = String(epNo).match(/(\d+)/);
+      return m ? parseInt(m[1], 10) : 1;
+    };
+
+    const nextEpisodes = [...(targetDrama.episodes || [])];
+    const subMeta = ADMIN_SUB_LANG_META[batchSubLangCode] || {
+      label: batchSubLangCode.toUpperCase(),
+      langTag: 'en-US',
+    };
+
+    for (const entry of parsedEntries) {
+      const idx = nextEpisodes.findIndex((ep) => getEpNumeric(ep.episodeNumber) === entry.epNum);
+      const existing = idx >= 0
+        ? nextEpisodes[idx]
+        : {
+            id: `${targetDrama.id}-ep-${entry.epNum}`,
+            episodeNumber: entry.epNum,
+            title: `Episode ${entry.epNum}`,
+            audio: batchTrack as AudioType,
+            telegramUrl: targetDrama.telegramUrl || '',
+            quality: targetDrama.qualityBadge || '1080p FHD',
+          };
+
+      const patched = { ...existing };
+      if (batchField === 'video') {
+        if (batchTrack === 'Hindi Dubbed') patched.streamLink = entry.url;
+        else if (batchTrack === 'Hindi Fan Dubbed') patched.hindiFanDubStreamLink = entry.url;
+        else patched.engSubStreamLink = entry.url;
+      } else if (batchField === 'audio') {
+        if (batchTrack === 'Hindi Dubbed') patched.hindiCustomAudioLink = entry.url;
+        else if (batchTrack === 'Hindi Fan Dubbed') patched.fanDubCustomAudioLink = entry.url;
+        else patched.origCustomAudioLink = entry.url;
+      } else {
+        patched.subtitleLink = entry.url;
+        patched.subtitles = {
+          ...(patched.subtitles || {}),
+          [batchSubLangCode]: {
+            code: batchSubLangCode,
+            label: subMeta.label,
+            langTag: subMeta.langTag,
+            url: entry.url,
+          },
+        };
+      }
+
+      if (idx >= 0) nextEpisodes[idx] = patched;
+      else nextEpisodes.push(patched);
+    }
+
+    nextEpisodes.sort((a, b) => getEpNumeric(a.episodeNumber) - getEpNumeric(b.episodeNumber));
+
+    const updated = localDramas.map((d) =>
+      d.id === batchTargetDramaId
+        ? {
+            ...d,
+            episodes: nextEpisodes,
+            totalEpisodes: Math.max(d.totalEpisodes || 0, nextEpisodes.length),
+          }
+        : d
+    );
+
+    setLocalDramas(updated);
+    onUpdateDramasCuration(updated);
+    setBatchUrlsText('');
+
+    let tgFeedback = '';
+    if (
+      batchAutoPostTelegram &&
+      batchField === 'video' &&
+      botDraft.botToken?.trim() &&
+      botDraft.channelId?.trim()
+    ) {
+      const latestEpNum = Math.max(...parsedEntries.map((item) => item.epNum));
+      const slug = createDramaSlug(targetDrama);
+      const watchUrl = `https://asiaflixprime.pages.dev/watch/${slug}/ep-${latestEpNum}`;
+      const tgRes = await sendBrandedTelegramEpisodePost(botDraft.botToken, botDraft.channelId, {
+        title: targetDrama.title,
+        episodeNumber: latestEpNum,
+        audioLabel: batchTrack,
+        totalEpisodesText: targetDrama.details || `${nextEpisodes.length} Episodes`,
+        genres: targetDrama.subCategory || targetDrama.category,
+        ageRating: targetDrama.ageRating || 'UA 13+',
+        statusText: `Now Streaming Ep ${latestEpNum}`,
+        imageUrl: targetDrama.episodeThumbnails?.[latestEpNum] || targetDrama.thumbnailUrl || targetDrama.poster,
+        watchUrl,
+      });
+      tgFeedback = tgRes.success ? ' + Branded 16:9 Telegram Post Sent!' : ` (Telegram: ${tgRes.error})`;
+    }
+
+    setSuccessMessage(`Applied ${parsedEntries.length} ${batchField} links to "${targetDrama.title}"!${tgFeedback}`);
+    setBatchFeedback({
+      type: 'success',
+      message: `Updated ${parsedEntries.length} episode(s) (${batchTrack} • ${batchField.toUpperCase()}) on "${targetDrama.title}".${tgFeedback}`,
+    });
+    setTimeout(() => setSuccessMessage(null), 4000);
+  };
 
   const ADMIN_SUB_LANG_META: Record<string, { label: string; langTag: string }> = {
     hin_eng: { label: '🇮🇳 Hindi + Eng Mix', langTag: 'hi-IN' },
@@ -1585,6 +1922,16 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
               >
                 <Captions className="w-3.5 h-3.5 text-sky-300" />
                 <span>Subtitles (.SRT / .MD.SRT)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('migrator')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all ${
+                  activeTab === 'migrator' ? 'bg-[#e50914] text-white shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5 text-emerald-300" />
+                <span>🔄 Bulk Migrator</span>
               </button>
 
               <button
@@ -3904,6 +4251,264 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
                     🔒 Lock & Exit Studio
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* TAB: BULK LINK & HOST MIGRATOR */}
+            {activeTab === 'migrator' && (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-500/10 via-sky-500/10 to-transparent border border-emerald-500/20 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-5 h-5 text-emerald-400" />
+                    <h4 className="text-sm font-black text-white">
+                      1-Click Bulk Host Migrator & Batch Episode Link Paster
+                    </h4>
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    Move videos, external MP3 audio, and .SRT subtitles off HuggingFace to Cloudflare R2, Archive.org, BunnyCDN, Streamwish, Vidhide, or any custom domain in seconds. GitHub, Archive.org, and HuggingFace links auto-normalize automatically.
+                  </p>
+                </div>
+
+                {/* Tool 1: Host / Prefix Find & Replace */}
+                <form
+                  onSubmit={handleApplyHostMigration}
+                  className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                    <div>
+                      <h5 className="text-xs font-black text-white">
+                        Tool 1: Host / URL Prefix Find & Replace
+                      </h5>
+                      <p className="text-[11px] text-zinc-400">
+                        Swap broken host domains across all episodes, audio tracks, and subtitles at once.
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 shrink-0">
+                      {migratorMatchSummary.matchedLinks} link(s) • {migratorMatchSummary.matchedTitles} title(s)
+                    </span>
+                  </div>
+
+                  {migratorFeedback && (
+                    <div
+                      className={`p-3 rounded-xl text-xs font-bold border ${
+                        migratorFeedback.type === 'success'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-red-500/15 border-red-500/40 text-red-300'
+                      }`}
+                    >
+                      {migratorFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Old Host / URL Prefix
+                      </label>
+                      <input
+                        type="text"
+                        value={migratorOldHost}
+                        onChange={(e) => setMigratorOldHost(e.target.value)}
+                        placeholder="https://huggingface.co/datasets/asiaflixprime/dramas/resolve/main/"
+                        className="w-full py-2 px-3 rounded-xl bg-black/50 border border-white/10 text-xs text-white outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        New Host / URL Prefix
+                      </label>
+                      <input
+                        type="text"
+                        value={migratorNewHost}
+                        onChange={(e) => setMigratorNewHost(e.target.value)}
+                        placeholder="https://cdn.yourbucket.r2.dev/dramas/"
+                        className="w-full py-2 px-3 rounded-xl bg-black/50 border border-white/10 text-xs text-white outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Target Scope
+                      </label>
+                      <select
+                        value={migratorScope}
+                        onChange={(e) => setMigratorScope(e.target.value)}
+                        className="w-full py-2 px-3 rounded-xl bg-black/60 border border-white/10 text-xs text-white outline-none focus:border-emerald-500"
+                      >
+                        <option value="all">All Catalog Titles ({localDramas.length})</option>
+                        {localDramas.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer pt-4">
+                      <input
+                        type="checkbox"
+                        checked={migratorIncludeAudio}
+                        onChange={(e) => setMigratorIncludeAudio(e.target.checked)}
+                        className="accent-emerald-500 w-4 h-4"
+                      />
+                      <span>Include External MP3 Links</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer pt-4">
+                      <input
+                        type="checkbox"
+                        checked={migratorIncludeSubtitles}
+                        onChange={(e) => setMigratorIncludeSubtitles(e.target.checked)}
+                        className="accent-emerald-500 w-4 h-4"
+                      />
+                      <span>Include .SRT / .VTT Links</span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg transition-all flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>⚡ Replace Matching Links & Save ({migratorMatchSummary.matchedLinks})</span>
+                  </button>
+                </form>
+
+                {/* Tool 2: Batch Episode URL Paster */}
+                <form
+                  onSubmit={handleApplyBatchEpisodes}
+                  className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3"
+                >
+                  <div className="border-b border-white/10 pb-2.5">
+                    <h5 className="text-xs font-black text-white">
+                      Tool 2: Batch Episode URL Paster (1 Line = 1 Episode)
+                    </h5>
+                    <p className="text-[11px] text-zinc-400">
+                      Paste multi-line Streamwish, Vidhide, Streamtape, Archive.org, R2 MP4, MP3 audio, or .SRT links. Supports plain lines (Ep 1, Ep 2...) or explicit "5|https://..." lines.
+                    </p>
+                  </div>
+
+                  {batchFeedback && (
+                    <div
+                      className={`p-3 rounded-xl text-xs font-bold border ${
+                        batchFeedback.type === 'success'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-red-500/15 border-red-500/40 text-red-300'
+                      }`}
+                    >
+                      {batchFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Select Series
+                      </label>
+                      <select
+                        value={batchTargetDramaId}
+                        onChange={(e) => setBatchTargetDramaId(e.target.value)}
+                        className="w-full py-2 px-3 rounded-xl bg-black/60 border border-white/10 text-xs text-white outline-none focus:border-[#e50914]"
+                      >
+                        {localDramas.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.title} ({d.episodes.length} Ep)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Audio Track
+                      </label>
+                      <select
+                        value={batchTrack}
+                        onChange={(e) =>
+                          setBatchTrack(
+                            e.target.value as 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub'
+                          )
+                        }
+                        className="w-full py-2 px-3 rounded-xl bg-black/60 border border-white/10 text-xs text-white outline-none focus:border-[#e50914]"
+                      >
+                        <option value="Hindi Dubbed">🇮🇳 Hindi Dubbed</option>
+                        <option value="Hindi Fan Dubbed">🎙️ Hindi Fan Dubbed</option>
+                        <option value="Original / Eng Sub">🌐 Original / Eng Sub</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Target Field
+                      </label>
+                      <select
+                        value={batchField}
+                        onChange={(e) =>
+                          setBatchField(e.target.value as 'video' | 'audio' | 'subtitle')
+                        }
+                        className="w-full py-2 px-3 rounded-xl bg-black/60 border border-white/10 text-xs text-white outline-none focus:border-[#e50914]"
+                      >
+                        <option value="video">🎬 Video Stream / Embed URL</option>
+                        <option value="audio">🎧 External MP3 Audio URL</option>
+                        <option value="subtitle">💬 Subtitle (.SRT / .VTT) URL</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {batchField === 'subtitle' && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                        Subtitle Language Slot
+                      </label>
+                      <select
+                        value={batchSubLangCode}
+                        onChange={(e) => setBatchSubLangCode(e.target.value)}
+                        className="w-full sm:w-64 py-2 px-3 rounded-xl bg-black/60 border border-white/10 text-xs text-white outline-none focus:border-sky-500"
+                      >
+                        {Object.entries(ADMIN_SUB_LANG_META).map(([code, meta]) => (
+                          <option key={code} value={code}>
+                            {meta.label} ({code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-zinc-300 mb-1">
+                      Episode Links (1 line per episode, "HD1 = URL", "S01E01 = URL", or "EpNumber|URL")
+                    </label>
+                    <textarea
+                      rows={6}
+                      value={batchUrlsText}
+                      onChange={(e) => setBatchUrlsText(e.target.value)}
+                      placeholder={`HD1 = https://archive.org/download/series/ep1.mp3\nHD2 = https://cdn.example.com/ep2.mp3\n3|https://streamwish.to/e/ep3id`}
+                      className="w-full p-3 rounded-xl bg-black/50 border border-white/10 text-xs font-mono text-white outline-none focus:border-[#e50914]"
+                    />
+                  </div>
+
+                  {batchField === 'video' && (
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={batchAutoPostTelegram}
+                        onChange={(e) => setBatchAutoPostTelegram(e.target.checked)}
+                        className="accent-[#e50914] w-4 h-4"
+                      />
+                      <span>📣 Auto-post latest updated episode banner to Telegram Channel</span>
+                    </label>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-xl bg-[#e50914] hover:bg-[#c80812] text-white text-xs font-black shadow-lg transition-all flex items-center justify-center gap-2"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>⚡ Apply Batch Episode Links & Save</span>
+                  </button>
+                </form>
               </div>
             )}
           </div>

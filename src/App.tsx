@@ -613,6 +613,65 @@ export default function App() {
     );
   };
 
+  const updateClientShareMetaTags = (drama: DramaItem | null, epNum: number | null) => {
+    if (typeof document === 'undefined') return;
+    const setMetaTag = (attr: 'property' | 'name', key: string, content: string) => {
+      let el = document.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(attr, key);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
+
+    if (!drama) {
+      document.title = DEFAULT_DOC_TITLE;
+      const defaultDesc =
+        'Stream Asian Dramas & Movies in Clean Hindi Audio & 1080p HD. Private VIP network with Watchlist, notifications, and instant Telegram episode links.';
+      const defaultImg = 'https://asiaflixprime.pages.dev/pwa-512x512.png';
+      setMetaTag('name', 'description', defaultDesc);
+      setMetaTag('property', 'og:title', DEFAULT_DOC_TITLE);
+      setMetaTag('property', 'og:description', defaultDesc);
+      setMetaTag('property', 'og:image', defaultImg);
+      setMetaTag('property', 'og:url', 'https://asiaflixprime.pages.dev/');
+      setMetaTag('name', 'twitter:card', 'summary_large_image');
+      setMetaTag('name', 'twitter:title', DEFAULT_DOC_TITLE);
+      setMetaTag('name', 'twitter:description', defaultDesc);
+      setMetaTag('name', 'twitter:image', defaultImg);
+      return;
+    }
+
+    const slug = createDramaSlug(drama);
+    const shareTitle =
+      epNum !== null
+        ? `Ep ${epNum} • ${drama.title} | AsiaFlix Prime`
+        : `${drama.title} — Watch Online in HD | AsiaFlix Prime`;
+    const shareDesc =
+      (drama.synopsis || '').trim().slice(0, 175) ||
+      `Watch ${drama.title} in ${drama.defaultAudio || 'Hindi Dubbed'} & 1080p HD on AsiaFlix Prime.`;
+    const shareImage =
+      drama.thumbnailUrl ||
+      drama.backdrop ||
+      drama.poster ||
+      'https://asiaflixprime.pages.dev/pwa-512x512.png';
+    const shareUrl =
+      epNum !== null
+        ? `https://asiaflixprime.pages.dev/watch/${slug}/ep-${epNum}`
+        : `https://asiaflixprime.pages.dev/watch/${slug}`;
+
+    document.title = shareTitle;
+    setMetaTag('name', 'description', shareDesc);
+    setMetaTag('property', 'og:title', shareTitle);
+    setMetaTag('property', 'og:description', shareDesc);
+    setMetaTag('property', 'og:image', shareImage);
+    setMetaTag('property', 'og:url', shareUrl);
+    setMetaTag('name', 'twitter:card', 'summary_large_image');
+    setMetaTag('name', 'twitter:title', shareTitle);
+    setMetaTag('name', 'twitter:description', shareDesc);
+    setMetaTag('name', 'twitter:image', shareImage);
+  };
+
   const handleOpenDrama = (drama: DramaItem, epOverride: number | null = null) => {
     if (!selectedDrama) {
       savedScrollYRef.current = window.scrollY;
@@ -625,10 +684,7 @@ export default function App() {
     setSelectedDrama(drama);
     const slug = createDramaSlug(drama);
     const targetPath = epOverride !== null ? `/watch/${slug}/ep-${epOverride}` : `/watch/${slug}`;
-    document.title =
-      epOverride !== null
-        ? `Ep ${epOverride} • ${drama.title} | AsiaFlix Prime`
-        : `${drama.title} — Watch Online in HD | AsiaFlix Prime`;
+    updateClientShareMetaTags(drama, epOverride);
     if (!isHandlingPopStateRef.current && window.location.pathname !== targetPath) {
       window.history.pushState({ dramaSlug: slug, epNum: epOverride }, '', targetPath);
     }
@@ -639,10 +695,7 @@ export default function App() {
     if (!selectedDrama) return;
     const slug = createDramaSlug(selectedDrama);
     const targetPath = epNum !== null ? `/watch/${slug}/ep-${epNum}` : `/watch/${slug}`;
-    document.title =
-      epNum !== null
-        ? `Ep ${epNum} • ${selectedDrama.title} | AsiaFlix Prime`
-        : `${selectedDrama.title} — Watch Online in HD | AsiaFlix Prime`;
+    updateClientShareMetaTags(selectedDrama, epNum);
     if (!isHandlingPopStateRef.current && window.location.pathname !== targetPath) {
       window.history.pushState({ dramaSlug: slug, epNum }, '', targetPath);
     }
@@ -657,7 +710,7 @@ export default function App() {
     setDeepLinkParty(null);
     setDeepLinkTrack(null);
     setSelectedDrama(null);
-    document.title = DEFAULT_DOC_TITLE;
+    updateClientShareMetaTags(null, null);
     if (!isHandlingPopStateRef.current && (window.location.pathname !== '/' || window.location.search)) {
       window.history.pushState({}, '', '/');
     }
@@ -674,7 +727,7 @@ export default function App() {
   const [isInstantSearchOpen, setIsInstantSearchOpen] = useState(false);
   const [instantSearchQuery, setInstantSearchQuery] = useState('');
   const [instantFilter, setInstantFilter] = useState<'All' | 'Hindi Dubbed' | 'Hindi Fan Dubbed' | 'Original / Eng Sub' | 'K-Drama' | 'C-Drama' | 'Movies' | 'Other Series'>('All');
-  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>('trending');
+  const [adminInitialTab, setAdminInitialTab] = useState<'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'migrator' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security'>('trending');
 
   // --- CLOUD-SYNCED AD CONFIGURATION STATE ---
   const [adConfig, setAdConfig] = useState<AdConfig>(() => getLocalAdConfig());
@@ -723,7 +776,7 @@ export default function App() {
     localStorage.removeItem('asiaflix_admin_unlocked');
   };
 
-  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
+  const handleOpenAdminWithTab = (tab: 'trending' | 'weekend' | 'banners' | 'new_drama' | 'subtitles' | 'migrator' | 'broadcast' | 'sheets' | 'supabase' | 'ads' | 'security') => {
     setAdminInitialTab(tab);
     setIsAdminOpen(true);
   };
@@ -796,10 +849,7 @@ export default function App() {
         setDeepLinkParty(pending.party ?? null);
         setDeepLinkTrack(pending.track ?? null);
         setSelectedDrama(matched);
-        document.title =
-          pending.epNum !== null
-            ? `Ep ${pending.epNum} • ${matched.title} | AsiaFlix Prime`
-            : `${matched.title} — Watch Online in HD | AsiaFlix Prime`;
+        updateClientShareMetaTags(matched, pending.epNum);
         return;
       }
     }
@@ -825,7 +875,7 @@ export default function App() {
         setDeepLinkParty(null);
         setDeepLinkTrack(null);
         setSelectedDrama(null);
-        document.title = DEFAULT_DOC_TITLE;
+        updateClientShareMetaTags(null, null);
       } else {
         const matched = findDramaBySlug(dramasRef.current, parsed.slug);
         if (matched) {
@@ -836,10 +886,7 @@ export default function App() {
           setDeepLinkTime(parsed.t ?? null);
           setDeepLinkParty(parsed.party ?? null);
           setDeepLinkTrack(parsed.track ?? null);
-          document.title =
-            parsed.epNum !== null
-              ? `Ep ${parsed.epNum} • ${matched.title} | AsiaFlix Prime`
-              : `${matched.title} — Watch Online in HD | AsiaFlix Prime`;
+          updateClientShareMetaTags(matched, parsed.epNum);
         } else {
           pendingDeepLinkRef.current = parsed;
         }
@@ -3529,33 +3576,33 @@ export default function App() {
       />
 
       {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
-      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-3 px-4 sm:px-6 lg:px-8 relative z-30">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-center sm:justify-between gap-3 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-3 sm:gap-3.5 mx-auto flex-nowrap shrink-0">
+      <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 md:py-3 px-3 sm:px-6 lg:px-8 relative z-30">
+        <div className="max-w-[1600px] mx-auto">
+          <div className="grid grid-cols-2 md:flex md:items-center md:justify-center gap-2 md:gap-3.5">
             {/* Perk 1: 100% Free Access */}
-            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all shrink-0">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse" />
-              <span className="text-[14px] font-black text-white tracking-wide whitespace-nowrap">100% Free Access</span>
+            <div className="flex items-center justify-center gap-1.5 md:gap-2.5 px-2.5 py-1.5 md:px-5 md:py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all min-w-0">
+              <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse shrink-0" />
+              <span className="text-[11px] md:text-[14px] font-black text-white tracking-wide whitespace-nowrap truncate">100% Free Access</span>
             </div>
 
             {/* Perk 2: Fast Cloud Stream */}
-            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all shrink-0">
-              <span className="text-sm">⚡</span>
-              <span className="text-[14px] font-black text-white tracking-wide whitespace-nowrap">Fast Cloud Stream</span>
+            <div className="flex items-center justify-center gap-1.5 md:gap-2.5 px-2.5 py-1.5 md:px-5 md:py-2 rounded-full bg-white/[0.05] hover:bg-white/[0.09] border border-white/15 backdrop-blur-md shadow-md transition-all min-w-0">
+              <span className="text-xs md:text-sm shrink-0">⚡</span>
+              <span className="text-[11px] md:text-[14px] font-black text-white tracking-wide whitespace-nowrap truncate">Fast Cloud Stream</span>
             </div>
 
             {/* Perk 3: Zero Ads / Direct Cloud Links */}
-            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-gradient-to-r from-red-500/15 to-pink-500/15 hover:from-red-500/25 hover:to-pink-500/25 border border-red-500/30 backdrop-blur-md shadow-md transition-all shrink-0">
-              <span className="text-sm">{adConfig.enabled ? '⚡' : '🛡️'}</span>
-              <span className="text-[14px] font-black text-red-200 tracking-wide whitespace-nowrap">
+            <div className="flex items-center justify-center gap-1.5 md:gap-2.5 px-2.5 py-1.5 md:px-5 md:py-2 rounded-full bg-gradient-to-r from-red-500/15 to-pink-500/15 hover:from-red-500/25 hover:to-pink-500/25 border border-red-500/30 backdrop-blur-md shadow-md transition-all min-w-0">
+              <span className="text-xs md:text-sm shrink-0">{adConfig.enabled ? '⚡' : '🛡️'}</span>
+              <span className="text-[11px] md:text-[14px] font-black text-red-200 tracking-wide whitespace-nowrap truncate">
                 {adConfig.enabled ? 'Direct Cloud Links' : 'Zero Ads / No Token'}
               </span>
             </div>
 
             {/* Perk 4: Weekend Drops */}
-            <div className="flex items-center gap-2.5 px-5 py-2 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 backdrop-blur-md shadow-md transition-all shrink-0">
-              <span className="text-sm">🌸</span>
-              <span className="text-[14px] font-black text-amber-300 tracking-wide whitespace-nowrap">Weekend Drops 7 PM</span>
+            <div className="flex items-center justify-center gap-1.5 md:gap-2.5 px-2.5 py-1.5 md:px-5 md:py-2 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 backdrop-blur-md shadow-md transition-all min-w-0">
+              <span className="text-xs md:text-sm shrink-0">🌸</span>
+              <span className="text-[11px] md:text-[14px] font-black text-amber-300 tracking-wide whitespace-nowrap truncate">Weekend Drops 7 PM</span>
             </div>
           </div>
         </div>

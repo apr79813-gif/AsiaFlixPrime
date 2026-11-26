@@ -25,7 +25,7 @@ interface DramaPreviewMeta {
 
 const DEFAULT_SHEET_CSV =
   'https://docs.google.com/spreadsheets/d/1uz-4QI_K5VGhWeqgx32jZnZffaB0oTGCpbS9hmxEN8U/export?format=csv&gid=0';
-const DEFAULT_LOGO = 'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
+const DEFAULT_LOGO = 'https://asiaflixprime.pages.dev/pwa-512x512.png';
 
 const BUILTIN_FALLBACKS: DramaPreviewMeta[] = [
   {
@@ -91,7 +91,21 @@ function parseCsvRows(csvText: string): string[][] {
   return rows;
 }
 
+function normalizePreviewImageUrl(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return '';
+  if (trimmed.includes('huggingface.co') && /\/blob\//i.test(trimmed)) {
+    return trimmed.replace(/\/blob\//i, '/resolve/');
+  }
+  const driveMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (driveMatch) {
+    return `https://drive.google.com/uc?export=view&id=${driveMatch[1]}`;
+  }
+  return trimmed;
+}
+
 async function resolveDramaMeta(slug: string, sheetUrl: string): Promise<DramaPreviewMeta | null> {
+  const cleanSlug = slug.replace(/-\d{4}$/, '');
   try {
     const resp = await fetch(sheetUrl, {
       headers: { Accept: 'text/csv' },
@@ -102,7 +116,7 @@ async function resolveDramaMeta(slug: string, sheetUrl: string): Promise<DramaPr
       if (rows.length >= 2) {
         const headers = rows[0].map((h) => h.trim().toLowerCase());
         const idxTitle = headers.findIndex((h) => h === 'title' || h.includes('title'));
-        const idxThumb = headers.findIndex((h) => h.includes('thumb') || h.includes('banner'));
+        const idxThumb = headers.findIndex((h) => h.includes('thumb') || h.includes('backdrop') || h.includes('banner'));
         const idxPoster = headers.findIndex((h) => h.includes('poster') || h.includes('image'));
         const idxAudio = headers.findIndex((h) => h.includes('audio'));
         const idxDesc = headers.findIndex((h) => h.includes('desc') || h.includes('synop'));
@@ -112,15 +126,13 @@ async function resolveDramaMeta(slug: string, sheetUrl: string): Promise<DramaPr
           const cols = rows[r];
           const title = (idxTitle >= 0 ? cols[idxTitle] : cols[0] || '').trim();
           if (!title) continue;
-          const thumb = idxThumb >= 0 ? (cols[idxThumb] || '').trim() : '';
-          const poster = idxPoster >= 0 ? (cols[idxPoster] || '').trim() : '';
+          const rawThumb = idxThumb >= 0 ? (cols[idxThumb] || '').trim() : '';
+          const firstThumbUrl = rawThumb.match(/https?:\/\/[^\s"',|<>]+/)?.[0] || rawThumb;
+          const thumb = normalizePreviewImageUrl(firstThumbUrl);
+          const poster = normalizePreviewImageUrl(idxPoster >= 0 ? (cols[idxPoster] || '').trim() : '');
           const audio = idxAudio >= 0 ? (cols[idxAudio] || '').trim() : 'Hindi Dubbed';
           const desc = idxDesc >= 0 ? (cols[idxDesc] || '').trim() : '';
-          const image = /^https?:\/\//i.test(thumb)
-            ? thumb
-            : /^https?:\/\//i.test(poster)
-              ? poster
-              : DEFAULT_LOGO;
+          const image = thumb || poster || DEFAULT_LOGO;
           parsed.push({
             slug: createSlug(title),
             title,
@@ -134,6 +146,8 @@ async function resolveDramaMeta(slug: string, sheetUrl: string): Promise<DramaPr
 
         const exact = parsed.find((item) => item.slug === slug);
         if (exact) return exact;
+        const yearNormalized = parsed.find((item) => item.slug.replace(/-\d{4}$/, '') === cleanSlug);
+        if (yearNormalized) return yearNormalized;
         const partial = parsed.find(
           (item) => item.slug.includes(slug) || slug.includes(item.slug)
         );
@@ -144,7 +158,7 @@ async function resolveDramaMeta(slug: string, sheetUrl: string): Promise<DramaPr
     // Fallback below
   }
 
-  return BUILTIN_FALLBACKS.find((item) => item.slug === slug) || null;
+  return BUILTIN_FALLBACKS.find((item) => item.slug === slug || item.slug.replace(/-\d{4}$/, '') === cleanSlug) || null;
 }
 
 export async function onRequestGet(context: PagesContext): Promise<Response> {

@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "AsiaFlix Prime",
-  "short_name": "AsiaFlix Prime",
+  "short_name": "AsiaFlix",
   "description": "Stream Asian Dramas & Movies in Clean Hindi Audio & 1080p HD.",
   "start_url": "/",
   "scope": "/",
@@ -11,16 +11,22 @@
   "theme_color": "#08080c",
   "icons": [
     {
-      "src": "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png",
+      "src": "/pwa-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png",
+      "src": "/pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

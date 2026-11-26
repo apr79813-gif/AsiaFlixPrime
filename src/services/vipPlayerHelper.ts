@@ -412,6 +412,259 @@ export function addDanmakuCue(dramaId: string, epNum: number, time: number, text
   return next;
 }
 
+export interface UniversalMirrorOption {
+  label: string;
+  url: string;
+}
+
+export interface UniversalResolvedVideo {
+  type: 'video' | 'iframe';
+  src: string;
+  mirrors: UniversalMirrorOption[];
+}
+
+export function normalizeUniversalAssetUrl(rawUrl: string): string {
+  let trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+
+  // 1. Hugging Face /blob/ -> /resolve/
+  if (/huggingface\.co/i.test(trimmed) && /\/blob\//i.test(trimmed)) {
+    trimmed = trimmed.replace(/\/blob\//i, '/resolve/');
+  }
+
+  // 2. GitHub /blob/ -> raw.githubusercontent.com
+  const ghBlobMatch = trimmed.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i);
+  if (ghBlobMatch) {
+    trimmed = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}/${ghBlobMatch[3]}`;
+  }
+
+  // 3. Archive.org /details/<id>(/<file>)? -> /download/<id>(/<file>)?
+  const archiveDetailsMatch = trimmed.match(/^https?:\/\/archive\.org\/details\/([^/?#]+)(\/[^?#]+)?/i);
+  if (archiveDetailsMatch) {
+    const id = archiveDetailsMatch[1];
+    const filePart = archiveDetailsMatch[2] || '';
+    trimmed = `https://archive.org/download/${id}${filePart}`;
+  }
+
+  // 4. Google Drive share URL -> direct download when used for audio/srt assets
+  const gdriveDirectMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (gdriveDirectMatch) {
+    return `https://drive.google.com/uc?export=download&id=${gdriveDirectMatch[1]}`;
+  }
+
+  return trimmed;
+}
+
+export function resolveUniversalVideoSource(rawUrl: string, mirrorIndex = 0): UniversalResolvedVideo {
+  let trimmed = (rawUrl || '').trim();
+  if (trimmed.includes('huggingface.co') && /\/blob\//i.test(trimmed)) {
+    trimmed = trimmed.replace(/\/blob\//i, '/resolve/');
+  }
+
+  // Convert GitHub /blob/ to raw.githubusercontent.com
+  const ghBlobMatch = trimmed.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i);
+  if (ghBlobMatch) {
+    trimmed = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}/${ghBlobMatch[3]}`;
+  }
+
+  // Convert Archive.org /details/ to /download/ (direct playable stream)
+  const archiveDetailsMatch = trimmed.match(/^https?:\/\/archive\.org\/details\/([^/?#]+)(\/[^?#]+)?/i);
+  if (archiveDetailsMatch) {
+    const id = archiveDetailsMatch[1];
+    const filePart = archiveDetailsMatch[2] || '';
+    if (filePart && filePart !== '/') {
+      trimmed = `https://archive.org/download/${id}${filePart}`;
+    } else {
+      // Embed fallback when user pastes item root URL without filename
+      const embedSrc = `https://archive.org/embed/${id}`;
+      return {
+        type: 'iframe',
+        src: embedSrc,
+        mirrors: [{ label: '🏛️ Archive.org Embed', url: embedSrc }],
+      };
+    }
+  }
+
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return { type: 'iframe', src: 'about:blank', mirrors: [] };
+  }
+
+  // 1. CLOUD HOST EMBED RULES ALWAYS RUN FIRST (before extension checks, e.g. streamtape slugs ending in .mp4)
+
+  // Streamwish (streamwish.*, wishfast.*, awish.*, flaswish.*, embedwish.*)
+  const streamwishMatch = trimmed.match(
+    /(?:streamwish\.\w+|wishfast\.\w+|awish\.\w+|flaswish\.\w+|embedwish\.\w+)\/(?:f|e|d)?\/?([a-zA-Z0-9_-]+)/i
+  );
+  if (streamwishMatch) {
+    const id = streamwishMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '🇮🇳 Server 1 (Streamwish)', url: `https://streamwish.to/e/${id}` },
+      { label: '⚡ Server 2 (Wishfast)', url: `https://wishfast.top/e/${id}` },
+      { label: '🛡️ Server 3 (Awish)', url: `https://awish.pro/e/${id}` },
+    ];
+    return { type: 'iframe', src: mirrors[mirrorIndex]?.url || mirrors[0].url, mirrors };
+  }
+
+  // Vidhide (vidhide.*, dhtpre.*, peytonepre.*, callistanise.*)
+  const vidhideMatch = trimmed.match(
+    /(?:vidhide\w*\.\w+|dhtpre\.com|peytonepre\.com|callistanise\.com)\/(?:v|e|f|d)?\/?([a-zA-Z0-9_-]+)/i
+  );
+  if (vidhideMatch) {
+    const id = vidhideMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '🇮🇳 Server 1 (Vidhide)', url: `https://vidhidevip.com/v/${id}` },
+      { label: '⚡ Server 2 (Fast Cloud)', url: `https://dhtpre.com/v/${id}` },
+      { label: '🛡️ Server 3 (Mirror)', url: `https://peytonepre.com/v/${id}` },
+    ];
+    return { type: 'iframe', src: mirrors[mirrorIndex]?.url || mirrors[0].url, mirrors };
+  }
+
+  // Streamtape (streamtape.*, strtape.cloud, strcloud.in, shavetape.cash)
+  const streamtapeMatch = trimmed.match(
+    /(?:streamtape\.\w+|strtape\.cloud|strcloud\.in|shavetape\.cash)\/(?:v|e)\/([a-zA-Z0-9_-]+)/i
+  );
+  if (streamtapeMatch) {
+    const id = streamtapeMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '🇮🇳 Server 1 (India No-VPN)', url: `https://strcloud.in/e/${id}/` },
+      { label: '⚡ Server 2 (Fast Cloud)', url: `https://strtape.cloud/e/${id}/` },
+      { label: '🛡️ Server 3 (Mirror)', url: `https://shavetape.cash/e/${id}/` },
+      { label: '🌐 Server 4 (Global)', url: `https://streamtape.com/e/${id}/` },
+    ];
+    return { type: 'iframe', src: mirrors[mirrorIndex]?.url || mirrors[0].url, mirrors };
+  }
+
+  // Doodstream (dood.*, ds2play.com, d000d.com)
+  const doodMatch = trimmed.match(/(?:dood\w*\.\w+|ds2play\.com|d000d\.com)\/(?:d|e)\/([a-zA-Z0-9_-]+)/i);
+  if (doodMatch) {
+    const id = doodMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '🇮🇳 Server 1 (India No-VPN)', url: `https://d000d.com/e/${id}` },
+      { label: '⚡ Server 2 (Fast Cloud)', url: `https://ds2play.com/e/${id}` },
+      { label: '🛡️ Server 3 (Mirror)', url: `https://dood.wf/e/${id}` },
+    ];
+    return { type: 'iframe', src: mirrors[mirrorIndex]?.url || mirrors[0].url, mirrors };
+  }
+
+  // Filemoon (filemoon.sx, filemoon.in, filemoon.to, etc.)
+  const filemoonMatch = trimmed.match(/(?:filemoon\.\w+)\/(?:d|e)\/([a-zA-Z0-9_-]+)/i);
+  if (filemoonMatch) {
+    const id = filemoonMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '🇮🇳 Server 1 (India No-VPN)', url: `https://filemoon.in/e/${id}` },
+      { label: '⚡ Server 2 (Fast Cloud)', url: `https://filemoon.sx/e/${id}` },
+      { label: '🛡️ Server 3 (Mirror)', url: `https://filemoon.to/e/${id}` },
+    ];
+    return { type: 'iframe', src: mirrors[mirrorIndex]?.url || mirrors[0].url, mirrors };
+  }
+
+  // Voe (voe.sx)
+  const voeMatch = trimmed.match(/voe\.sx\/(?:e\/)?([a-zA-Z0-9_-]+)/i);
+  if (voeMatch) {
+    const src = `https://voe.sx/e/${voeMatch[1]}`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 Main HD Server', url: src }] };
+  }
+
+  // Mixdrop (mixdrop.co, mixdrop.to, mixdrop.ag)
+  const mixdropMatch = trimmed.match(/mixdrop\.\w+\/(?:f|e)\/([a-zA-Z0-9_-]+)/i);
+  if (mixdropMatch) {
+    const src = `https://mixdrop.ag/e/${mixdropMatch[1]}`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 Main HD Server', url: src }] };
+  }
+
+  // Abyss / Hydrax (abyss.to, abysscdn.com)
+  if (/(?:abyss\.to|abysscdn\.com)\//i.test(trimmed)) {
+    return { type: 'iframe', src: trimmed, mirrors: [{ label: '🇮🇳 Main HD Server', url: trimmed }] };
+  }
+
+  // Google Drive share link -> /preview
+  const gdriveMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (gdriveMatch) {
+    const id = gdriveMatch[1];
+    const mirrors: UniversalMirrorOption[] = [
+      { label: '☁️ Google Drive HD', url: `https://drive.google.com/file/d/${id}/preview` },
+    ];
+    return { type: 'iframe', src: mirrors[0].url, mirrors };
+  }
+
+  // OneDrive / 1drv.ms
+  if (/onedrive\.live\.com/i.test(trimmed)) {
+    const embedUrl = trimmed.includes('/embed')
+      ? trimmed
+      : trimmed.replace(/\/view\.aspx/i, '/embed').replace(/\bdownload=1\b/i, 'embed=1');
+    return {
+      type: 'iframe',
+      src: embedUrl,
+      mirrors: [{ label: '☁️ OneDrive HD', url: embedUrl }],
+    };
+  }
+  if (/1drv\.ms\//i.test(trimmed)) {
+    return {
+      type: 'iframe',
+      src: trimmed,
+      mirrors: [{ label: '☁️ OneDrive Link', url: trimmed }],
+    };
+  }
+
+  // OK.ru link -> /videoembed/
+  const okMatch = trimmed.match(/ok\.ru\/(?:video|videoembed)\/(\d+)/i);
+  if (okMatch) {
+    const src = `https://ok.ru/videoembed/${okMatch[1]}?autoplay=1`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 OK.ru HD Server', url: src }] };
+  }
+
+  // VK Video (vk.com/video-123_456 or vkvideo.ru/video-123_456) -> video_ext.php
+  const vkMatch = trimmed.match(/(?:vk\.com|vkvideo\.ru)\/video(-?\d+)_(\d+)/i);
+  if (vkMatch) {
+    const src = `https://vk.com/video_ext.php?oid=${vkMatch[1]}&id=${vkMatch[2]}&hd=2`;
+    return { type: 'iframe', src, mirrors: [{ label: '🎬 VK Video HD', url: src }] };
+  }
+
+  // Mega.nz link -> /embed/
+  const megaMatch = trimmed.match(/mega\.nz\/file\/([^#]+)#(.+)/i);
+  if (megaMatch) {
+    const src = `https://mega.nz/embed/${megaMatch[1]}#${megaMatch[2]}`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 Main HD Server', url: src }] };
+  }
+
+  // YouTube link -> privacy-enhanced youtube-nocookie.com/embed/
+  const ytMatch = trimmed.match(
+    /(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]+)/i
+  );
+  if (ytMatch) {
+    const src = `https://www.youtube-nocookie.com/embed/${ytMatch[1]}?autoplay=1&rel=0`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 Main HD Server', url: src }] };
+  }
+
+  // Dailymotion link -> /embed/video/
+  const dmMatch = trimmed.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/i);
+  if (dmMatch) {
+    const src = `https://www.dailymotion.com/embed/video/${dmMatch[1]}?autoplay=1`;
+    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 Main HD Server', url: src }] };
+  }
+
+  // 2. Direct media streams (Archive.org, Telegram File-to-Stream Workers, GitHub Raw, jsDelivr, Cloudflare R2, Backblaze B2, MP4/M3U8/MKV/WEBM)
+  const lowerUrl = trimmed.toLowerCase();
+  const pathWithoutQuery = trimmed.split(/[?#]/)[0].toLowerCase();
+  if (
+    /\.(mp4|m3u8|webm|ogg|mkv|mov)$/i.test(pathWithoutQuery) ||
+    (lowerUrl.includes('huggingface.co') && lowerUrl.includes('/resolve/')) ||
+    (lowerUrl.includes('archive.org') && lowerUrl.includes('/download/')) ||
+    lowerUrl.includes('raw.githubusercontent.com') ||
+    lowerUrl.includes('cdn.jsdelivr.net') ||
+    lowerUrl.includes('r2.dev') ||
+    lowerUrl.includes('workers.dev') ||
+    lowerUrl.includes('backblazeb2.com') ||
+    lowerUrl.includes('b2cdn.com') ||
+    /\/(?:direct|stream|dl|watch)\//i.test(lowerUrl)
+  ) {
+    return { type: 'video', src: trimmed, mirrors: [] };
+  }
+
+  // 3. Fallback custom embed iframe
+  return { type: 'iframe', src: trimmed, mirrors: [{ label: '🇮🇳 Main HD Server', url: trimmed }] };
+}
+
 export const ADMIN_SUBTITLES_STORAGE_KEY = 'asiaflix_admin_subtitles';
 
 export interface AdminSubtitleEntry {
@@ -425,13 +678,7 @@ export interface AdminSubtitleEntry {
 export function normalizeSubtitleUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   if (!trimmed) return '';
-  if (/huggingface\.co\/datasets\/.+\/blob\//i.test(trimmed)) {
-    return trimmed.replace(/\/blob\//i, '/resolve/');
-  }
-  if (/huggingface\.co\/.+\/blob\//i.test(trimmed)) {
-    return trimmed.replace(/\/blob\//i, '/resolve/');
-  }
-  return trimmed;
+  return normalizeUniversalAssetUrl(trimmed);
 }
 
 export function getAdminSubtitleOverrides(): Record<string, AdminSubtitleEntry[]> {

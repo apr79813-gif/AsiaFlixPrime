@@ -228,7 +228,7 @@ function escapeTelegramHtml(str: string): string {
 
 async function loadImageForCanvas(url: string): Promise<HTMLImageElement | null> {
   const cleanUrl = (url || '').trim();
-  if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) return null;
+  if (!cleanUrl || (!/^https?:\/\//i.test(cleanUrl) && !cleanUrl.startsWith('/'))) return null;
 
   const tryLoad = (targetSrc: string): Promise<HTMLImageElement | null> =>
     new Promise((resolve) => {
@@ -353,7 +353,9 @@ export async function renderBrandedEpisodeBannerBlob(
   ctx.fillRect(0, 0, 1280, 180);
 
   // 4. Black-key transparent Official Channel Logo at Top-Left
-  const logoImg = await loadImageForCanvas(payload.logoUrl || DEFAULT_LOGO_URL);
+  const logoImg =
+    (await loadImageForCanvas(payload.logoUrl || '/logo-watermark.png')) ||
+    (await loadImageForCanvas(DEFAULT_LOGO_URL));
   if (logoImg) {
     const transparentLogo = createBlackKeyTransparentLogoCanvas(logoImg);
     const targetH = 84;

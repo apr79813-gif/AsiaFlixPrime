@@ -123,32 +123,32 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-50 bg-[#08080c]/95 backdrop-blur-md border-b border-white/[0.08] transition-all">
-      <div className="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center justify-between gap-2 w-full">
+      <div className="max-w-[1600px] mx-auto px-3 md:px-4 py-2 md:py-2.5 flex items-center justify-between gap-2 w-full">
         {/* Brand */}
-        <div className="flex items-center gap-2.5 shrink-0 min-w-0">
-          <div onClick={handleLogoClick} className="flex items-center gap-2.5 group cursor-pointer select-none shrink-0">
-            <div className="relative w-10 h-10 min-w-[40px] min-h-[40px] max-w-[40px] max-h-[40px] shrink-0 overflow-hidden rounded-xl bg-zinc-900 border border-white/15 shadow-[0_0_20px_rgba(229,9,20,0.5)]">
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
+          <div onClick={handleLogoClick} className="flex items-center gap-2 group cursor-pointer select-none shrink-0">
+            <div className="relative w-9 h-9 md:w-10 md:h-10 min-w-[36px] min-h-[36px] md:min-w-[40px] md:min-h-[40px] shrink-0 overflow-hidden rounded-xl bg-zinc-900 border border-white/15 shadow-[0_0_20px_rgba(229,9,20,0.5)]">
               <img 
                 src={logoUrl || "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png"} 
                 alt="AsiaFlix Prime" 
                 referrerPolicy="no-referrer"
-                className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 object-cover group-hover:scale-105 transition-transform"
+                className="w-full h-full shrink-0 object-cover group-hover:scale-105 transition-transform"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png";
                 }}
               />
-              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 md:w-3 md:h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />
             </div>
             <div className="shrink-0 flex flex-col justify-center">
               <div className="flex items-center gap-1.5 leading-none">
-                <span className="text-lg sm:text-xl font-black tracking-tight text-white group-hover:text-red-500 transition-colors">
+                <span className="text-base md:text-xl font-black tracking-tight text-white group-hover:text-red-500 transition-colors">
                   AsiaFlix
                 </span>
-                <span className="bg-[#e50914] text-white text-[10px] font-black tracking-wider px-1.5 py-0.5 rounded shadow-sm">
+                <span className="bg-[#e50914] text-white text-[9px] md:text-[10px] font-black tracking-wider px-1.5 py-0.5 rounded shadow-sm">
                   PRIME
                 </span>
               </div>
-              <p className="text-[9px] font-bold text-zinc-400 tracking-wider flex items-center gap-1 mt-0.5 leading-none">
+              <p className="hidden sm:flex text-[9px] font-bold text-zinc-400 tracking-wider items-center gap-1 mt-0.5 leading-none">
                 PRIVATE VIP NETWORK 🐰
               </p>
               <div className="flex items-center gap-1 mt-0.5 leading-none">
@@ -159,13 +159,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* VIP Binge Level & Daily Streak Badge + Mini-Popover */}
-          <div className="relative shrink-0" ref={vipPopoverRef}>
+        {/* Action Controls (horizontally scrollable on narrow mobile screens, never squashed) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar min-w-0 py-0.5">
+          {/* VIP Binge Level & Daily Streak Badge */}
+          <div className="shrink-0" ref={vipPopoverRef}>
             <button
               onClick={() => setShowVipPopover((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-gradient-to-r ${vipRank.gradientClass} border text-[12px] font-black transition-all shadow-[0_0_14px_rgba(245,158,11,0.2)] hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap shrink-0`}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 md:py-2 rounded-xl bg-gradient-to-r ${vipRank.gradientClass} border text-xs md:text-[12px] font-black transition-all shadow-[0_0_14px_rgba(245,158,11,0.2)] hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap shrink-0`}
               title="View your VIP Binge Level & Watch Streak"
             >
               <span>{vipRank.title}</span>
@@ -176,7 +176,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             {showVipPopover && (
-              <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-[#10121b] border border-amber-400/35 shadow-[0_20px_50px_rgba(0,0,0,0.95)] p-4 z-50 space-y-3 animate-fade-in">
+              <div className="fixed right-3 top-14 w-72 rounded-2xl bg-[#10121b] border border-amber-400/35 shadow-[0_20px_50px_rgba(0,0,0,0.95)] p-4 z-[60] space-y-3 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Trophy className="w-4 h-4 text-amber-400" />
@@ -232,7 +232,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {onInstallApp && !isAppInstalled && (
             <button
               onClick={onInstallApp}
-              className="px-3 py-2 text-[13px] font-extrabold rounded-xl bg-emerald-500/15 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.2)]"
+              className="px-2.5 py-1.5 md:px-3 md:py-2 text-xs md:text-[13px] font-extrabold rounded-xl bg-emerald-500/15 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.2)]"
               title="Install AsiaFlix Prime App"
             >
               <Download className="w-3.5 h-3.5" />
@@ -244,7 +244,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {onGoHome && (
             <button
               onClick={onGoHome}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.06] hover:bg-[#e50914] border border-white/10 text-[13px] font-extrabold text-white transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0 group hover:scale-105 active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-white/[0.06] hover:bg-[#e50914] border border-white/10 text-xs md:text-[13px] font-extrabold text-white transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0 group hover:scale-105 active:scale-95"
               title="Return to Home Screen & Reset Filters"
             >
               <Home className="w-3.5 h-3.5 text-zinc-200 group-hover:text-white" />
@@ -256,7 +256,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {handleOpenSearchAction && (
             <button
               onClick={handleOpenSearchAction}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 border border-red-500/40 text-[13px] font-extrabold text-white transition-all shadow-[0_0_15px_rgba(229,9,20,0.35)] cursor-pointer whitespace-nowrap shrink-0 hover:scale-105 active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 border border-red-500/40 text-xs md:text-[13px] font-extrabold text-white transition-all shadow-[0_0_15px_rgba(229,9,20,0.35)] cursor-pointer whitespace-nowrap shrink-0 hover:scale-105 active:scale-95"
               title="Quick Search Dramas, Movies, and Cast"
             >
               <Search className="w-3.5 h-3.5 text-white" />
@@ -269,7 +269,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onRefreshSheet}
               disabled={isSheetSyncing}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[13px] font-extrabold transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs md:text-[13px] font-extrabold transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0"
               title="Click to live-sync dramas, links, and posters from Google Sheets"
             >
               <span className={`w-2 h-2 rounded-full ${isSheetSyncing ? 'bg-amber-400 animate-spin' : 'bg-emerald-400 animate-pulse'}`} />
@@ -307,7 +307,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             return (
               <button
                 onClick={onToggleSakura}
-                className={`px-2.5 py-2 rounded-xl text-[13px] font-extrabold transition-all border whitespace-nowrap shrink-0 cursor-pointer flex items-center justify-center ${activeCfg.style}`}
+                className={`px-2.5 py-1.5 md:py-2 rounded-xl text-xs md:text-[13px] font-extrabold transition-all border whitespace-nowrap shrink-0 cursor-pointer flex items-center justify-center ${activeCfg.style}`}
                 title={activeCfg.label}
               >
                 <span className="text-sm leading-none">{activeCfg.icon}</span>
@@ -318,12 +318,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Notifications Bell */}
           <button
             onClick={onOpenNotifications}
-            className="relative px-2.5 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 flex items-center justify-center cursor-pointer"
+            className="relative px-2.5 py-1.5 md:py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 flex items-center justify-center cursor-pointer"
             title="Release Notifications"
           >
             <Bell className="w-4 h-4" />
             {unreadNotifsCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#e50914] text-white text-[10px] font-black flex items-center justify-center animate-bounce shadow-md">
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#e50914] text-white text-[10px] font-black flex items-center justify-center animate-bounce shadow-md">
                 {unreadNotifsCount}
               </span>
             )}
@@ -332,7 +332,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Watchlist Quick Button */}
           <button
             onClick={onOpenWatchlist}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs md:text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
             title="My Watchlist"
           >
             <Bookmark className="w-3.5 h-3.5 text-amber-400" />
@@ -347,7 +347,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Arcade Modal Button */}
           <button
             onClick={onOpenArcade}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs md:text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
             title="Drama Arcade (Memory, Quiz, Wheel)"
           >
             <Gamepad2 className="w-3.5 h-3.5 text-[#ff2b54]" />
@@ -357,7 +357,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Support Desk */}
           <button
             onClick={onOpenSupport}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs md:text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
             title="Support Desk"
           >
             <Headphones className="w-3.5 h-3.5 text-sky-400" />
@@ -367,7 +367,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Request Drama */}
           <button
             onClick={onOpenRequest}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs md:text-[13px] font-extrabold text-zinc-200 hover:text-white transition-all whitespace-nowrap shrink-0 cursor-pointer"
             title="Request Drama"
           >
             <Film className="w-3.5 h-3.5 text-emerald-400" />
@@ -377,7 +377,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Copy Official Invite Link */}
           <button
             onClick={handleCopyPortalLink}
-            className={`px-2.5 py-2 rounded-xl text-[13px] font-extrabold transition-all border whitespace-nowrap shrink-0 flex items-center justify-center cursor-pointer ${
+            className={`px-2.5 py-1.5 md:py-2 rounded-xl text-xs md:text-[13px] font-extrabold transition-all border whitespace-nowrap shrink-0 flex items-center justify-center cursor-pointer ${
               linkCopied
                 ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                 : 'bg-white/[0.03] border-white/10 text-zinc-200 hover:text-white hover:bg-white/[0.08]'
@@ -391,7 +391,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {isAdminAuthenticated && (
             <button
               onClick={onOpenAdmin}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-white text-[13px] font-extrabold transition-all shadow-[0_0_15px_rgba(229,9,20,0.3)] whitespace-nowrap shrink-0 cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-white text-xs md:text-[13px] font-extrabold transition-all shadow-[0_0_15px_rgba(229,9,20,0.3)] whitespace-nowrap shrink-0 cursor-pointer"
               title="Open Admin Control Studio"
             >
               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
@@ -404,7 +404,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             href="https://t.me/+yJH68LvfrT9hZDVl"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[13px] font-extrabold shadow-[0_0_20px_rgba(229,9,20,0.45)] hover:shadow-[0_0_28px_rgba(229,9,20,0.7)] hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-xs md:text-[13px] font-extrabold shadow-[0_0_20px_rgba(229,9,20,0.45)] hover:shadow-[0_0_28px_rgba(229,9,20,0.7)] hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap shrink-0"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Join VIP</span>

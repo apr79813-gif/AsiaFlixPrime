@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
+import Hls from 'hls.js';
 import { DramaItem, EpisodeItem, AudioType, WatchlistStatus, SubtitleTrackItem } from '../types/drama';
 import {
   X,
@@ -70,6 +71,10 @@ import {
   parseSrtOrVttContent,
   normalizeSubtitleUrl,
   resolveUniversalVideoSource,
+  resolveArchiveOrgDirectStream,
+  resolveOkRuOrVkNativeStream,
+  UniversalResolvedVideo,
+  ExtractedQualityStream,
   normalizeUniversalAssetUrl,
   SubtitleCue,
   TIMESTAMPS_UPDATED_EVENT,
@@ -108,11 +113,7 @@ export interface VideoMirrorOption {
   url: string;
 }
 
-export interface ResolvedVideoSource {
-  type: 'video' | 'iframe';
-  src: string;
-  mirrors: VideoMirrorOption[];
-}
+export type ResolvedVideoSource = UniversalResolvedVideo;
 
 export function resolveVideoPlayerSource(rawUrl: string, mirrorIndex = 0): ResolvedVideoSource {
   return resolveUniversalVideoSource(rawUrl, mirrorIndex);
@@ -229,6 +230,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const lastHardSubScanMsRef = useRef<number>(0);
   const hardSubCorsBlockedRef = useRef<boolean>(false);
   const seekRippleTimerRef = useRef<number | null>(null);
+  const controlsFadeTimerRef = useRef<number | null>(null);
+  const hlsInstanceRef = useRef<Hls | null>(null);
   const voiceEngineRef = useRef<SubtitleVoiceEngine | null>(null);
   if (!voiceEngineRef.current) {
     voiceEngineRef.current = new SubtitleVoiceEngine();
@@ -465,6 +468,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isSubtitleAudioOn, setIsSubtitleAudioOn] = useState<boolean>(false);
   const [transparentLogoUrl, setTransparentLogoUrl] = useState<string>(customLogoUrl || OFFICIAL_LOGO_URL);
   const [mediaErrorState, setMediaErrorState] = useState<{ source: 'video' | 'audio'; reason: string } | null>(null);
+  const [asyncResolvedStream, setAsyncResolvedStream] = useState<{
+    key: string;
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    src: string;
+    hlsUrl?: string;
+    qualities?: ExtractedQualityStream[];
+    provider?: 'archive' | 'okru' | 'vk';
+    errorMsg?: string;
+  }>({ key: '', status: 'idle', src: '' });
 
   useEffect(() => {
     const checkViewport = () => {
@@ -711,8 +723,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (!engine) return;
     engine.setCues(parsedSubCues);
     if (isSubtitleAudioOn && parsedSubCues.length > 0 && activeSubLang !== 'off') {
-      const idx = activeCue ? parsedSubCues.findIndex((c) => c.id === activeCue.id) : -1;
-      engine.enable(idx);
+      const tNow = videoRef.current?.currentTime ?? 0;
+      const idx = parsedSubCues.findIndex((c) => tNow >= c.start && tNow <= c.end);
+      const upcoming = idx >= 0 ? idx : parsedSubCues.findIndex((c) => c.start > tNow);
+      engine.enable(idx, upcoming, videoRef.current ? videoRef.current.paused : true);
     }
   }, [parsedSubCues]);
 
@@ -727,6 +741,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       }
       if (seekRippleTimerRef.current !== null) {
         window.clearTimeout(seekRippleTimerRef.current);
+      }
+      if (controlsFadeTimerRef.current !== null) {
+        window.clearTimeout(controlsFadeTimerRef.current);
+      }
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.destroy();
+        hlsInstanceRef.current = null;
       }
       voiceEngineRef.current?.dispose();
       if (videoAudioNodeRef.current) {
@@ -875,6 +896,152 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? resolveVideoPlayerSource(currentPlayingStream.streamUrl, activeMirrorIndex)
       : null;
 
+  const asyncResolveKey =
+    isStreamUnlocked && resolvedPlayerSource?.asyncProvider
+      ? `${resolvedPlayerSource.asyncProvider.provider}:${resolvedPlayerSource.asyncProvider.rawUrl}:${streamReloadNonce}`
+      : '';
+
+  const pickOkRuQualityUrl = (
+    qualities: ExtractedQualityStream[] | undefined,
+    hlsUrl: string | undefined,
+    qualityId: string
+  ): string => {
+    if (!qualities || qualities.length === 0) return hlsUrl || '';
+    const targetHeight =
+      qualityId.includes('1080') || qualityId === 'Auto HDR'
+        ? 1080
+        : qualityId.includes('720')
+        ? 720
+        : qualityId.includes('480')
+        ? 480
+        : 1080;
+
+    if (targetHeight >= 1080) {
+      return (
+        qualities.find((q) => q.quality === 'full' || q.height >= 1080)?.proxiedUrl ||
+        qualities[0]?.proxiedUrl ||
+        hlsUrl ||
+        ''
+      );
+    }
+    if (targetHeight === 720) {
+      return (
+        qualities.find((q) => q.quality === 'hd' || q.height === 720)?.proxiedUrl ||
+        qualities.find((q) => q.height <= 720)?.proxiedUrl ||
+        qualities[0]?.proxiedUrl ||
+        hlsUrl ||
+        ''
+      );
+    }
+    return (
+      qualities.find((q) => q.quality === 'sd' || q.height === 480)?.proxiedUrl ||
+      qualities.find((q) => q.height <= 480)?.proxiedUrl ||
+      qualities[qualities.length - 1]?.proxiedUrl ||
+      hlsUrl ||
+      ''
+    );
+  };
+
+  // Async Native Stream Extractor for Archive.org item URLs and OK.ru / VK video URLs (ZERO Iframe)
+  useEffect(() => {
+    const meta = resolvedPlayerSource?.asyncProvider;
+    if (!asyncResolveKey || !meta) {
+      setAsyncResolvedStream({ key: '', status: 'idle', src: '' });
+      return;
+    }
+
+    let cancelled = false;
+    setAsyncResolvedStream({
+      key: asyncResolveKey,
+      status: 'loading',
+      src: '',
+      provider: meta.provider,
+    });
+    setIsVideoLoading(true);
+    setMediaErrorState(null);
+
+    if (meta.provider === 'archive') {
+      resolveArchiveOrgDirectStream(meta.id).then((directUrl) => {
+        if (cancelled) return;
+        if (directUrl) {
+          setAsyncResolvedStream({
+            key: asyncResolveKey,
+            status: 'ready',
+            src: directUrl,
+            provider: 'archive',
+          });
+        } else {
+          setAsyncResolvedStream({
+            key: asyncResolveKey,
+            status: 'error',
+            src: '',
+            provider: 'archive',
+            errorMsg: 'Archive.org MP4 stream could not be found in item metadata.',
+          });
+          setIsVideoLoading(false);
+          setMediaErrorState({
+            source: 'video',
+            reason: 'No playable MP4 video file was found in this Archive.org item. Retry or open Telegram backup.',
+          });
+        }
+      });
+    } else {
+      resolveOkRuOrVkNativeStream(meta.rawUrl, streamReloadNonce > 0).then((res) => {
+        if (cancelled) return;
+        if (res.ok && (res.streams.length > 0 || res.proxiedHlsUrl)) {
+          const pickedUrl = pickOkRuQualityUrl(res.streams, res.proxiedHlsUrl, selectedQuality);
+          setAsyncResolvedStream({
+            key: asyncResolveKey,
+            status: 'ready',
+            src: pickedUrl || res.proxiedHlsUrl || '',
+            hlsUrl: res.proxiedHlsUrl,
+            qualities: res.streams,
+            provider: meta.provider,
+          });
+        } else {
+          const errMsg = res.error || 'Unable to extract native stream from OK.ru / VK.';
+          setAsyncResolvedStream({
+            key: asyncResolveKey,
+            status: 'error',
+            src: '',
+            provider: meta.provider,
+            errorMsg: errMsg,
+          });
+          setIsVideoLoading(false);
+          setMediaErrorState({
+            source: 'video',
+            reason: `${errMsg} Please click Reload or open Telegram Backup.`,
+          });
+        }
+      });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [asyncResolveKey]);
+
+  const effectiveVideoSrc = useMemo(() => {
+    if (!resolvedPlayerSource || resolvedPlayerSource.type !== 'video') return '';
+    if (resolvedPlayerSource.asyncProvider) {
+      return asyncResolvedStream.key === asyncResolveKey && asyncResolvedStream.status === 'ready'
+        ? asyncResolvedStream.src
+        : '';
+    }
+    return resolvedPlayerSource.src;
+  }, [resolvedPlayerSource, asyncResolvedStream, asyncResolveKey]);
+
+  const isHlsVideoSrc = useMemo(() => {
+    if (!effectiveVideoSrc) return false;
+    if (/\.m3u8(\?|$)/i.test(effectiveVideoSrc)) return true;
+    if (/[?&]url=[^&]*\.m3u8/i.test(effectiveVideoSrc)) return true;
+    try {
+      return decodeURIComponent(effectiveVideoSrc).toLowerCase().includes('.m3u8');
+    } catch {
+      return false;
+    }
+  }, [effectiveVideoSrc]);
+
   const isExternalAudioActive =
     Boolean(trackCustomAudio) && !forceBuiltinAudio && resolvedPlayerSource?.type === 'video';
 
@@ -919,7 +1086,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
-  const syncAudioToVideo = (forcePlay = false) => {
+  const syncAudioToVideo = (forcePlay = false, immediateSeek = false) => {
     const vid = videoRef.current;
     const aud = audioRef.current;
     if (!vid || !aud || !isExternalAudioActive) return;
@@ -931,7 +1098,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     aud.playbackRate = vid.playbackRate || playbackSpeed;
 
     const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
-    if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.25) {
+    const drift = Math.abs(aud.currentTime - targetTime);
+    if (Number.isFinite(targetTime) && (immediateSeek ? drift > 0.05 : drift > 0.25)) {
       try {
         aud.currentTime = targetTime;
       } catch {
@@ -948,13 +1116,71 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
+  // Attach HLS.js whenever an adaptive .m3u8 stream (direct or /api/okru-proxy) is loaded
+  useEffect(() => {
+    if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.destroy();
+      hlsInstanceRef.current = null;
+    }
+    const vid = videoRef.current;
+    if (!vid || !isHlsVideoSrc || !effectiveVideoSrc) return;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true });
+      hlsInstanceRef.current = hls;
+      hls.loadSource(effectiveVideoSrc);
+      hls.attachMedia(vid);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsVideoLoading(false);
+        const pending = pendingRestoreTimeRef.current;
+        if (pending) {
+          try {
+            vid.currentTime = pending.time;
+          } catch {}
+          pendingRestoreTimeRef.current = null;
+        }
+        vid.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            setIsVideoLoading(false);
+            setIsVideoPlaying(false);
+            setMediaErrorState({
+              source: 'video',
+              reason: 'HLS adaptive stream interrupted on the host server. Click Reload or Telegram Backup.',
+            });
+          }
+        }
+      });
+      return () => {
+        hls.destroy();
+        if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
+      };
+    } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+      vid.src = effectiveVideoSrc;
+    }
+  }, [effectiveVideoSrc, isHlsVideoSrc, streamReloadNonce, activeStreamEp, activeAudio]);
+
   // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on native video element (never touch external .mp3 audio)
   const activeAudibleUrl =
-    !isExternalAudioActive && resolvedPlayerSource?.type === 'video' ? resolvedPlayerSource.src : '';
+    !isExternalAudioActive && resolvedPlayerSource?.type === 'video' ? effectiveVideoSrc : '';
   const wantsAudioStudio = !isExternalAudioActive && (audioEqMode !== 'normal' || volumeBoost > 100);
 
   useEffect(() => {
-    if (!wantsAudioStudio || !activeAudibleUrl || !/^https?:\/\//i.test(activeAudibleUrl)) {
+    if (!wantsAudioStudio || !activeAudibleUrl) {
+      setAudibleCorsSupported(false);
+      return;
+    }
+    if (activeAudibleUrl.startsWith('/')) {
+      setAudibleCorsSupported(true);
+      return;
+    }
+    if (!/^https?:\/\//i.test(activeAudibleUrl)) {
       setAudibleCorsSupported(false);
       return;
     }
@@ -1174,6 +1400,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     (subBackdropMode === 'auto' &&
       (hardSubCorsBlockedRef.current ? hasHardcodedSubtitles : detectedHardcodedSubs));
 
+  const getSubtitleIndicesAtTime = (tNow: number) => {
+    if (activeSubLang === 'off' || parsedSubCues.length === 0) {
+      return { matchedIdx: -1, matchedCue: null, upcomingIdx: -1 };
+    }
+    const matchedIdx = parsedSubCues.findIndex((c) => tNow >= c.start && tNow <= c.end);
+    const matchedCue = matchedIdx >= 0 ? parsedSubCues[matchedIdx] : null;
+    const upcomingIdx =
+      matchedIdx >= 0 ? matchedIdx : parsedSubCues.findIndex((c) => c.start > tNow);
+    return { matchedIdx, matchedCue, upcomingIdx };
+  };
+
+  const syncSubtitleAndVoiceOnTime = (tNow: number, isSeekEvent: boolean, isPaused: boolean) => {
+    const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(tNow);
+    if ((activeCueRef.current?.id ?? null) !== (matchedCue?.id ?? null)) {
+      activeCueRef.current = matchedCue;
+      setActiveCue(matchedCue);
+      if (!isSeekEvent && !isPaused) {
+        voiceEngineRef.current?.onActiveCueChanged(matchedIdx);
+      }
+    }
+    if (isSeekEvent) {
+      voiceEngineRef.current?.handleSeek(matchedIdx, upcomingIdx, isPaused);
+    }
+  };
+
   const handleToggleSubtitleAudio = () => {
     const engine = voiceEngineRef.current;
     if (!engine) return;
@@ -1189,12 +1440,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       setActiveSubLang(availableSubLanguages[0].code);
     }
 
-    engine.attachVideo(videoRef.current);
+    const vid = videoRef.current;
+    const curTime = vid?.currentTime ?? 0;
+    const isPaused = vid ? vid.paused : true;
+    engine.attachVideo(vid);
     engine.setExternalAudioMode(isExternalAudioActive);
     engine.setPlaybackRate(playbackSpeed);
     engine.setCues(parsedSubCues);
-    const activeIdx = activeCue ? parsedSubCues.findIndex((c) => c.id === activeCue.id) : -1;
-    engine.enable(activeIdx);
+    const matchedIdx = parsedSubCues.findIndex((c) => curTime >= c.start && curTime <= c.end);
+    const upcomingIdx =
+      matchedIdx >= 0 ? matchedIdx : parsedSubCues.findIndex((c) => c.start > curTime);
+    engine.enable(matchedIdx, upcomingIdx, isPaused);
     setIsSubtitleAudioOn(true);
     showHudFeedback('🔊 Subtitle Audio: ON (BGM-Only Mode)');
   };
@@ -1374,8 +1630,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         ? nextList.find((item) => item.epNum === activeStreamEp) || nextList[0]
         : nextList[0];
     const nextResolved = nextEpEntry ? resolveVideoPlayerSource(nextEpEntry.streamUrl, 0) : null;
-    const isDifferentVideoSrc =
-      Boolean(nextResolved?.src) && resolvedPlayerSource?.src !== nextResolved?.src;
+    const prevIdentity = resolvedPlayerSource?.asyncProvider?.rawUrl || resolvedPlayerSource?.src || '';
+    const nextIdentity = nextResolved?.asyncProvider?.rawUrl || nextResolved?.src || '';
+    const isDifferentVideoSrc = Boolean(nextIdentity) && prevIdentity !== nextIdentity;
 
     if (currentTime > 0.5 && isDifferentVideoSrc) {
       pendingRestoreTimeRef.current = { time: currentTime, shouldPlay: wasPlaying };
@@ -1450,6 +1707,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }, 550);
   };
 
+  const bumpPlayerControlsActivity = () => {
+    setIsPlayerControlsActive(true);
+    if (controlsFadeTimerRef.current !== null) {
+      window.clearTimeout(controlsFadeTimerRef.current);
+    }
+    controlsFadeTimerRef.current = window.setTimeout(() => {
+      setIsPlayerControlsActive(false);
+    }, 3000);
+  };
+
+  useEffect(() => {
+    if (isStreamUnlocked && activeStreamEp !== null) {
+      bumpPlayerControlsActivity();
+    }
+  }, [isStreamUnlocked, activeStreamEp]);
+
   const handleSeek = (deltaSeconds: number, feedbackLabel: string) => {
     if (resolvedPlayerSource?.type === 'iframe') {
       iframeRef.current?.focus();
@@ -1458,19 +1731,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
 
     if (videoRef.current) {
-      const nextTime = Math.max(0, videoRef.current.currentTime + deltaSeconds);
-      videoRef.current.currentTime = nextTime;
-      if (isExternalAudioActive && audioRef.current) {
-        try {
-          audioRef.current.currentTime = Math.max(0, nextTime + audioSyncOffset);
-        } catch {
-          // Ignore if audio metadata not ready
-        }
-      }
-      if (isSubtitleAudioOn && voiceEngineRef.current && parsedSubCues.length > 0) {
-        const nextCueIdx = parsedSubCues.findIndex((c) => nextTime >= c.start && nextTime <= c.end);
-        voiceEngineRef.current.handleSeek(nextCueIdx);
-      }
+      const vid = videoRef.current;
+      const nextTime = Math.max(0, vid.currentTime + deltaSeconds);
+      voiceEngineRef.current?.onSeekingStop();
+      vid.currentTime = nextTime;
+      syncAudioToVideo(!vid.paused, true);
+      syncSubtitleAndVoiceOnTime(nextTime, true, vid.paused);
       if (deltaSeconds === -10 || deltaSeconds === 10) {
         triggerSeekRipple(deltaSeconds < 0 ? 'left' : 'right');
       } else {
@@ -1489,6 +1755,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
+      voiceEngineRef.current?.setPlaybackRate(rate);
       if (isExternalAudioActive && audioRef.current) {
         audioRef.current.playbackRate = rate;
       }
@@ -1502,6 +1769,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       iframeRef.current?.focus();
       setIframeControlNotice(true);
       return;
+    }
+    if (asyncResolvedStream.key === asyncResolveKey && asyncResolvedStream.status === 'ready') {
+      const nextUrl = pickOkRuQualityUrl(
+        asyncResolvedStream.qualities,
+        asyncResolvedStream.hlsUrl,
+        qualityId
+      );
+      if (nextUrl && nextUrl !== asyncResolvedStream.src) {
+        const vid = videoRef.current;
+        const curTime = vid && Number.isFinite(vid.currentTime) ? vid.currentTime : 0;
+        const wasPlaying = vid ? !vid.paused : true;
+        pendingRestoreTimeRef.current = { time: curTime, shouldPlay: wasPlaying };
+        setIsVideoLoading(true);
+        setMediaErrorState(null);
+        setAsyncResolvedStream((prev) => ({ ...prev, src: nextUrl }));
+      }
     }
     const meta = QUALITY_OPTIONS.find((q) => q.id === qualityId);
     showHudFeedback(meta ? meta.hudText : `💎 Quality: ${qualityId}`);
@@ -1912,20 +2195,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return (
       <div
         ref={playerContainerRef}
-        onMouseEnter={() => setIsPlayerControlsActive(true)}
-        onMouseMove={() => setIsPlayerControlsActive(true)}
+        onMouseEnter={bumpPlayerControlsActivity}
+        onMouseMove={bumpPlayerControlsActivity}
         onMouseLeave={() => setIsPlayerControlsActive(false)}
-        onTouchStart={() => setIsPlayerControlsActive(true)}
+        onTouchStart={bumpPlayerControlsActivity}
         className="aspect-video w-full bg-black relative overflow-hidden flex items-center justify-center"
       >
         {/* Strict 16:9 Inner Stage Wrapper — locks subtitles & watermark strictly inside the 16:9 frame even in mobile portrait fullscreen */}
         <div className="relative w-full aspect-video max-h-full max-w-full my-auto mx-auto overflow-hidden bg-black flex items-center justify-center">
-          {/* Top-Left On-Screen Episode HUD Watermark Overlay — ONLY for Episode Series */}
+          {/* Top-Left Compact Episode Pill — auto-hides after 3 seconds when controls fade out */}
           {!isMovie &&
             drama.category !== 'Asian Movies' &&
             ((drama.totalEpisodes ?? 0) > 1 || activeTrackStreamables.length > 1) &&
             activeStreamEp !== null && (
-              <div className="absolute top-[3.5%] left-[3%] z-30 pointer-events-none select-none">
+              <div
+                className={`absolute top-[3.5%] left-[3%] z-30 pointer-events-none select-none transition-opacity duration-300 ${
+                  isPlayerControlsActive || !isVideoPlaying ? 'opacity-100' : 'opacity-0'
+                }`}
+              >
                 <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-black/75 backdrop-blur-md border border-white/20 shadow-[0_4px_20px_rgba(0,0,0,0.8)]">
                   <span className="relative flex items-center justify-center w-2 h-2">
                     <span className="absolute inline-flex h-full w-full rounded-full bg-[#e50914] animate-ping opacity-85" />
@@ -2164,8 +2451,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
               <video
                 ref={videoRef}
-                key={`${resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
-                src={resolvedPlayerSource.src}
+                key={`${effectiveVideoSrc || asyncResolveKey || resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
+                src={isHlsVideoSrc ? undefined : effectiveVideoSrc || undefined}
                 crossOrigin={!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
                 poster=""
                 controls
@@ -2196,9 +2483,26 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }
                     pendingRestoreTimeRef.current = null;
                   }
-                  syncAudioToVideo();
+                  syncAudioToVideo(false, true);
+                  syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
                 }}
                 onError={() => {
+                  // Auto-fallback from OK.ru progressive MP4 to proxied HLS manifest if available
+                  if (
+                    asyncResolvedStream.key === asyncResolveKey &&
+                    asyncResolvedStream.status === 'ready' &&
+                    asyncResolvedStream.hlsUrl &&
+                    asyncResolvedStream.src !== asyncResolvedStream.hlsUrl
+                  ) {
+                    const curTime = videoRef.current?.currentTime || 0;
+                    pendingRestoreTimeRef.current = { time: curTime, shouldPlay: true };
+                    setIsVideoLoading(true);
+                    setAsyncResolvedStream((prev) => ({
+                      ...prev,
+                      src: prev.hlsUrl || prev.src,
+                    }));
+                    return;
+                  }
                   setIsVideoLoading(false);
                   setIsVideoPlaying(false);
                   setMediaErrorState({
@@ -2213,16 +2517,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onPlay={() => {
                   lastPlaybackTickMsRef.current = Date.now();
-                  voiceEngineRef.current?.attachVideo(videoRef.current);
+                  bumpPlayerControlsActivity();
+                  const vid = videoRef.current;
+                  voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
+                  if (vid) {
+                    const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(vid.currentTime);
+                    activeCueRef.current = matchedCue;
+                    setActiveCue(matchedCue);
+                    voiceEngineRef.current?.syncResume(matchedIdx, upcomingIdx);
+                  }
                 }}
                 onPlaying={() => {
                   setIsVideoPlaying(true);
                   setIsVideoLoading(false);
                   setMediaErrorState((prev) => (prev?.source === 'video' ? null : prev));
                   lastPlaybackTickMsRef.current = Date.now();
-                  voiceEngineRef.current?.attachVideo(videoRef.current);
+                  const vid = videoRef.current;
+                  voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
+                  if (vid) {
+                    const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(vid.currentTime);
+                    activeCueRef.current = matchedCue;
+                    setActiveCue(matchedCue);
+                    voiceEngineRef.current?.syncResume(matchedIdx, upcomingIdx);
+                  }
                 }}
                 onPause={() => {
                   setIsVideoPlaying(false);
@@ -2234,24 +2553,33 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onWaiting={() => {
                   lastPlaybackTickMsRef.current = null;
+                  voiceEngineRef.current?.onPausedOrEnded();
                   if (audioRef.current && !audioRef.current.paused) {
                     audioRef.current.pause();
                   }
                 }}
                 onSeeking={() => {
-                  syncAudioToVideo(!videoRef.current?.paused);
+                  voiceEngineRef.current?.onSeekingStop();
+                  const vid = videoRef.current;
+                  syncAudioToVideo(!vid?.paused, true);
+                  if (vid) {
+                    const { matchedCue } = getSubtitleIndicesAtTime(vid.currentTime);
+                    activeCueRef.current = matchedCue;
+                    setActiveCue(matchedCue);
+                  }
                 }}
                 onSeeked={() => {
-                  syncAudioToVideo(!videoRef.current?.paused);
-                  if (videoRef.current && parsedSubCues.length > 0) {
-                    const tSeek = videoRef.current.currentTime;
-                    const seekCueIdx = parsedSubCues.findIndex((c) => tSeek >= c.start && tSeek <= c.end);
-                    voiceEngineRef.current?.handleSeek(seekCueIdx);
+                  const vid = videoRef.current;
+                  syncAudioToVideo(!vid?.paused, true);
+                  if (vid) {
+                    syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
                   }
                 }}
                 onRateChange={(e) => {
+                  const rate = e.currentTarget.playbackRate;
+                  voiceEngineRef.current?.setPlaybackRate(rate);
                   if (audioRef.current) {
-                    audioRef.current.playbackRate = e.currentTarget.playbackRate;
+                    audioRef.current.playbackRate = rate;
                   }
                 }}
                 onVolumeChange={(e) => {
@@ -2288,25 +2616,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   // 1. A-B Scene Looper
                   if (loopPointA !== null && loopPointB !== null && vid.currentTime >= loopPointB) {
                     vid.currentTime = loopPointA;
-                    if (isExternalAudioActive && audioRef.current) {
-                      try {
-                        audioRef.current.currentTime = Math.max(0, loopPointA + audioSyncOffset);
-                      } catch {}
-                    }
+                    syncAudioToVideo(!vid.paused, true);
                   }
 
                   // 2. Active Subtitle Cue Matcher + Neural Subtitle Voice Engine + Hard-Sub Detector
                   if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
-                    const tNow = vid.currentTime;
-                    const matchedIdx = parsedSubCues.findIndex((c) => tNow >= c.start && tNow <= c.end);
-                    const matchedCue = matchedIdx >= 0 ? parsedSubCues[matchedIdx] : null;
-                    if ((activeCueRef.current?.id ?? null) !== (matchedCue?.id ?? null)) {
-                      activeCueRef.current = matchedCue;
-                      setActiveCue(matchedCue);
-                      if (!vid.paused) {
-                        voiceEngineRef.current?.onActiveCueChanged(matchedIdx);
-                      }
-                    }
+                    syncSubtitleAndVoiceOnTime(vid.currentTime, false, vid.paused);
                     if (!vid.paused) {
                       detectLowerRegionHardSubs(vid);
                     }
@@ -2380,10 +2695,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       link.as = 'video';
                       link.href = nextMeta.src;
                       document.head.appendChild(link);
+                    } else if (nextMeta.asyncProvider?.provider === 'archive') {
+                      void resolveArchiveOrgDirectStream(nextMeta.asyncProvider.id);
+                    } else if (
+                      nextMeta.asyncProvider?.provider === 'okru' ||
+                      nextMeta.asyncProvider?.provider === 'vk'
+                    ) {
+                      void resolveOkRuOrVkNativeStream(nextMeta.asyncProvider.rawUrl);
                     }
                   }
 
-                  // 7. External Audio Sync
+                  // 7. External Audio Sync (> 0.25s drift auto-resync)
                   if (isExternalAudioActive && audioRef.current) {
                     const aud = audioRef.current;
                     if (!vid.paused) {

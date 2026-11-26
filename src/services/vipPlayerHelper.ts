@@ -417,10 +417,129 @@ export interface UniversalMirrorOption {
   url: string;
 }
 
+export interface AsyncStreamProviderMeta {
+  provider: 'archive' | 'okru' | 'vk';
+  id: string;
+  rawUrl: string;
+}
+
 export interface UniversalResolvedVideo {
   type: 'video' | 'iframe';
   src: string;
   mirrors: UniversalMirrorOption[];
+  asyncProvider?: AsyncStreamProviderMeta;
+}
+
+export interface ExtractedQualityStream {
+  quality: string;
+  label: string;
+  height: number;
+  url: string;
+  proxiedUrl: string;
+}
+
+export interface ExtractedNativeStreamResult {
+  ok: boolean;
+  provider?: 'okru' | 'vk';
+  id?: string;
+  title?: string;
+  hlsUrl?: string;
+  proxiedHlsUrl?: string;
+  streams: ExtractedQualityStream[];
+  error?: string;
+}
+
+const archiveOrgResolvedCache = new Map<string, string>();
+const okVkExtractedCache = new Map<string, ExtractedNativeStreamResult>();
+
+export async function resolveArchiveOrgDirectStream(identifier: string): Promise<string | null> {
+  const cleanId = decodeURIComponent((identifier || '').trim());
+  if (!cleanId) return null;
+  const cached = archiveOrgResolvedCache.get(cleanId);
+  if (cached) return cached;
+
+  try {
+    const resp = await fetch(`https://archive.org/metadata/${encodeURIComponent(cleanId)}`);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      files?: Array<{
+        name?: string;
+        format?: string;
+        height?: string | number;
+        width?: string | number;
+        size?: string | number;
+        source?: string;
+      }>;
+    };
+
+    const files = Array.isArray(data?.files) ? data.files : [];
+    const videoFiles = files.filter((f) => {
+      const name = (f.name || '').toLowerCase();
+      return /\.(mp4|m4v|webm|mkv|mov|ogv)$/i.test(name) && !name.includes('__ia_thumb');
+    });
+
+    if (videoFiles.length === 0) return null;
+
+    const scoreFile = (f: (typeof videoFiles)[number]): number => {
+      const name = (f.name || '').toLowerCase();
+      const format = (f.format || '').toLowerCase();
+      let score = 0;
+      if (name.endsWith('.mp4')) score += 100000;
+      else if (name.endsWith('.m4v') || name.endsWith('.webm')) score += 60000;
+      else if (name.endsWith('.mkv') || name.endsWith('.mov')) score += 30000;
+
+      if (format.includes('mpeg4') || format.includes('h.264') || format.includes('mp4')) score += 25000;
+      if (f.source === 'derivative' && name.endsWith('.mp4')) score += 5000;
+      const height = Number(f.height) || 0;
+      score += height * 10;
+      const sizeMb = Math.min(4000, (Number(f.size) || 0) / (1024 * 1024));
+      score += sizeMb;
+      return score;
+    };
+
+    videoFiles.sort((a, b) => scoreFile(b) - scoreFile(a));
+    const best = videoFiles[0];
+    if (!best?.name) return null;
+
+    const encodedFilePath = best.name
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const directUrl = `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
+    archiveOrgResolvedCache.set(cleanId, directUrl);
+    return directUrl;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveOkRuOrVkNativeStream(
+  rawUrl: string,
+  bypassCache = false
+): Promise<ExtractedNativeStreamResult> {
+  const key = rawUrl.trim();
+  if (!bypassCache && okVkExtractedCache.has(key)) {
+    return okVkExtractedCache.get(key)!;
+  }
+  try {
+    const resp = await fetch(`/api/okru-stream?url=${encodeURIComponent(key)}`);
+    const data = (await resp.json()) as ExtractedNativeStreamResult;
+    if (data && data.ok) {
+      okVkExtractedCache.set(key, data);
+      return data;
+    }
+    return {
+      ok: false,
+      streams: [],
+      error: data?.error || 'Could not extract direct stream URL',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      streams: [],
+      error: err instanceof Error ? err.message : 'Extractor network error',
+    };
+  }
 }
 
 export function normalizeUniversalAssetUrl(rawUrl: string): string {
@@ -438,11 +557,11 @@ export function normalizeUniversalAssetUrl(rawUrl: string): string {
     trimmed = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}/${ghBlobMatch[3]}`;
   }
 
-  // 3. Archive.org /details/<id>(/<file>)? -> /download/<id>(/<file>)?
-  const archiveDetailsMatch = trimmed.match(/^https?:\/\/archive\.org\/details\/([^/?#]+)(\/[^?#]+)?/i);
-  if (archiveDetailsMatch) {
-    const id = archiveDetailsMatch[1];
-    const filePart = archiveDetailsMatch[2] || '';
+  // 3. Archive.org /details/ or /embed/ <id>(/<file>)? -> /download/<id>(/<file>)?
+  const archiveMatch = trimmed.match(/^https?:\/\/(?:www\.)?archive\.org\/(?:details|embed|download)\/([^/?#]+)(\/[^?#]+)?/i);
+  if (archiveMatch) {
+    const id = archiveMatch[1];
+    const filePart = archiveMatch[2] || '';
     trimmed = `https://archive.org/download/${id}${filePart}`;
   }
 
@@ -467,22 +586,26 @@ export function resolveUniversalVideoSource(rawUrl: string, mirrorIndex = 0): Un
     trimmed = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}/${ghBlobMatch[3]}`;
   }
 
-  // Convert Archive.org /details/ to /download/ (direct playable stream)
-  const archiveDetailsMatch = trimmed.match(/^https?:\/\/archive\.org\/details\/([^/?#]+)(\/[^?#]+)?/i);
-  if (archiveDetailsMatch) {
-    const id = archiveDetailsMatch[1];
-    const filePart = archiveDetailsMatch[2] || '';
-    if (filePart && filePart !== '/') {
-      trimmed = `https://archive.org/download/${id}${filePart}`;
-    } else {
-      // Embed fallback when user pastes item root URL without filename
-      const embedSrc = `https://archive.org/embed/${id}`;
-      return {
-        type: 'iframe',
-        src: embedSrc,
-        mirrors: [{ label: '🏛️ Archive.org Embed', url: embedSrc }],
-      };
+  // Archive.org -> ALWAYS resolve to native HTML5 <video> stream (NEVER archive.org/embed/ iframe)
+  const archiveMatch = trimmed.match(
+    /^https?:\/\/(?:[\w-]+\.)?archive\.org\/(?:details|embed|download|stream)\/([^/?#]+)(\/[^?#]+)?/i
+  );
+  if (archiveMatch) {
+    const id = archiveMatch[1];
+    const filePart = archiveMatch[2] || '';
+    const hasDirectVideoFile =
+      Boolean(filePart && filePart !== '/') &&
+      /\.(mp4|m4v|m3u8|webm|ogg|mkv|mov)$/i.test(filePart.split(/[?#]/)[0]);
+    if (hasDirectVideoFile) {
+      const directDownloadUrl = `https://archive.org/download/${id}${filePart}`;
+      return { type: 'video', src: directDownloadUrl, mirrors: [] };
     }
+    return {
+      type: 'video',
+      src: '',
+      mirrors: [],
+      asyncProvider: { provider: 'archive', id, rawUrl: trimmed },
+    };
   }
 
   if (!/^https?:\/\//i.test(trimmed)) {
@@ -606,18 +729,26 @@ export function resolveUniversalVideoSource(rawUrl: string, mirrorIndex = 0): Un
     };
   }
 
-  // OK.ru link -> /videoembed/
-  const okMatch = trimmed.match(/ok\.ru\/(?:video|videoembed)\/(\d+)/i);
+  // OK.ru link -> Native HTML5 Video Extractor via /api/okru-stream + /api/okru-proxy
+  const okMatch = trimmed.match(/(?:ok\.ru|odnoklassniki\.ru)\/(?:video|videoembed|live)\/(\d+)/i);
   if (okMatch) {
-    const src = `https://ok.ru/videoembed/${okMatch[1]}?autoplay=1`;
-    return { type: 'iframe', src, mirrors: [{ label: '🇮🇳 OK.ru HD Server', url: src }] };
+    return {
+      type: 'video',
+      src: '',
+      mirrors: [],
+      asyncProvider: { provider: 'okru', id: okMatch[1], rawUrl: trimmed },
+    };
   }
 
-  // VK Video (vk.com/video-123_456 or vkvideo.ru/video-123_456) -> video_ext.php
-  const vkMatch = trimmed.match(/(?:vk\.com|vkvideo\.ru)\/video(-?\d+)_(\d+)/i);
+  // VK Video link -> Native HTML5 Video Extractor via /api/okru-stream + /api/okru-proxy
+  const vkMatch = trimmed.match(/(?:vk\.com|vkvideo\.ru)\/video(-?\d+_\d+)/i);
   if (vkMatch) {
-    const src = `https://vk.com/video_ext.php?oid=${vkMatch[1]}&id=${vkMatch[2]}&hd=2`;
-    return { type: 'iframe', src, mirrors: [{ label: '🎬 VK Video HD', url: src }] };
+    return {
+      type: 'video',
+      src: '',
+      mirrors: [],
+      asyncProvider: { provider: 'vk', id: vkMatch[1], rawUrl: trimmed },
+    };
   }
 
   // Mega.nz link -> /embed/

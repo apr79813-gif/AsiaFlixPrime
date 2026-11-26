@@ -38,7 +38,7 @@ export const AnimatedChannelLogo: React.FC<AnimatedChannelLogoProps> = ({
             opacity: 0.92,
             filter: 'drop-shadow(0 0 10px rgba(229, 9, 20, 0.55)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.85))',
           }}
-          className="h-[28px] md:h-[42px] w-auto object-contain block"
+          className="h-[28px] md:h-[40px] w-auto object-contain block"
         />
         <div
           aria-hidden="true"

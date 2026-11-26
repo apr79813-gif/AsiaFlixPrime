@@ -321,16 +321,20 @@ export class SubtitleVoiceEngine {
     }
   }
 
-  public enable(currentCueIndex: number): void {
+  public enable(currentCueIndex: number, upcomingCueIndex?: number, isPaused = false): void {
     this.enabled = true;
     this.generationId++;
+    this.turnQueue = [];
+    this.queuedCueKeys.clear();
     this.ensureAudioContext();
     if (this.attachedVideo && !this.isExternalAudioMode) {
       this.originalVideoVolume = this.attachedVideo.volume || 1;
     }
     this.applyBgmDucking(false);
-    this.prefetchAround(currentCueIndex);
-    if (currentCueIndex >= 0 && currentCueIndex < this.cues.length) {
+    const lookaheadStart =
+      currentCueIndex >= 0 ? currentCueIndex : Math.max(0, upcomingCueIndex ?? 0);
+    this.prefetchAround(lookaheadStart);
+    if (!isPaused && currentCueIndex >= 0 && currentCueIndex < this.cues.length) {
       this.enqueueCue(currentCueIndex);
     }
   }
@@ -344,23 +348,52 @@ export class SubtitleVoiceEngine {
     this.restoreVideoAudio();
   }
 
-  public handleSeek(newCueIndex: number): void {
+  public onSeekingStop(): void {
     this.generationId++;
     this.turnQueue = [];
     this.queuedCueKeys.clear();
     this.stopCurrentSpeechOnly();
     if (this.enabled) {
       this.applyBgmDucking(false);
-      this.prefetchAround(newCueIndex);
-      if (newCueIndex >= 0 && newCueIndex < this.cues.length) {
+    }
+  }
+
+  public handleSeek(newCueIndex: number, upcomingCueIndex?: number, isPaused = false): void {
+    this.generationId++;
+    this.turnQueue = [];
+    this.queuedCueKeys.clear();
+    this.stopCurrentSpeechOnly();
+    if (this.enabled) {
+      this.applyBgmDucking(false);
+      const lookaheadStart =
+        newCueIndex >= 0 ? newCueIndex : Math.max(0, upcomingCueIndex ?? 0);
+      this.prefetchAround(lookaheadStart);
+      if (!isPaused && newCueIndex >= 0 && newCueIndex < this.cues.length) {
         this.enqueueCue(newCueIndex);
       }
     }
   }
 
+  public syncResume(currentCueIndex: number, upcomingCueIndex?: number): void {
+    if (!this.enabled) return;
+    const lookaheadStart =
+      currentCueIndex >= 0 ? currentCueIndex : Math.max(0, upcomingCueIndex ?? 0);
+    this.prefetchAround(lookaheadStart);
+    if (
+      currentCueIndex >= 0 &&
+      currentCueIndex < this.cues.length &&
+      !this.isSpeaking &&
+      this.turnQueue.length === 0
+    ) {
+      this.enqueueCue(currentCueIndex);
+    }
+  }
+
   public onPausedOrEnded(): void {
+    this.generationId++;
     this.stopCurrentSpeechOnly();
     this.turnQueue = [];
+    this.queuedCueKeys.clear();
     if (this.enabled) {
       this.applyBgmDucking(false);
     }
@@ -385,7 +418,9 @@ export class SubtitleVoiceEngine {
 
   public onActiveCueChanged(cueIndex: number): void {
     if (!this.enabled) return;
-    this.prefetchAround(cueIndex);
+    if (cueIndex >= 0) {
+      this.prefetchAround(cueIndex);
+    }
     if (cueIndex >= 0 && cueIndex < this.cues.length) {
       // NEVER abort an actively speaking line mid-sentence: always queue seamlessly!
       this.enqueueCue(cueIndex);

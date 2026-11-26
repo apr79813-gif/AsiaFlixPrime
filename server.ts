@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { Readable } from 'node:stream';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
 import { createServer as createViteServer, ViteDevServer } from 'vite';
 
@@ -576,6 +578,378 @@ async function startServer(): Promise<void> {
       res.send(Buffer.from(arr));
     } catch {
       res.status(400).send('Blocked or unreachable image URL');
+    }
+  });
+
+  // 2B. OK.ru & VK Native Video Extractor (/api/okru-stream)
+  const OKRU_DESKTOP_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+  const ALLOWED_VIDEO_PROXY_HOSTS = [
+    'ok.ru',
+    'okcdn.ru',
+    'mycdn.me',
+    'mail.ru',
+    'vk.com',
+    'vkvideo.ru',
+    'vkuser.net',
+    'vkuservideo.net',
+    'vk-cdn.net',
+    'userapi.com',
+    'vk.me',
+    'archive.org',
+  ];
+
+  const isAllowedMediaProxyHost = (hostname: string): boolean => {
+    const h = hostname.toLowerCase();
+    return ALLOWED_VIDEO_PROXY_HOSTS.some((suffix) => h === suffix || h.endsWith(`.${suffix}`));
+  };
+
+  const decodeEntities = (str: string): string =>
+    str
+      .replace(/&quot;/g, '"')
+      .replace(/&#34;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+
+  const collectCookiePairsFromHeaders = (headers: Headers): string => {
+    const anyH = headers as unknown as { getSetCookie?: () => string[] };
+    const list: string[] =
+      typeof anyH.getSetCookie === 'function'
+        ? anyH.getSetCookie()
+        : headers.get('set-cookie')
+          ? [headers.get('set-cookie') as string]
+          : [];
+    const pairs: string[] = [];
+    for (const raw of list) {
+      const segments = raw.split(/,(?=\s*[A-Za-z0-9_.-]+=)/g);
+      for (const seg of segments) {
+        const nv = seg.split(';')[0]?.trim();
+        if (nv && nv.includes('=')) pairs.push(nv);
+      }
+    }
+    return pairs.join('; ');
+  };
+
+  const buildVideoProxyUrl = (targetUrl: string, ckToken: string, ref?: string): string => {
+    const qs = new URLSearchParams();
+    qs.set('url', targetUrl);
+    if (ckToken) qs.set('ck', ckToken);
+    if (ref) qs.set('ref', ref);
+    return `/api/okru-proxy?${qs.toString()}`;
+  };
+
+  const mapOkStreamQuality = (name: string): { quality: string; label: string; height: number } => {
+    const n = (name || '').toLowerCase();
+    if (n === 'ultra' || n === 'quad') return { quality: 'full', label: '1080p FHD (Ultra)', height: 2160 };
+    if (n === 'full' || n === '1080') return { quality: 'full', label: '1080p FHD', height: 1080 };
+    if (n === 'hd' || n === '720') return { quality: 'hd', label: '720p HD', height: 720 };
+    if (n === 'sd' || n === '480') return { quality: 'sd', label: '480p Saver', height: 480 };
+    if (n === 'low' || n === '360') return { quality: 'low', label: '360p', height: 360 };
+    if (n === 'lowest' || n === 'mobile' || n === '240' || n === '144') {
+      return { quality: 'lowest', label: '240p', height: 240 };
+    }
+    return { quality: n || 'sd', label: n.toUpperCase() || 'HD', height: 480 };
+  };
+
+  app.get('/api/okru-stream', async (req: Request, res: Response) => {
+    try {
+      const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+      const rawId = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+
+      let okId = rawId && /^\d+$/.test(rawId) ? rawId : '';
+      if (!okId && rawUrl) {
+        const okMatch = rawUrl.match(/(?:ok\.ru|odnoklassniki\.ru)\/(?:video|videoembed|live)\/(\d+)/i);
+        if (okMatch) okId = okMatch[1];
+      }
+
+      if (okId) {
+        const embedUrl = `https://ok.ru/videoembed/${okId}`;
+        const upstream = await fetch(embedUrl, {
+          headers: {
+            'User-Agent': OKRU_DESKTOP_UA,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://ok.ru/',
+          },
+        });
+        if (!upstream.ok) {
+          res.status(502).json({ ok: false, error: `OK.ru returned status ${upstream.status}` });
+          return;
+        }
+        const cookieStr = collectCookiePairsFromHeaders(upstream.headers);
+        const ckToken = cookieStr ? Buffer.from(cookieStr, 'utf8').toString('base64url') : '';
+        const html = await upstream.text();
+        const optMatch = html.match(/data-options="([^"]+)"/i) || html.match(/data-options='([^']+)'/i);
+        if (!optMatch) {
+          res.status(404).json({ ok: false, error: 'OK.ru player metadata not found' });
+          return;
+        }
+        const optionsObj = JSON.parse(decodeEntities(optMatch[1])) as Record<string, unknown>;
+        const flashvars = (optionsObj.flashvars as Record<string, unknown> | undefined) || {};
+        let metadata: Record<string, unknown> | null = null;
+        if (typeof flashvars.metadata === 'string' && flashvars.metadata.trim()) {
+          metadata = JSON.parse(flashvars.metadata) as Record<string, unknown>;
+        } else if (flashvars.metadata && typeof flashvars.metadata === 'object') {
+          metadata = flashvars.metadata as Record<string, unknown>;
+        }
+        if (!metadata && typeof flashvars.metadataUrl === 'string' && flashvars.metadataUrl.startsWith('http')) {
+          const metaResp = await fetch(flashvars.metadataUrl, {
+            method: 'POST',
+            headers: {
+              'User-Agent': OKRU_DESKTOP_UA,
+              Referer: embedUrl,
+              ...(cookieStr ? { Cookie: cookieStr } : {}),
+            },
+          });
+          if (metaResp.ok) {
+            metadata = (await metaResp.json()) as Record<string, unknown>;
+          }
+        }
+        if (!metadata) {
+          res.status(404).json({ ok: false, error: 'OK.ru flashvars metadata unavailable' });
+          return;
+        }
+
+        const hlsManifestUrl =
+          (typeof metadata.hlsManifestUrl === 'string' && metadata.hlsManifestUrl) ||
+          (typeof metadata.ondemandHls === 'string' && metadata.ondemandHls) ||
+          (typeof metadata.hlsMasterPlaylistUrl === 'string' && metadata.hlsMasterPlaylistUrl) ||
+          '';
+
+        const rawVideos = Array.isArray(metadata.videos) ? metadata.videos : [];
+        const streams: Array<{ quality: string; label: string; height: number; url: string; proxiedUrl: string }> = [];
+        const seenQ = new Set<string>();
+        for (const item of rawVideos) {
+          if (!item || typeof item !== 'object') continue;
+          const rec = item as Record<string, unknown>;
+          const u = typeof rec.url === 'string' ? rec.url.trim() : '';
+          const nm = typeof rec.name === 'string' ? rec.name.trim() : '';
+          if (!u || !/^https?:\/\//i.test(u)) continue;
+          const mapped = mapOkStreamQuality(nm);
+          if (seenQ.has(mapped.quality)) continue;
+          seenQ.add(mapped.quality);
+          streams.push({
+            quality: mapped.quality,
+            label: mapped.label,
+            height: mapped.height,
+            url: u,
+            proxiedUrl: buildVideoProxyUrl(u, ckToken, 'https://ok.ru/'),
+          });
+        }
+        streams.sort((a, b) => b.height - a.height);
+
+        if (streams.length === 0 && !hlsManifestUrl) {
+          res.status(404).json({ ok: false, error: 'No playable MP4 or HLS stream found on OK.ru' });
+          return;
+        }
+
+        const movieObj = (metadata.movie as Record<string, unknown> | undefined) || {};
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.json({
+          ok: true,
+          provider: 'okru',
+          id: okId,
+          title: typeof movieObj.title === 'string' ? movieObj.title : '',
+          hlsUrl: hlsManifestUrl || undefined,
+          proxiedHlsUrl: hlsManifestUrl ? buildVideoProxyUrl(hlsManifestUrl, ckToken, 'https://ok.ru/') : undefined,
+          streams,
+        });
+        return;
+      }
+
+      const vkMatch = rawUrl.match(/(?:vk\.com|vkvideo\.ru)\/video(-?\d+)_(\d+)/i);
+      if (vkMatch) {
+        const embedUrl = `https://vk.com/video_ext.php?oid=${vkMatch[1]}&id=${vkMatch[2]}&hd=2`;
+        const upstream = await fetch(embedUrl, {
+          headers: {
+            'User-Agent': OKRU_DESKTOP_UA,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://vk.com/',
+          },
+        });
+        if (!upstream.ok) {
+          res.status(502).json({ ok: false, error: `VK returned status ${upstream.status}` });
+          return;
+        }
+        const cookieStr = collectCookiePairsFromHeaders(upstream.headers);
+        const ckToken = cookieStr ? Buffer.from(cookieStr, 'utf8').toString('base64url') : '';
+        const html = await upstream.text();
+
+        const qpList = [
+          { key: 'url2160', quality: 'full', label: '2160p 4K', height: 2160 },
+          { key: 'url1440', quality: 'full', label: '1440p QHD', height: 1440 },
+          { key: 'url1080', quality: 'full', label: '1080p FHD', height: 1080 },
+          { key: 'url720', quality: 'hd', label: '720p HD', height: 720 },
+          { key: 'url480', quality: 'sd', label: '480p Saver', height: 480 },
+          { key: 'url360', quality: 'low', label: '360p', height: 360 },
+          { key: 'url240', quality: 'lowest', label: '240p', height: 240 },
+        ];
+        const streams: Array<{ quality: string; label: string; height: number; url: string; proxiedUrl: string }> = [];
+        const seenQ = new Set<string>();
+        for (const qp of qpList) {
+          const m = html.match(new RegExp(`"${qp.key}"\\s*:\\s*"([^"]+)"`, 'i'));
+          if (m?.[1]) {
+            const cleanUrl = m[1].replace(/\\\//g, '/').replace(/\\u0026/g, '&');
+            if (/^https?:\/\//i.test(cleanUrl) && !seenQ.has(qp.quality)) {
+              seenQ.add(qp.quality);
+              streams.push({
+                quality: qp.quality,
+                label: qp.label,
+                height: qp.height,
+                url: cleanUrl,
+                proxiedUrl: buildVideoProxyUrl(cleanUrl, ckToken, 'https://vk.com/'),
+              });
+            }
+          }
+        }
+        const hlsMatch =
+          html.match(/"hls(?:_ondemand)?"\s*:\s*"([^"]+\.m3u8[^"]*)"/i) ||
+          html.match(/"hls_live"\s*:\s*"([^"]+\.m3u8[^"]*)"/i);
+        const hlsUrl = hlsMatch?.[1] ? hlsMatch[1].replace(/\\\//g, '/').replace(/\\u0026/g, '&') : '';
+
+        if (streams.length === 0 && !hlsUrl) {
+          res.status(404).json({ ok: false, error: 'No direct MP4/HLS streams exposed on VK' });
+          return;
+        }
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.json({
+          ok: true,
+          provider: 'vk',
+          id: `${vkMatch[1]}_${vkMatch[2]}`,
+          hlsUrl: hlsUrl || undefined,
+          proxiedHlsUrl: hlsUrl ? buildVideoProxyUrl(hlsUrl, ckToken, 'https://vk.com/') : undefined,
+          streams,
+        });
+        return;
+      }
+
+      res.status(400).json({ ok: false, error: 'Unsupported OK.ru or VK video URL' });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Extractor error' });
+    }
+  });
+
+  // 2C. OK.ru / VK CORS + Byte-Range + HLS Video Proxy (/api/okru-proxy)
+  app.options('/api/okru-proxy', (_req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+    res.status(204).end();
+  });
+
+  app.get('/api/okru-proxy', async (req: Request, res: Response) => {
+    const rawTarget = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    const ckToken = typeof req.query.ck === 'string' ? req.query.ck.trim() : '';
+    const refParam = typeof req.query.ref === 'string' && req.query.ref.trim() ? req.query.ref.trim() : 'https://ok.ru/';
+
+    if (!rawTarget || rawTarget.length > 2500) {
+      res.status(400).send('Invalid url');
+      return;
+    }
+
+    try {
+      const parsed = await assertSafePublicUrl(rawTarget);
+      if (!isAllowedMediaProxyHost(parsed.hostname)) {
+        res.status(403).send('Forbidden media host');
+        return;
+      }
+
+      const headers: Record<string, string> = {
+        'User-Agent': OKRU_DESKTOP_UA,
+        Accept: '*/*',
+        Referer: refParam,
+      };
+      const rangeHeader = req.headers.range;
+      if (rangeHeader) headers.Range = rangeHeader;
+      if (ckToken) {
+        try {
+          const decodedCk = Buffer.from(ckToken, 'base64url').toString('utf8');
+          if (decodedCk) headers.Cookie = decodedCk;
+        } catch {
+          // ignore invalid cookie token
+        }
+      }
+
+      const upstream = await fetch(parsed.toString(), { headers, redirect: 'follow' });
+      if (!upstream.ok && upstream.status !== 206) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.status(upstream.status).send(`Upstream error (${upstream.status})`);
+        return;
+      }
+
+      const ct = upstream.headers.get('content-type') || 'application/octet-stream';
+      const isHlsPlaylist =
+        ct.toLowerCase().includes('mpegurl') || parsed.pathname.toLowerCase().endsWith('.m3u8');
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+      res.setHeader('Accept-Ranges', upstream.headers.get('accept-ranges') || 'bytes');
+
+      if (isHlsPlaylist) {
+        const text = await upstream.text();
+        const wrapUrl = (target: string): string => {
+          const resolved = new URL(target, parsed).toString();
+          return buildVideoProxyUrl(resolved, ckToken, refParam);
+        };
+        const rewritten = text
+          .split(/\r?\n/)
+          .map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return line;
+            if (trimmed.startsWith('#')) {
+              return line.replace(/URI="([^"]+)"/gi, (_m, uri) => {
+                try {
+                  return `URI="${wrapUrl(uri)}"`;
+                } catch {
+                  return `URI="${uri}"`;
+                }
+              });
+            }
+            try {
+              return wrapUrl(trimmed);
+            } catch {
+              return line;
+            }
+          })
+          .join('\n');
+        res.status(200);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.send(rewritten);
+        return;
+      }
+
+      res.status(upstream.status);
+      res.setHeader('Content-Type', ct);
+      const contentRange = upstream.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      const contentLength = upstream.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      if (upstream.body) {
+        const nodeStream = Readable.fromWeb(upstream.body as unknown as WebReadableStream<Uint8Array>);
+        req.on('close', () => {
+          nodeStream.destroy();
+        });
+        nodeStream.pipe(res);
+      } else {
+        res.end();
+      }
+    } catch {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.status(502).send('Blocked or unreachable media stream');
     }
   });
 

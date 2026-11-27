@@ -3762,24 +3762,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           />
         )}
 
-        {/* 1A. Mobile Pre-Playback Banner Header */}
+        {/* 1A. Mobile Pre-Playback Hero Cover Header (Clean, Breathable, Non-Congested) */}
         {!isPlayerActive && (
           <div className="relative w-full overflow-hidden bg-zinc-950">
             <img
               src={drama.backdrop || drama.poster}
               alt={drama.title}
               referrerPolicy="no-referrer"
-              className="absolute inset-0 w-full h-full object-cover object-center filter brightness-[0.38]"
+              className="absolute inset-0 w-full h-full object-cover object-center filter brightness-[0.42]"
               onError={(e) => {
                 (e.target as HTMLImageElement).src =
                   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200';
               }}
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#07070b] via-[#07070b]/65 to-black/30" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#07070b] via-[#07070b]/75 to-black/25" />
 
-            <div className="relative z-10 p-3 pt-6 flex flex-col gap-2.5">
-              {/* Compact Metadata Pills */}
-              <div className="flex flex-wrap items-center gap-1">
+            <div className="relative z-10 p-4 sm:p-6 pt-8 flex flex-col gap-3">
+              {/* Compact Metadata Pills in Neat Single Wrap Row */}
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="bg-[#e50914] text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
                   {drama.category}
                 </span>
@@ -3792,11 +3792,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       </span>
                     );
                   })()}
-                {drama.subCategory && (
-                  <span className="bg-white/10 text-zinc-200 text-[10px] font-semibold px-2 py-0.5 rounded">
-                    {drama.subCategory}
-                  </span>
-                )}
                 <span className="bg-white/10 text-zinc-200 text-[10px] font-semibold px-2 py-0.5 rounded">
                   {drama.releaseYear}
                 </span>
@@ -3816,30 +3811,33 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 )}
               </div>
 
-              <div>
-                <h2 className="text-lg font-extrabold text-white tracking-tight leading-tight">
+              {/* Series Title + Subtle Genres Text Line */}
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight">
                   {drama.title}
                 </h2>
-                {drama.originalTitle && (
-                  <p className="text-zinc-400 text-xs font-medium mt-0.5">{drama.originalTitle}</p>
+                {(drama.subCategory || drama.originalTitle) && (
+                  <p className="text-xs text-gray-300 font-medium leading-snug">
+                    {[drama.subCategory, drama.originalTitle].filter(Boolean).join(' · ')}
+                  </p>
                 )}
               </div>
 
-              {/* Compact Saved Resume Pill (when applicable) */}
+              {/* Compact Saved Resume CTA when viewer has unfinished progress */}
               {savedDramaProgress && savedDramaProgress.currentTime >= 2 && (
                 <button
                   onClick={handleResumeSavedProgress}
-                  className="w-full py-1.5 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-black text-[11px] font-extrabold flex items-center justify-center gap-1.5 shadow cursor-pointer"
+                  className="w-full h-10 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-black text-xs font-extrabold flex items-center justify-center gap-2 shadow cursor-pointer"
                 >
-                  <Play className="w-3 h-3 fill-black" />
+                  <Play className="w-3.5 h-3.5 fill-black" />
                   <span>
-                    Resume Ep {savedDramaProgress.ep} ({formatTimeSeconds(savedDramaProgress.currentTime)})
+                    Continue Ep {savedDramaProgress.ep} ({formatTimeSeconds(savedDramaProgress.currentTime)})
                   </span>
                 </button>
               )}
 
-              {/* 3 Primary Action Buttons in ONE Single Compact Horizontal Row */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+              {/* Sleek Action Bar: Primary Solid-Red Pill + Compact Balanced Secondary 3-Button Row */}
+              <div className="flex flex-col gap-2 pt-0.5">
                 {heroStreamTarget && (
                   <button
                     onClick={(e) =>
@@ -3850,38 +3848,56 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         e
                       )
                     }
-                    className="flex-1 min-w-0 bg-[#e50914] hover:bg-[#f6121d] text-white text-[11px] font-bold py-2 px-2.5 rounded-lg flex items-center justify-center gap-1 shadow-[0_0_14px_rgba(229,9,20,0.4)] cursor-pointer whitespace-nowrap"
+                    className="w-full h-11 rounded-xl bg-[#e50914] hover:bg-[#f6121d] text-white font-bold text-sm shadow-lg shadow-red-600/25 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99]"
                   >
-                    <Play className="w-3 h-3 fill-white shrink-0" />
+                    <Play className="w-4 h-4 fill-white shrink-0" />
                     <span className="truncate">
-                      {isMovie ? 'Stream Online in HD' : `Stream Online in HD (Ep ${heroStreamTarget.ep.epNum})`}
+                      {isMovie ? 'Play Movie (HD)' : `Play Episode ${heroStreamTarget.ep.epNum} (HD)`}
                     </span>
                   </button>
                 )}
 
-                {currentAudioLink && (
-                  <a
-                    href={currentAudioLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white text-[11px] font-bold py-2 px-2.5 rounded-lg flex items-center justify-center gap-1 shadow whitespace-nowrap"
-                  >
-                    <Send className="w-3 h-3 shrink-0" />
-                    <span>Open in Telegram</span>
-                  </a>
-                )}
-
-                <button
-                  onClick={handleShare}
-                  className={`shrink-0 border text-[11px] font-bold py-2 px-2.5 rounded-lg flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
-                    copied
-                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
-                      : 'bg-white/[0.08] border-white/20 text-white'
+                <div
+                  className={`grid gap-2 ${
+                    currentAudioLink ? 'grid-cols-3' : 'grid-cols-2'
                   }`}
                 >
-                  {copied ? <Check className="w-3 h-3 text-emerald-400 shrink-0" /> : <Link2 className="w-3 h-3 shrink-0" />}
-                  <span>{copied ? 'Copied!' : 'Copy Series Link'}</span>
-                </button>
+                  {currentAudioLink && (
+                    <a
+                      href={currentAudioLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-9 text-xs font-semibold rounded-lg bg-gradient-to-r from-[#e50914]/20 to-[#ff2b54]/20 hover:from-[#e50914]/35 hover:to-[#ff2b54]/35 border border-[#ff2b54]/45 text-pink-100 flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <Send className="w-3.5 h-3.5 shrink-0 text-pink-300" />
+                      <span>Telegram</span>
+                    </a>
+                  )}
+
+                  <button
+                    onClick={() => onToggleWatchlist(drama)}
+                    className={`h-9 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      isWatchlisted
+                        ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                        : 'bg-white/[0.07] hover:bg-white/[0.12] border-white/15 text-white'
+                    }`}
+                  >
+                    <Bookmark className={`w-3.5 h-3.5 shrink-0 ${isWatchlisted ? 'fill-amber-400 text-amber-400' : ''}`} />
+                    <span>{isWatchlisted ? 'Saved' : '+ Watchlist'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleShare}
+                    className={`h-9 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      copied
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                        : 'bg-white/[0.07] hover:bg-white/[0.12] border-white/15 text-white'
+                    }`}
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> : <Link2 className="w-3.5 h-3.5 shrink-0" />}
+                    <span>{copied ? 'Copied!' : 'Share Link'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4247,16 +4263,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   return (
                     <div
                       key={`mob-ep-${ep.id}`}
-                      className={`flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#0e1017] border transition-colors ${
+                      className={`flex items-center gap-3 p-2.5 rounded-xl bg-[#10121c] border transition-colors ${
                         isCurrentlyPlaying
-                          ? 'border-[#e50914] shadow-[0_0_16px_rgba(229,9,20,0.2)]'
-                          : 'border-white/10 hover:border-red-500/40'
+                          ? 'border-[#e50914] shadow-[0_0_16px_rgba(229,9,20,0.22)]'
+                          : 'border-white/[0.08] hover:border-red-500/40'
                       }`}
                     >
-                      {/* Left: Crisp 16:9 Episode Thumbnail + EP X badge */}
+                      {/* Left: 16:9 Thumbnail with centered subtle play & EP X badge */}
                       <div
                         onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                        className="w-24 h-14 sm:w-28 sm:h-16 rounded-lg flex-shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
+                        className="w-28 h-16 rounded-lg flex-shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
                       >
                         <img
                           src={epCustomThumbnail}
@@ -4267,9 +4283,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           }`}
                         />
                         {hasStreamLink && (
-                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                            <div className="w-6 h-6 rounded-full bg-[#e50914]/90 flex items-center justify-center shadow">
-                              <Play className="w-3 h-3 text-white fill-white ml-0.5" />
+                          <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                            <div className="w-7 h-7 rounded-full bg-[#e50914]/90 flex items-center justify-center shadow">
+                              <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
                             </div>
                           </div>
                         )}
@@ -4278,14 +4294,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </span>
                       </div>
 
-                      {/* Center: Clean Title + Track Subtitle */}
+                      {/* Center: Readable Episode Title + Audio/Quality Tag */}
                       <div className="flex-1 min-w-0">
                         <h4
-                          className={`text-[13px] sm:text-sm font-bold text-white leading-snug line-clamp-1 ${
+                          onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
+                          className={`text-xs sm:text-sm font-bold text-white line-clamp-2 leading-snug cursor-pointer ${
                             isSpoilerBlurred ? 'blur-sm select-none' : ''
                           }`}
                         >
-                          Episode {numericEp} — {drama.title}
+                          {ep.title && !/^ep(isode)?\s*\d+$/i.test(ep.title.trim())
+                            ? `Episode ${numericEp} • ${ep.title}`
+                            : `Episode ${numericEp} — ${drama.title}`}
                         </h4>
                         <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
                           <p className="text-[11px] text-emerald-400 font-medium truncate">
@@ -4313,12 +4332,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         )}
                       </div>
 
-                      {/* Right: Compact Play + Telegram Pills */}
+                      {/* Right: Compact Side-by-Side Action Buttons */}
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         {hasStreamLink && (
                           <button
                             onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                            className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-bold px-3 py-2 rounded-lg shadow whitespace-nowrap flex items-center gap-1 cursor-pointer"
+                            className="bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow whitespace-nowrap flex items-center gap-1 cursor-pointer"
                           >
                             <Play className="w-3 h-3 fill-white" />
                             <span>Play</span>
@@ -4329,7 +4348,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             href={ep.telegramUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="bg-white/10 hover:bg-white/20 text-white text-xs px-2.5 py-2 rounded-lg border border-white/15 flex items-center justify-center"
+                            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs border border-white/10 flex items-center justify-center"
                             title="Open on Telegram"
                           >
                             🚀

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search } from 'lucide-react';
+import { Home, Search, Flame, Bookmark, Menu } from 'lucide-react';
 
 interface MobileBottomNavProps {
   onGoHome: () => void;
@@ -8,12 +8,93 @@ interface MobileBottomNavProps {
   onOpenArcade?: () => void;
   onOpenSupport?: () => void;
   watchlistCount?: number;
+  isInstalledApp?: boolean;
+  activeAppTab?: 'home' | 'hot' | 'search' | 'watchlist' | 'menu';
+  onOpenHot?: () => void;
+  onOpenAppMenu?: () => void;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   onGoHome,
   onFocusSearch,
+  onOpenWatchlist,
+  watchlistCount = 0,
+  isInstalledApp = false,
+  activeAppTab = 'home',
+  onOpenHot,
+  onOpenAppMenu,
 }) => {
+  if (isInstalledApp) {
+    return (
+      <nav
+        aria-label="App Navigation Bar"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#07080e]/95 backdrop-blur-2xl border-t border-white/10 px-2 pt-1.5 pb-[max(env(safe-area-inset-bottom),8px)] grid grid-cols-5 items-center shadow-[0_-10px_35px_rgba(0,0,0,0.75)]"
+      >
+        <button
+          type="button"
+          onClick={onGoHome}
+          className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+            activeAppTab === 'home' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Home className={`w-5 h-5 ${activeAppTab === 'home' ? 'text-[#e50914]' : ''}`} />
+          <span className="text-[10px] font-bold tracking-tight">Home</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenHot || onGoHome}
+          className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+            activeAppTab === 'hot' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Flame className={`w-5 h-5 ${activeAppTab === 'hot' ? 'text-amber-400' : ''}`} />
+          <span className="text-[10px] font-bold tracking-tight">New &amp; Hot</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onFocusSearch}
+          className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+            activeAppTab === 'search' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Search className={`w-5 h-5 ${activeAppTab === 'search' ? 'text-[#e50914]' : ''}`} />
+          <span className="text-[10px] font-bold tracking-tight">Search</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenWatchlist || onGoHome}
+          className={`relative flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+            activeAppTab === 'watchlist' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <div className="relative">
+            <Bookmark className={`w-5 h-5 ${activeAppTab === 'watchlist' ? 'text-amber-400' : ''}`} />
+            {watchlistCount > 0 && (
+              <span className="absolute -top-1 -right-2 min-w-[14px] h-3.5 px-1 rounded-full bg-[#e50914] text-white text-[9px] font-black flex items-center justify-center">
+                {watchlistCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] font-bold tracking-tight">Watchlist</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenAppMenu || onGoHome}
+          className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+            activeAppTab === 'menu' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Menu className="w-5 h-5" />
+          <span className="text-[10px] font-bold tracking-tight">Menu</span>
+        </button>
+      </nav>
+    );
+  }
+
   return (
     <aside
       aria-label="Quick Navigation Dock"

@@ -405,26 +405,22 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
 
     const hardTimeoutId = window.setTimeout(finish, 8000);
 
-    // Pre-generate 75 golden dust particles for Stage 2
-    const dustParticles = Array.from({ length: 75 }, (_, i) => ({
-      angle: ((i * 137.5) % 360) * (Math.PI / 180),
-      radius: 0.08 + ((i * 0.618) % 1) * 0.44,
-      speed: 0.18 + (i % 7) * 0.05,
-      size: 1.0 + (i % 4) * 0.65,
-      phase: i * 0.9,
-      driftY: ((i % 9) - 4) * 0.008,
-    }));
-
-    // Pre-generate 44 Netflix-style hyper-speed prism streaks for Stage 3
-    const prismColors = ['#e50914', '#ff2a85', '#8b5cf6', '#ffb800', '#00f2fe'];
-    const prismStreaks = Array.from({ length: 44 }, (_, i) => ({
-      xNorm: ((i * 0.37) % 1) - 0.5,
-      angle: ((i * 8.18) % 360) * (Math.PI / 180),
-      color: prismColors[i % prismColors.length],
-      width: 2 + (i % 5) * 1.4,
-      delay: (i % 10) * 0.08,
-      speed: 1.0 + (i % 6) * 0.25,
-    }));
+    // Pre-generate 160 high-speed 3D prism spectrum ribbons for Phase 3 Hyper-Warp
+    const prismPalette = ['#e50914', '#ff2a85', '#ffb800', '#7928ca', '#00f2fe'];
+    const warpRibbons = Array.from({ length: 160 }, (_, i) => {
+      const goldenAngle = i * 2.39996323;
+      const radialSpread = 0.16 + ((i * 0.6180339) % 1) * 0.95;
+      return {
+        nx: Math.cos(goldenAngle) * radialSpread,
+        ny: Math.sin(goldenAngle) * radialSpread * 0.68,
+        zStart: 0.35 + ((i * 0.317) % 1) * 1.45,
+        speed: 0.9 + (i % 7) * 0.24,
+        color: prismPalette[i % prismPalette.length],
+        width: 1.4 + (i % 5) * 0.9,
+        verticalSliceX: (((i * 0.431) % 1) - 0.5) * 2.1,
+        sliceDelay: (i % 12) * 0.055,
+      };
+    });
 
     const renderFrame = (now: number) => {
       const t = Math.min(8.0, (now - startMs) / 1000);
@@ -442,151 +438,146 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
         }
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          ctx.globalCompositeOperation = 'source-over';
           ctx.clearRect(0, 0, w, h);
           const cx = w * 0.5;
           const cy = h * 0.5;
           const minDim = Math.min(w, h);
 
-          // Stage 1 (0.0s - 2.2s): Neon Core Ignition with spiraling volumetric ribbons & shockwave ring
-          if (t < 2.5) {
-            const p1 = Math.min(1, t / 2.2);
-            const fade1 = t > 2.0 ? Math.max(0, 1 - (t - 2.0) / 0.5) : 1;
+          // Additive cinema light blending
+          ctx.globalCompositeOperation = 'lighter';
+
+          // PHASE 1 (0.0s - 2.0s, subtle tail to 2.4s): Deep Space Anamorphic Lens Flare & Energy Ignition
+          if (t < 2.45) {
+            const p1 = Math.min(1, t / 2.0);
+            const fade1 = t > 1.85 ? Math.max(0, 1 - (t - 1.85) / 0.6) : 1;
+            const flareSweepX = cx + (p1 - 0.48) * w * 0.68;
 
             // Core ignition radial bloom
-            const coreRadius = minDim * (0.05 + p1 * 0.32);
-            const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreRadius);
-            coreGrad.addColorStop(0, `rgba(255, 255, 255, ${0.85 * fade1 * Math.sin(p1 * Math.PI)})`);
-            coreGrad.addColorStop(0.28, `rgba(255, 42, 133, ${0.55 * fade1})`);
-            coreGrad.addColorStop(0.65, `rgba(229, 9, 20, ${0.25 * fade1})`);
-            coreGrad.addColorStop(1, 'rgba(3, 3, 6, 0)');
+            const coreR = minDim * (0.06 + Math.sin(p1 * Math.PI * 0.65) * 0.34);
+            const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+            coreGrad.addColorStop(0, `rgba(255, 255, 255, ${0.72 * fade1 * Math.sin(Math.min(1, p1 * 1.1) * Math.PI)})`);
+            coreGrad.addColorStop(0.24, `rgba(0, 242, 254, ${0.42 * fade1})`);
+            coreGrad.addColorStop(0.55, `rgba(229, 9, 20, ${0.38 * fade1})`);
+            coreGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
             ctx.fillStyle = coreGrad;
             ctx.fillRect(0, 0, w, h);
 
-            // 18 Volumetric spiraling ribbons converging inward
-            const ribbonColors = ['#e50914', '#ff2a85', '#ffb800'];
-            for (let i = 0; i < 18; i++) {
-              const baseAngle = (i / 18) * Math.PI * 2;
-              const spinOffset = (1 - p1) * 3.4;
-              ctx.beginPath();
-              const steps = 16;
-              for (let s = 0; s <= steps; s++) {
-                const frac = s / steps;
-                const r = minDim * (0.04 + (1 - p1 * 0.85) * 0.62 * frac);
-                const a = baseAngle + spinOffset + frac * 1.35;
-                const px = cx + Math.cos(a) * r;
-                const py = cy + Math.sin(a) * r;
-                if (s === 0) ctx.moveTo(px, py);
-                else ctx.lineTo(px, py);
-              }
-              ctx.strokeStyle = ribbonColors[i % ribbonColors.length];
-              ctx.globalAlpha = 0.52 * fade1 * (0.35 + p1 * 0.65);
-              ctx.lineWidth = (1.5 + (i % 3)) * dpr;
-              ctx.stroke();
-            }
-            ctx.globalAlpha = 1;
-
-            // 3D Shockwave ignition ring around 0.9s - 2.2s
-            if (t >= 0.85) {
-              const sw = Math.min(1, (t - 0.85) / 1.35);
-              const ringR = minDim * (0.06 + sw * 0.52);
-              ctx.save();
-              ctx.translate(cx, cy);
-              ctx.scale(1.18, 0.88);
-              ctx.beginPath();
-              ctx.arc(0, 0, ringR, 0, Math.PI * 2);
-              ctx.strokeStyle = `rgba(255, 184, 0, ${(1 - sw) * 0.85})`;
-              ctx.lineWidth = (4 - sw * 3) * dpr;
-              ctx.stroke();
-
-              ctx.beginPath();
-              ctx.arc(0, 0, ringR * 0.88, 0, Math.PI * 2);
-              ctx.strokeStyle = `rgba(255, 42, 133, ${(1 - sw) * 0.7})`;
-              ctx.lineWidth = (2.5 - sw * 1.8) * dpr;
-              ctx.stroke();
-              ctx.restore();
-            }
-          }
-
-          // Stage 2 (1.8s - 6.1s): Pulsing radial light beams + floating golden cinema dust particles
-          if (t >= 1.7 && t < 6.4) {
-            const enter = Math.min(1, (t - 1.7) / 0.7);
-            const exit = t > 5.6 ? Math.max(0, 1 - (t - 5.6) / 0.8) : 1;
-            const alpha2 = enter * exit;
-
-            // Pulsing radial golden-crimson volumetric beams
-            const pulse = 0.75 + 0.25 * Math.sin(t * 2.8);
-            const aura = ctx.createRadialGradient(cx, cy, minDim * 0.04, cx, cy, minDim * 0.55);
-            aura.addColorStop(0, `rgba(255, 184, 0, ${0.22 * alpha2 * pulse})`);
-            aura.addColorStop(0.45, `rgba(229, 9, 20, ${0.16 * alpha2 * pulse})`);
-            aura.addColorStop(1, 'rgba(3, 3, 6, 0)');
-            ctx.fillStyle = aura;
-            ctx.fillRect(0, 0, w, h);
+            // Electric horizontal anamorphic cyan streak
+            const cyanW = w * (0.45 + p1 * 0.55);
+            const cyanH = Math.max(3 * dpr, minDim * 0.035 * (1 - p1 * 0.25));
+            const cyanGrad = ctx.createLinearGradient(flareSweepX - cyanW * 0.5, cy, flareSweepX + cyanW * 0.5, cy);
+            cyanGrad.addColorStop(0, 'rgba(0, 242, 254, 0)');
+            cyanGrad.addColorStop(0.35, `rgba(0, 242, 254, ${0.38 * fade1})`);
+            cyanGrad.addColorStop(0.5, `rgba(255, 255, 255, ${0.88 * fade1})`);
+            cyanGrad.addColorStop(0.65, `rgba(255, 42, 133, ${0.42 * fade1})`);
+            cyanGrad.addColorStop(1, 'rgba(229, 9, 20, 0)');
 
             ctx.save();
+            ctx.fillStyle = cyanGrad;
+            ctx.beginPath();
+            ctx.ellipse(flareSweepX, cy, cyanW * 0.5, cyanH, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Razor-thin electric anamorphic filament line
+            ctx.fillStyle = `rgba(220, 252, 255, ${0.85 * fade1})`;
+            ctx.fillRect(cx - w * 0.48, cy - 1.2 * dpr, w * 0.96, 2.4 * dpr);
+
+            // Secondary crimson horizontal diffraction streak
+            const crimGrad = ctx.createLinearGradient(cx - w * 0.46, cy, cx + w * 0.46, cy);
+            crimGrad.addColorStop(0, 'rgba(229, 9, 20, 0)');
+            crimGrad.addColorStop(0.5, `rgba(255, 42, 133, ${0.52 * fade1})`);
+            crimGrad.addColorStop(1, 'rgba(229, 9, 20, 0)');
+            ctx.fillStyle = crimGrad;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, w * 0.48, cyanH * 2.1, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // PHASE 2 (1.8s - 5.9s): Rotating Volumetric Crimson/Magenta Aurora God-Rays Behind Emblem
+          if (t >= 1.75 && t < 6.05) {
+            const enter2 = Math.min(1, (t - 1.75) / 0.65);
+            const exit2 = t > 5.3 ? Math.max(0, 1 - (t - 5.3) / 0.75) : 1;
+            const alpha2 = enter2 * exit2;
+            const pulse = 0.82 + 0.18 * Math.sin(t * 2.4);
+
+            // Warm crimson & magenta central aurora behind logo
+            const auraGrad = ctx.createRadialGradient(cx, cy, minDim * 0.02, cx, cy, minDim * 0.56);
+            auraGrad.addColorStop(0, `rgba(255, 42, 133, ${0.34 * alpha2 * pulse})`);
+            auraGrad.addColorStop(0.38, `rgba(229, 9, 20, ${0.26 * alpha2 * pulse})`);
+            auraGrad.addColorStop(0.7, `rgba(121, 40, 202, ${0.14 * alpha2})`);
+            auraGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
+            ctx.fillStyle = auraGrad;
+            ctx.fillRect(0, 0, w, h);
+
+            // 16 rotating volumetric god-ray shafts radiating behind logo play emblem
+            ctx.save();
             ctx.translate(cx, cy);
-            for (let b = 0; b < 12; b++) {
-              const ba = (b / 12) * Math.PI * 2 + t * 0.08;
+            for (let b = 0; b < 16; b++) {
+              const angle = (b / 16) * Math.PI * 2 + t * 0.14;
+              const rayLen = minDim * (0.58 + (b % 3) * 0.12);
+              const raySpread = minDim * (0.045 + (b % 2) * 0.025);
               ctx.save();
-              ctx.rotate(ba);
-              const beamGrad = ctx.createLinearGradient(0, 0, minDim * 0.65, 0);
-              beamGrad.addColorStop(0, `rgba(255, 184, 0, ${0.18 * alpha2 * pulse})`);
-              beamGrad.addColorStop(0.5, `rgba(255, 42, 133, ${0.08 * alpha2})`);
-              beamGrad.addColorStop(1, 'rgba(3, 3, 6, 0)');
-              ctx.fillStyle = beamGrad;
+              ctx.rotate(angle);
+              const rayGrad = ctx.createLinearGradient(0, 0, rayLen, 0);
+              rayGrad.addColorStop(0, b % 2 === 0 ? `rgba(255, 42, 133, ${0.26 * alpha2 * pulse})` : `rgba(229, 9, 20, ${0.22 * alpha2 * pulse})`);
+              rayGrad.addColorStop(0.5, b % 3 === 0 ? `rgba(121, 40, 202, ${0.1 * alpha2})` : `rgba(255, 184, 0, ${0.07 * alpha2})`);
+              rayGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
+              ctx.fillStyle = rayGrad;
               ctx.beginPath();
               ctx.moveTo(0, 0);
-              ctx.lineTo(minDim * 0.65, -minDim * 0.06);
-              ctx.lineTo(minDim * 0.65, minDim * 0.06);
+              ctx.lineTo(rayLen, -raySpread);
+              ctx.lineTo(rayLen, raySpread);
               ctx.closePath();
               ctx.fill();
               ctx.restore();
             }
             ctx.restore();
-
-            // Floating golden cinema dust particles
-            for (const p of dustParticles) {
-              const curAngle = p.angle + t * p.speed * 0.25;
-              const px = cx + Math.cos(curAngle) * p.radius * w * 0.85;
-              const py = cy + Math.sin(curAngle) * p.radius * h * 0.85 + Math.sin(t * 2 + p.phase) * 8 * dpr;
-              const twinkle = 0.35 + 0.65 * Math.abs(Math.sin(t * 3.2 + p.phase));
-              ctx.beginPath();
-              ctx.arc(px, py, p.size * dpr, 0, Math.PI * 2);
-              ctx.fillStyle = `rgba(255, 200, 75, ${twinkle * 0.82 * alpha2})`;
-              ctx.fill();
-            }
           }
 
-          // Stage 3 (5.8s - 8.0s): Netflix-Style Prism Spectrum Warp (hyper-speed vertical & radial light streaks)
-          if (t >= 5.75) {
-            const p3 = Math.min(1, (t - 5.75) / 2.25);
-            const intensity = Math.sin(Math.min(1, p3 * 1.15) * Math.PI);
+          // PHASE 3 (5.5s - 8.0s): Netflix-Style 3D Prism Spectrum Hyper-Warp Tunnel
+          if (t >= 5.45) {
+            const p3 = Math.min(1, (t - 5.45) / 2.55);
+            const warpGain = Math.sin(Math.min(1, p3 * 1.05) * Math.PI * 0.92);
 
-            for (const s of prismStreaks) {
-              const localP = Math.max(0, Math.min(1, (p3 * 1.35 - s.delay * 0.35) * s.speed));
-              if (localP <= 0) continue;
+            for (const r of warpRibbons) {
+              // Advance 3D z-depth toward camera
+              const zSpan = r.zStart - p3 * r.speed * 1.45;
+              const zHead = Math.max(0.06, ((zSpan % 1.4) + 1.4) % 1.4);
+              const zTail = Math.min(1.8, zHead + 0.22 + p3 * 0.42);
 
-              // Vertical hyper-speed prism columns (Netflix ribbon warp feel)
-              const vx = cx + s.xNorm * w * (1 + localP * 1.5);
-              ctx.save();
-              ctx.globalAlpha = Math.min(0.85, localP * 0.9) * (1 - p3 * 0.45);
-              ctx.fillStyle = s.color;
-              ctx.fillRect(vx, 0, s.width * dpr * (1 + localP * 4.5), h);
-              ctx.restore();
+              const scaleHead = 0.42 / zHead;
+              const scaleTail = 0.42 / zTail;
 
-              // Radial light tunnel rays
-              const rStart = minDim * (0.04 + localP * 0.18);
-              const rEnd = minDim * (0.18 + localP * 0.95);
-              ctx.save();
-              ctx.globalAlpha = (0.65 * intensity + 0.2) * (1 - p3 * 0.35);
-              ctx.strokeStyle = s.color;
-              ctx.lineWidth = s.width * dpr * (0.8 + localP * 1.6);
+              const x1 = cx + r.nx * w * 0.55 * scaleTail;
+              const y1 = cy + r.ny * h * 0.65 * scaleTail;
+              const x2 = cx + r.nx * w * 0.55 * scaleHead;
+              const y2 = cy + r.ny * h * 0.65 * scaleHead;
+
+              ctx.strokeStyle = r.color;
+              ctx.globalAlpha = Math.min(0.9, (0.28 + warpGain * 0.72) * (1 - p3 * 0.28));
+              ctx.lineWidth = r.width * dpr * (0.65 + scaleHead * 0.75);
               ctx.beginPath();
-              ctx.moveTo(cx + Math.cos(s.angle) * rStart, cy + Math.sin(s.angle) * rStart);
-              ctx.lineTo(cx + Math.cos(s.angle) * rEnd, cy + Math.sin(s.angle) * rEnd);
+              ctx.moveTo(x1, y1);
+              ctx.lineTo(x2, y2);
               ctx.stroke();
-              ctx.restore();
+
+              // Vertical Netflix-style prism spectrum light ribbons sweeping past edges
+              if (r.width >= 2.2) {
+                const sliceP = Math.max(0, Math.min(1, p3 * 1.35 - r.sliceDelay * 0.5));
+                if (sliceP > 0) {
+                  const sx = cx + r.verticalSliceX * w * (0.55 + sliceP * 0.95);
+                  ctx.globalAlpha = Math.min(0.45, sliceP * 0.5) * (1 - p3 * 0.45);
+                  ctx.fillStyle = r.color;
+                  ctx.fillRect(sx, 0, r.width * dpr * (1.2 + sliceP * 2.8), h);
+                }
+              }
             }
+            ctx.globalAlpha = 1;
           }
+
+          ctx.globalCompositeOperation = 'source-over';
         }
       }
 
@@ -605,29 +596,31 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
     };
   }, []);
 
-  // Compute 3-stage CSS transform & opacity for the official transparent AsiaFlix Prime logo
+  // Compute 3-phase CSS transform & opacity for the SINGLE official transparent AsiaFlix Prime logo
   let logoOpacity = 0;
-  let logoScale = 0.55;
+  let logoScale = 0.82;
   let logoTiltY = 0;
   let overlayOpacity = 1;
 
-  if (elapsedSec < 2.2) {
-    // Stage 1 (0.0s - 2.2s): Neon Core Ignition -> Logo emerges after 0.7s
-    const emerge = Math.max(0, Math.min(1, (elapsedSec - 0.65) / 1.45));
-    logoOpacity = emerge;
-    logoScale = 0.55 + emerge * 0.45;
-    logoTiltY = (1 - emerge) * -14;
-  } else if (elapsedSec < 5.8) {
-    // Stage 2 (2.2s - 5.8s): Grand 3D Official Logo Reveal
-    const p2 = (elapsedSec - 2.2) / 3.6;
+  if (elapsedSec < 2.0) {
+    // Phase 1 (0.0s - 2.0s): Lens flare ignition -> logo begins smooth fade-in around 1.2s
+    const emerge = Math.max(0, Math.min(1, (elapsedSec - 1.15) / 0.85));
+    const eased = 1 - Math.pow(1 - emerge, 3);
+    logoOpacity = eased;
+    logoScale = 0.82 + eased * 0.08;
+    logoTiltY = (1 - eased) * -10;
+  } else if (elapsedSec < 5.5) {
+    // Phase 2 (2.0s - 5.5s): 3D Official Logo Emergence (scale 0.90 -> 1.05) with Volumetric God-Rays
+    const p2 = (elapsedSec - 2.0) / 3.5;
+    const smooth2 = 1 - Math.pow(1 - p2, 2);
     logoOpacity = 1;
-    logoScale = 1.0 + p2 * 0.08;
-    logoTiltY = Math.sin(p2 * Math.PI * 1.5) * 6;
+    logoScale = 0.9 + smooth2 * 0.15;
+    logoTiltY = Math.sin(p2 * Math.PI * 1.2) * 4.5;
   } else {
-    // Stage 3 (5.8s - 8.0s): Netflix-Style Prism Spectrum Warp zoom forward + smooth fade out
-    const p3 = Math.min(1, (elapsedSec - 5.8) / 2.2);
-    logoScale = 1.08 + Math.pow(p3, 1.8) * 2.8;
-    logoOpacity = p3 > 0.55 ? Math.max(0, 1 - (p3 - 0.55) / 0.45) : 1;
+    // Phase 3 (5.5s - 8.0s): 3D Prism Spectrum Hyper-Warp zoom forward & seamless cross-fade to episode
+    const p3 = Math.min(1, (elapsedSec - 5.5) / 2.5);
+    logoScale = 1.05 + Math.pow(p3, 2.0) * 2.95;
+    logoOpacity = p3 > 0.52 ? Math.max(0, 1 - (p3 - 0.52) / 0.48) : 1;
     overlayOpacity = p3 > 0.72 ? Math.max(0, 1 - (p3 - 0.72) / 0.28) : 1;
   }
 
@@ -638,13 +631,13 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
         position: 'absolute',
         inset: 0,
         zIndex: 40,
-        background: '#030306',
+        background: '#020205',
         overflow: 'hidden',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         opacity: overlayOpacity,
-        transition: 'opacity 120ms linear',
+        transition: 'opacity 140ms linear',
       }}
       className="select-none"
     >
@@ -657,7 +650,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
           20% {
             opacity: 0.95;
           }
-          60% {
+          58% {
             transform: translateX(220%) skewX(-24deg);
             opacity: 0;
           }
@@ -668,25 +661,25 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
         }
       `}</style>
 
-      {/* Canvas 3-Stage Choreography Layer */}
+      {/* Canvas 60fps Volumetric Light Engine */}
       <canvas
         ref={canvasRef}
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 w-full h-full"
       />
 
-      {/* Grand 3D Official Transparent Logo + Specular Sweep */}
+      {/* Single Official Transparent Logo (ZERO duplicate HTML PRIME text, ZERO dot artifacts) */}
       <div
         style={{
           position: 'relative',
           zIndex: 42,
           opacity: logoOpacity,
-          transform: `perspective(950px) rotateY(${logoTiltY.toFixed(2)}deg) scale(${logoScale.toFixed(3)})`,
+          transform: `perspective(1000px) rotateY(${logoTiltY.toFixed(2)}deg) scale(${logoScale.toFixed(3)})`,
           background: 'transparent',
           border: 'none',
           boxShadow: 'none',
         }}
-        className="flex flex-col items-center justify-center pointer-events-none"
+        className="flex items-center justify-center pointer-events-none"
       >
         <div className="relative flex items-center justify-center">
           <img
@@ -694,13 +687,13 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             alt="AsiaFlix Prime"
             referrerPolicy="no-referrer"
             style={{
-              height: 'clamp(110px, 18vw, 180px)',
+              height: 'clamp(115px, 19vw, 190px)',
               width: 'auto',
               background: 'transparent',
               border: 'none',
               boxShadow: 'none',
               filter:
-                'drop-shadow(0 0 22px rgba(255,42,133,0.7)) drop-shadow(0 4px 16px rgba(0,0,0,0.95))',
+                'drop-shadow(0 0 26px rgba(255,42,133,0.72)) drop-shadow(0 4px 18px rgba(0,0,0,0.96))',
             }}
             className="object-contain block"
           />
@@ -722,22 +715,17 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
               <div
                 style={{
                   background:
-                    'linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.92) 48%, rgba(255,184,0,0.65) 56%, transparent 88%)',
-                  animation: 'afpIntroBeamSweep 2.4s ease-in-out infinite',
+                    'linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.95) 48%, rgba(255,184,0,0.6) 56%, transparent 88%)',
+                  animation: 'afpIntroBeamSweep 2.3s ease-in-out infinite',
                 }}
                 className="absolute inset-y-0 -left-1/3 w-[65%]"
               />
             </div>
           )}
         </div>
-        {elapsedSec >= 2.1 && elapsedSec < 6.4 && (
-          <div className="mt-2 flex flex-col items-center gap-0.5 tracking-[0.42em] uppercase text-[10px] sm:text-xs font-extrabold text-amber-200/95 drop-shadow-[0_2px_10px_rgba(255,184,0,0.65)]">
-            <span>— P R I M E —</span>
-          </div>
-        )}
       </div>
 
-      {/* Subtle Semi-Transparent Skip Intro Pill after 1.5s */}
+      {/* Sleek Glass Skip Intro Pill after 1.5s */}
       {elapsedSec >= 1.5 && (
         <button
           type="button"

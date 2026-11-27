@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { DramaItem } from '../types/drama';
-import { Calendar, Flame, Send, Play, Settings, Clock, Bookmark, BookmarkCheck } from 'lucide-react';
+import { Calendar, Flame, Send, Play, Settings, Clock, Bookmark, BookmarkCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import { 
   DayShort, 
   DAYS_ORDER, 
@@ -37,6 +37,7 @@ interface WeekendMegaLineupSectionProps {
   isActive?: boolean;
   isAdminAuthenticated?: boolean;
   isPhoneDevice?: boolean;
+  isAppMode?: boolean;
 }
 
 export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> = ({
@@ -50,8 +51,10 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
   isActive = true,
   isAdminAuthenticated,
   isPhoneDevice = false,
+  isAppMode = false,
 }) => {
   const [selectedDayFilter, setSelectedDayFilter] = useState<'all' | 'today' | DayShort>('all');
+  const [appScheduleCollapsed, setAppScheduleCollapsed] = useState<boolean>(false);
   const [detectedPhone, setDetectedPhone] = useState<boolean>(() => detectPhoneOrPortrait());
 
   useEffect(() => {
@@ -96,6 +99,171 @@ export const WeekendMegaLineupSection: React.FC<WeekendMegaLineupSectionProps> =
     }
     return weekendDramas.filter((d) => isDramaAiringOnDayActive(d, selectedDayFilter));
   }, [weekendDramas, selectedDayFilter]);
+
+  if (isAppMode) {
+    return (
+      <section className="max-w-[1440px] mx-auto px-3 sm:px-6 w-full">
+        <div className="rounded-2xl bg-gradient-to-br from-[#160f14] via-[#10111a] to-[#0a0b10] border border-white/10 p-3.5 sm:p-5 space-y-3.5">
+          {/* Compact Collapsible Header */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs text-amber-300 font-bold">
+                <span>📅 Weekly Airing Schedule</span>
+                <span className="text-zinc-500">·</span>
+                <span className="text-zinc-300 truncate">{todayFull}</span>
+              </div>
+              <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
+                Ongoing Drops ({weekendDramas.length})
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setAppScheduleCollapsed((c) => !c)}
+              className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              <span>{appScheduleCollapsed ? 'Expand' : 'Hide'}</span>
+              {appScheduleCollapsed ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronUp className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+
+          {!appScheduleCollapsed && (
+            <>
+              {/* Compact Day-Switcher Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 cursor-pointer border transition-colors ${
+                    selectedDayFilter === 'all'
+                      ? 'bg-[#e50914] text-white border-[#e50914]'
+                      : 'bg-white/[0.05] text-zinc-300 border-white/10'
+                  }`}
+                >
+                  All ({weekendDramas.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayFilter('today')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 cursor-pointer border transition-colors ${
+                    selectedDayFilter === 'today'
+                      ? 'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border-red-400/50'
+                      : 'bg-rose-500/15 text-rose-200 border-rose-500/30'
+                  }`}
+                >
+                  Today ({todayDroppingCount})
+                </button>
+                {DAYS_ORDER.map((day) => {
+                  const isToday = day === todayShort;
+                  const isSelected = selectedDayFilter === day;
+                  return (
+                    <button
+                      key={`app-day-${day}`}
+                      type="button"
+                      onClick={() => setSelectedDayFilter(day)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 cursor-pointer border transition-colors ${
+                        isSelected
+                          ? 'bg-[#e50914] text-white border-[#e50914]'
+                          : isToday
+                          ? 'bg-amber-500/15 text-amber-200 border-amber-400/40'
+                          : 'bg-white/[0.04] text-zinc-300 border-white/10'
+                      }`}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Clean Horizontally Scrollable Schedule Cards */}
+              {filteredDramas.length === 0 ? (
+                <div className="py-6 text-center rounded-xl bg-black/30 border border-white/5 text-xs text-zinc-400">
+                  No episodes scheduled for this day.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDayFilter('all')}
+                    className="text-red-400 font-bold underline cursor-pointer"
+                  >
+                    Show All
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-1 snap-x">
+                  {filteredDramas.map((drama) => {
+                    const droppingToday = isDramaAiringTodayActive(drama);
+                    const nextSched =
+                      drama.activeTrackSchedules?.[0]?.scheduleText || drama.schedule || 'Weekly Drop';
+
+                    return (
+                      <article
+                        key={`app-sched-${drama.id}`}
+                        onClick={() => onSelectDrama(drama)}
+                        className={`w-[152px] sm:w-[185px] shrink-0 snap-start rounded-xl bg-[#0b0c12] border overflow-hidden cursor-pointer flex flex-col justify-between transition-transform active:scale-[0.98] ${
+                          droppingToday ? 'border-rose-500/50' : 'border-white/10 hover:border-red-500/50'
+                        }`}
+                      >
+                        <div className="relative aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
+                          <img
+                            src={drama.poster}
+                            alt={drama.title}
+                            referrerPolicy="no-referrer"
+                            loading="lazy"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
+                            }}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-[#08090e] via-transparent to-black/20" />
+                          {droppingToday && (
+                            <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#e50914] text-white text-[9px] font-black uppercase">
+                              Today
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleWatchlist(drama);
+                            }}
+                            className={`absolute top-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center border backdrop-blur-md cursor-pointer ${
+                              isWatchlisted(drama.id)
+                                ? 'bg-amber-400 text-black border-amber-200'
+                                : 'bg-black/60 text-white border-white/20'
+                            }`}
+                            aria-label="Toggle Watchlist"
+                          >
+                            {isWatchlisted(drama.id) ? (
+                              <BookmarkCheck className="w-3.5 h-3.5" />
+                            ) : (
+                              <Bookmark className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="p-2.5 space-y-1">
+                          <h3 className="text-xs font-bold text-white line-clamp-1">
+                            {drama.title}
+                          </h3>
+                          <p className="text-[10px] text-rose-300 font-semibold truncate">
+                            {nextSched}
+                          </p>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 my-10 w-full">

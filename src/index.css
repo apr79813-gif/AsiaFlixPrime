@@ -17,6 +17,23 @@
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     overflow-x: hidden;
   }
+
+  /* Native App Mode: lock pinch-zoom, rubber-band bounce, and accidental text selection */
+  html.installed-app-mode,
+  html.installed-app-mode body {
+    touch-action: pan-x pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html.installed-app-mode input,
+  html.installed-app-mode textarea,
+  html.installed-app-mode select {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 /* Hide scrollbars cleanly where horizontal chips/pods overflow */

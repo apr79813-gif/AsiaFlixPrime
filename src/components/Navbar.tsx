@@ -12,7 +12,9 @@ import {
   Check,
   Flame,
   Trophy,
-  Download
+  Download,
+  Menu,
+  MoreVertical,
 } from 'lucide-react';
 import { ParticleMode } from './SakuraCanvas';
 import { VipStats, getVipRankMeta } from '../services/vipPlayerHelper';
@@ -40,6 +42,10 @@ interface NavbarProps {
   vipStats?: VipStats;
   onInstallApp?: () => void;
   isAppInstalled?: boolean;
+  isInstalledApp?: boolean;
+  onOpenAppMenu?: () => void;
+  activeAppQuickChip?: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule';
+  onSelectAppQuickChip?: (chip: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -65,6 +71,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   vipStats,
   onInstallApp,
   isAppInstalled = false,
+  isInstalledApp = false,
+  onOpenAppMenu,
+  activeAppQuickChip = 'all',
+  onSelectAppQuickChip,
 }) => {
   const logoClicksRef = useRef(0);
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -120,6 +130,122 @@ export const Navbar: React.FC<NavbarProps> = ({
       logoClicksRef.current = 0;
     }, 1200);
   };
+
+  if (isInstalledApp) {
+    const appQuickChips: Array<{
+      id: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule';
+      label: string;
+    }> = [
+      { id: 'all', label: 'All' },
+      { id: 'K-Drama', label: 'K-Drama' },
+      { id: 'C-Drama', label: 'C-Drama' },
+      { id: 'Asian Movies', label: 'Movies' },
+      { id: 'Hindi Dubbed', label: 'Hindi Dubbed' },
+      { id: 'schedule', label: 'Schedule' },
+    ];
+
+    return (
+      <header className="sticky top-0 z-50 w-full bg-[#07070c]/90 backdrop-blur-xl border-b border-white/10">
+        {/* Main Native App Top Bar */}
+        <div className="max-w-[1440px] mx-auto h-14 px-4 flex items-center justify-between gap-3">
+          {/* Left: Official Brand Emblem + Title */}
+          <button
+            type="button"
+            onClick={(e) => {
+              if (onGoHome) onGoHome();
+              handleLogoClick(e);
+            }}
+            className="flex items-center gap-2.5 min-w-0 cursor-pointer select-none group"
+          >
+            <img
+              src={logoUrl || 'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png'}
+              alt="AsiaFlix Prime"
+              referrerPolicy="no-referrer"
+              className="w-8 h-8 rounded-lg object-cover border border-white/15 shrink-0"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src =
+                  'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
+              }}
+            />
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-base sm:text-lg font-black tracking-tight text-white truncate group-hover:text-red-400 transition-colors">
+                AsiaFlix
+              </span>
+              <span className="bg-[#e50914] text-white text-[9px] font-black tracking-wider px-1.5 py-0.5 rounded shrink-0">
+                PRIME
+              </span>
+            </div>
+          </button>
+
+          {/* Right: Quick Search, Notifications Bell, and 3-Lines / 3-Dots App Menu Button */}
+          <div className="flex items-center gap-2 shrink-0">
+            {handleOpenSearchAction && (
+              <button
+                type="button"
+                onClick={handleOpenSearchAction}
+                className="w-10 h-10 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white flex items-center justify-center transition-colors cursor-pointer"
+                aria-label="Search Dramas and Movies"
+                title="Search"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onOpenNotifications}
+              className="relative w-10 h-10 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Release Notifications"
+              title="Notifications"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotifsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#e50914] text-white text-[10px] font-black flex items-center justify-center shadow">
+                  {unreadNotifsCount}
+                </span>
+              )}
+            </button>
+
+            {onOpenAppMenu && (
+              <button
+                type="button"
+                onClick={onOpenAppMenu}
+                className="h-10 px-3 rounded-xl bg-white/[0.08] hover:bg-[#e50914] border border-white/15 hover:border-[#e50914] text-white flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                aria-label="Open App Menu"
+                title="Categories & Options Menu"
+              >
+                <Menu className="w-4 h-4" />
+                <MoreVertical className="w-3.5 h-3.5 opacity-80" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Single-Line Horizontally Scrollable Quick App Category Pills */}
+        {onSelectAppQuickChip && (
+          <div className="max-w-[1440px] mx-auto px-4 pb-2.5 pt-0.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+            {appQuickChips.map((chip) => {
+              const isActive = activeAppQuickChip === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => onSelectAppQuickChip(chip.id)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 border transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-[#e50914] text-white border-[#e50914] shadow-[0_0_12px_rgba(229,9,20,0.45)]'
+                      : 'bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 border-white/10'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </header>
+    );
+  }
 
   return (
     <header className="sticky top-0 z-50 bg-[#08080c]/95 backdrop-blur-md border-b border-white/[0.08] transition-all">

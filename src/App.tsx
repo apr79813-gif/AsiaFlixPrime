@@ -26,6 +26,8 @@ import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
 import { AdBannerSlot } from './components/AdBannerSlot';
 import { FloatingPopupAd } from './components/FloatingPopupAd';
+import { AppNavigationDrawer } from './components/AppNavigationDrawer';
+import { AppHomeFeed } from './components/AppHomeFeed';
 import {
   sendNativeBrowserNotification,
   registerServiceWorker,
@@ -34,7 +36,14 @@ import {
 } from './services/notificationService';
 import { getTrackEpisodeCounts, formatPermanentTimestamp } from './services/scheduleHelper';
 import { createDramaSlug, parseDeepLinkFromLocation } from './services/urlHelper';
-import { getVipStats, VipStats, VIP_STATS_UPDATED_EVENT, getAdminSubtitleOverrides } from './services/vipPlayerHelper';
+import {
+  getVipStats,
+  VipStats,
+  VIP_STATS_UPDATED_EVENT,
+  getAdminSubtitleOverrides,
+  getWatchTimestamps,
+  TIMESTAMPS_UPDATED_EVENT,
+} from './services/vipPlayerHelper';
 import { 
   fetchDramasFromSupabase, 
   fetchNotificationsFromSupabase, 
@@ -104,6 +113,16 @@ const detectPhoneOrPortrait = (): boolean => {
   const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   const isNarrow = window.outerWidth <= 1024 || window.innerWidth <= 1024;
   return isPortrait || isTouch || isMobileUA || isNarrow;
+};
+
+const detectInstalledAppMode = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.matchMedia?.('(display-mode: window-controls-overlay)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
+      document.referrer.includes('android-app://')
+  );
 };
 
 export default function App() {
@@ -540,19 +559,31 @@ export default function App() {
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedMood, setSelectedMood] = useState<MoodFilterType>('all');
 
-  // --- VIP BINGE STATS & PWA INSTALL PROMPT STATE ---
+  // --- VIP BINGE STATS & PWA INSTALL / DUAL-MODE STATE ---
   const [vipStats, setVipStats] = useState<VipStats>(() => getVipStats());
   const deferredInstallPromptRef = useRef<{ prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null>(null);
-  const [isAppInstalled, setIsAppInstalled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.matchMedia?.('(display-mode: standalone)').matches || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-  });
+  const [isInstalledApp, setIsInstalledApp] = useState<boolean>(() => detectInstalledAppMode());
+  const isAppInstalled = isInstalledApp;
   const [installGuideToast, setInstallGuideToast] = useState<string | null>(null);
+  const [isAppDrawerOpen, setIsAppDrawerOpen] = useState<boolean>(false);
+  const [activeAppTab, setActiveAppTab] = useState<'home' | 'hot' | 'search' | 'watchlist' | 'menu'>('home');
+  const [isResumeBarDismissed, setIsResumeBarDismissed] = useState<boolean>(false);
+  const [watchTimestampsVersion, setWatchTimestampsVersion] = useState<number>(0);
 
   useEffect(() => {
     const syncStats = () => setVipStats(getVipStats());
+    const syncTimestamps = () => setWatchTimestampsVersion((v) => v + 1);
+    const syncDisplayMode = () => setIsInstalledApp(detectInstalledAppMode());
+
     window.addEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+    window.addEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
     window.addEventListener('storage', syncStats);
+    window.addEventListener('storage', syncTimestamps);
+
+    const standaloneMq = window.matchMedia?.('(display-mode: standalone)');
+    const overlayMq = window.matchMedia?.('(display-mode: window-controls-overlay)');
+    standaloneMq?.addEventListener?.('change', syncDisplayMode);
+    overlayMq?.addEventListener?.('change', syncDisplayMode);
 
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
@@ -563,7 +594,7 @@ export default function App() {
     };
     const handleAppInstalled = () => {
       deferredInstallPromptRef.current = null;
-      setIsAppInstalled(true);
+      setIsInstalledApp(true);
       setInstallGuideToast('✅ AsiaFlix Prime App installed successfully!');
       window.setTimeout(() => setInstallGuideToast(null), 3500);
     };
@@ -572,7 +603,11 @@ export default function App() {
     window.addEventListener('appinstalled', handleAppInstalled);
     return () => {
       window.removeEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+      window.removeEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
       window.removeEventListener('storage', syncStats);
+      window.removeEventListener('storage', syncTimestamps);
+      standaloneMq?.removeEventListener?.('change', syncDisplayMode);
+      overlayMq?.removeEventListener?.('change', syncDisplayMode);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
@@ -586,7 +621,7 @@ export default function App() {
         const choice = await promptEvt.userChoice;
         if (choice?.outcome === 'accepted') {
           deferredInstallPromptRef.current = null;
-          setIsAppInstalled(true);
+          setIsInstalledApp(true);
           return;
         }
       } catch {
@@ -931,7 +966,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Keep 100% exact Laptop layout (1360px scaling) on Home Page, and switch to crisp native viewport on mobile DramaDetailModal
+  // Dual-Mode Viewport Engine:
+  // - Installed App Mode (isInstalledApp): Always use native responsive viewport + pinch-zoom lock across Phone, Tablet & Laptop App
+  // - Website Mode (!isInstalledApp): Keep 100% exact Laptop layout (1360px scaling) on Home Page & switch only on mobile DramaDetailModal
   useEffect(() => {
     const viewportMeta = document.querySelector('meta[name="viewport"]');
     const isMobileModalOpen = Boolean(
@@ -943,28 +980,41 @@ export default function App() {
     );
 
     const applyViewportAndScale = () => {
-      if (isMobileModalOpen) {
+      if (isInstalledApp) {
+        document.documentElement.classList.add('installed-app-mode');
         if (viewportMeta) {
           viewportMeta.setAttribute(
             'content',
-            'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=2.0, user-scalable=yes'
+            'width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover'
           );
         }
         document.body.style.minWidth = '0px';
         (document.documentElement.style as any).zoom = '1';
       } else {
-        if (viewportMeta) {
-          viewportMeta.setAttribute(
-            'content',
-            'width=1360, initial-scale=0.28, minimum-scale=0.2, maximum-scale=2.0, user-scalable=yes'
-          );
-        }
-        document.body.style.minWidth = '1360px';
-        if (window.innerWidth < 1360) {
-          const scale = window.innerWidth / 1360;
-          (document.documentElement.style as any).zoom = String(scale);
-        } else {
+        document.documentElement.classList.remove('installed-app-mode');
+        if (isMobileModalOpen) {
+          if (viewportMeta) {
+            viewportMeta.setAttribute(
+              'content',
+              'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=2.0, user-scalable=yes'
+            );
+          }
+          document.body.style.minWidth = '0px';
           (document.documentElement.style as any).zoom = '1';
+        } else {
+          if (viewportMeta) {
+            viewportMeta.setAttribute(
+              'content',
+              'width=1360, initial-scale=0.28, minimum-scale=0.2, maximum-scale=2.0, user-scalable=yes'
+            );
+          }
+          document.body.style.minWidth = '1360px';
+          if (window.innerWidth < 1360) {
+            const scale = window.innerWidth / 1360;
+            (document.documentElement.style as any).zoom = String(scale);
+          } else {
+            (document.documentElement.style as any).zoom = '1';
+          }
         }
       }
     };
@@ -974,7 +1024,7 @@ export default function App() {
     return () => {
       window.removeEventListener('resize', applyViewportAndScale);
     };
-  }, [selectedDrama, isMiniPlayer]);
+  }, [selectedDrama, isMiniPlayer, isInstalledApp]);
 
   // Initial sync: Restore cloud watchlist & read notifications if user is logged in, then sync catalog & notifications
   useEffect(() => {
@@ -3500,7 +3550,69 @@ export default function App() {
     setIsArcadeOpen(false);
     setIsAdminOpen(false);
     setIsInstantSearchOpen(false);
+    setIsAppDrawerOpen(false);
+    setActiveAppTab('home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Most recent unfinished episode for Installed App Mode "Resume Watching" Floating Mini-Bar
+  const latestResumeItem = useMemo(() => {
+    const map = getWatchTimestamps();
+    const entries = Object.entries(map)
+      .filter(([, entry]) => {
+        if (!entry || entry.currentTime < 2) return false;
+        if (entry.duration > 30 && entry.currentTime / entry.duration >= 0.94) return false;
+        return true;
+      })
+      .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0));
+
+    for (const [dramaId, entry] of entries) {
+      const matched = dramas.find((d) => d.id === dramaId);
+      if (matched) {
+        return { drama: matched, entry };
+      }
+    }
+    return null;
+  }, [dramas, watchTimestampsVersion]);
+
+  const activeAppQuickChip: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule' = useMemo(() => {
+    if (selectedCategory === 'K-Drama') return 'K-Drama';
+    if (selectedCategory === 'C-Drama') return 'C-Drama';
+    if (selectedCategory === 'Asian Movies') return 'Asian Movies';
+    if (selectedAudio === 'Hindi Dubbed') return 'Hindi Dubbed';
+    return 'all';
+  }, [selectedCategory, selectedAudio]);
+
+  const handleSelectAppQuickChip = (
+    chip: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule'
+  ) => {
+    if (chip === 'schedule') {
+      setSearchQuery('');
+      setSelectedCategory('all');
+      setSelectedAudio('all');
+      setSelectedStatus('all');
+      setActiveAppTab('home');
+      window.setTimeout(() => {
+        document.getElementById('app-sec-schedule')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+      return;
+    }
+    if (chip === 'all') {
+      setSearchQuery('');
+      setSelectedCategory('all');
+      setSelectedAudio('all');
+      setSelectedStatus('all');
+      return;
+    }
+    if (chip === 'Hindi Dubbed') {
+      setSelectedCategory('all');
+      setSelectedStatus('all');
+      setSelectedAudio('Hindi Dubbed');
+      return;
+    }
+    setSelectedAudio('all');
+    setSelectedStatus('all');
+    setSelectedCategory(chip);
   };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
@@ -3556,41 +3668,230 @@ export default function App() {
 
       {(!selectedDrama || isMiniPlayer) && (
         <>
-          {/* Top Notice Running Marquee */}
-          <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
+          {!isInstalledApp && (
+            <>
+              {/* Top Notice Running Marquee (Website Mode Only) */}
+              <MarqueeNotice noticeText={marqueeText} isLiveSynced={true} />
 
-          {/* Audience Instant Push & Telegram Bot Alerts Banner (Clean & Non-overlapping) */}
-          <AudienceNotificationBanner
-            botUsername={telegramBotSettings.botUsername}
-            onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
+              {/* Audience Instant Push & Telegram Bot Alerts Banner (Website Mode Only) */}
+              <AudienceNotificationBanner
+                botUsername={telegramBotSettings.botUsername}
+                onOpenNotificationsDrawer={() => setIsNotificationsOpen(true)}
+              />
+            </>
+          )}
+
+          {/* Header / Navbar (Dual-Mode: Website Mode untouched vs Sleek Native App Top Bar) */}
+          <Navbar
+            unreadNotifsCount={unreadCount}
+            watchlistCount={watchlist.length}
+            sakuraEnabled={particleMode !== 'off'}
+            particleMode={particleMode}
+            onToggleSakura={handleCycleParticleMode}
+            onOpenNotifications={() => setIsNotificationsOpen(true)}
+            onOpenWatchlist={() => setIsWatchlistOpen(true)}
+            onOpenArcade={() => setIsArcadeOpen(true)}
+            onOpenSupport={() => setIsSupportOpen(true)}
+            onOpenRequest={() => setIsRequestOpen(true)}
+            onOpenAdmin={() => setIsAdminOpen(true)}
+            isAdminAuthenticated={isAdminAuthenticated}
+            logoUrl={customLogoUrl}
+            sheetSyncCount={dramas.length}
+            isSheetSyncing={sheetSyncState.isSyncing}
+            onRefreshSheet={() => fetchGoogleSheetData()}
+            onOpenSearch={() => setIsInstantSearchOpen(true)}
+            onOpenSearchModal={() => setIsInstantSearchOpen(true)}
+            onGoHome={handleGoHome}
+            vipStats={vipStats}
+            onInstallApp={handleInstallApp}
+            isAppInstalled={isAppInstalled}
+            isInstalledApp={isInstalledApp}
+            onOpenAppMenu={() => {
+              setActiveAppTab('menu');
+              setIsAppDrawerOpen(true);
+            }}
+            activeAppQuickChip={activeAppQuickChip}
+            onSelectAppQuickChip={handleSelectAppQuickChip}
           />
 
-      {/* Header / Navbar */}
-      <Navbar
-        unreadNotifsCount={unreadCount}
-        watchlistCount={watchlist.length}
-        sakuraEnabled={particleMode !== 'off'}
-        particleMode={particleMode}
-        onToggleSakura={handleCycleParticleMode}
-        onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onOpenWatchlist={() => setIsWatchlistOpen(true)}
-        onOpenArcade={() => setIsArcadeOpen(true)}
-        onOpenSupport={() => setIsSupportOpen(true)}
-        onOpenRequest={() => setIsRequestOpen(true)}
-        onOpenAdmin={() => setIsAdminOpen(true)}
-        isAdminAuthenticated={isAdminAuthenticated}
-        logoUrl={customLogoUrl}
-        sheetSyncCount={dramas.length}
-        isSheetSyncing={sheetSyncState.isSyncing}
-        onRefreshSheet={() => fetchGoogleSheetData()}
-        onOpenSearch={() => setIsInstantSearchOpen(true)}
-        onOpenSearchModal={() => setIsInstantSearchOpen(true)}
-        onGoHome={handleGoHome}
-        vipStats={vipStats}
-        onInstallApp={handleInstallApp}
-        isAppInstalled={isAppInstalled}
-      />
+          {isInstalledApp ? (
+            <>
+              <AppHomeFeed
+                dramas={dramas}
+                featuredDramas={featuredDramas}
+                heroBanners={heroBanners}
+                spotlightDramas={spotlightDramas}
+                weekendDramas={weekendDramas}
+                filteredDramas={filteredDramas}
+                continueWatchingDramas={continueWatchingDramas}
+                recommendedDramas={recommendedDramas}
+                comingSoonDramas={comingSoonDramas}
+                trendingDramas={trendingDramas}
+                hindiDubbedList={hindiDubbedList}
+                fanDubbedList={fanDubbedList}
+                origEngSubList={origEngSubList}
+                ongoingDramas={ongoingDramas}
+                kdramaList={kdramaList}
+                cdramaList={cdramaList}
+                otherSeriesList={otherSeriesList}
+                asianMoviesList={asianMoviesList}
+                hollyBollyList={hollyBollyList}
+                completedList={completedList}
+                searchQuery={searchQuery}
+                selectedAudio={selectedAudio}
+                selectedCategory={selectedCategory}
+                selectedStatus={selectedStatus}
+                onResetFilters={() => {
+                  setSearchQuery('');
+                  setSelectedAudio('all');
+                  setSelectedCategory('all');
+                  setSelectedStatus('all');
+                }}
+                onOpenRequest={() => setIsRequestOpen(true)}
+                onSelectDrama={handleOpenDrama}
+                onToggleWatchlist={handleToggleWatchlist}
+                isWatchlisted={isDramaWatchlisted}
+                onOpenAdminWeekend={() => handleOpenAdminWithTab('weekend')}
+                weekendAnnouncement={weekendSettings.announcement}
+                weekendTiming={weekendSettings.timing}
+                weekendActive={weekendSettings.isActive}
+                isAdminAuthenticated={isAdminAuthenticated}
+              />
 
+              {/* App-Exclusive: "Resume Watching" Floating Mini-Bar */}
+              {latestResumeItem && !isResumeBarDismissed && (
+                <div className="fixed bottom-[74px] lg:bottom-6 left-3 right-3 sm:left-auto sm:right-6 sm:w-[340px] z-[35] rounded-2xl bg-[#10121c]/95 backdrop-blur-xl border border-[#e50914]/50 shadow-[0_12px_35px_rgba(0,0,0,0.85)] p-2.5 flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleOpenDrama(latestResumeItem.drama, latestResumeItem.entry.ep);
+                      setDeepLinkTime(latestResumeItem.entry.currentTime);
+                      setDeepLinkTrack(latestResumeItem.entry.track);
+                    }}
+                    className="flex-1 min-w-0 flex items-center gap-2.5 text-left cursor-pointer group"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-[#e50914] text-white flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                      <Play className="w-4 h-4 fill-white ml-0.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-white truncate">
+                        ▶ Continue Ep {latestResumeItem.entry.ep} • {latestResumeItem.drama.title}
+                      </p>
+                      <p className="text-[10px] text-zinc-400 truncate">
+                        Tap to resume playback
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsResumeBarDismissed(true)}
+                    className="w-7 h-7 rounded-lg bg-white/[0.06] hover:bg-white/15 text-zinc-400 hover:text-white flex items-center justify-center shrink-0 cursor-pointer"
+                    aria-label="Dismiss Resume Watching bar"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              <Footer
+                onOpenSupport={() => setIsSupportOpen(true)}
+                onOpenRequest={() => setIsRequestOpen(true)}
+                onOpenAdmin={() => setIsAdminOpen(true)}
+              />
+
+              {/* 5-Tab Native Bottom Navigation Bar (Mobile / Tablet App) */}
+              <MobileBottomNav
+                isInstalledApp={true}
+                activeAppTab={activeAppTab}
+                watchlistCount={watchlist.length}
+                onGoHome={handleGoHome}
+                onOpenHot={() => {
+                  setActiveAppTab('hot');
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedAudio('all');
+                  setSelectedStatus('all');
+                  window.setTimeout(() => {
+                    document.getElementById('app-sec-trending')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 60);
+                }}
+                onFocusSearch={() => {
+                  setActiveAppTab('search');
+                  setIsInstantSearchOpen(true);
+                }}
+                onOpenWatchlist={() => {
+                  setActiveAppTab('watchlist');
+                  setIsWatchlistOpen(true);
+                }}
+                onOpenAppMenu={() => {
+                  setActiveAppTab('menu');
+                  setIsAppDrawerOpen(true);
+                }}
+              />
+
+              {/* 3-Lines / 3-Dots Slide-Out App Drawer Menu */}
+              <AppNavigationDrawer
+                isOpen={isAppDrawerOpen}
+                onClose={() => setIsAppDrawerOpen(false)}
+                logoUrl={customLogoUrl}
+                watchlistCount={watchlist.length}
+                unreadNotifsCount={unreadCount}
+                selectedCategory={selectedCategory}
+                selectedAudio={selectedAudio}
+                selectedStatus={selectedStatus}
+                isAdminAuthenticated={isAdminAuthenticated}
+                onGoHome={handleGoHome}
+                onOpenSearch={() => setIsInstantSearchOpen(true)}
+                onOpenWatchlist={() => setIsWatchlistOpen(true)}
+                onJumpToTrending={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedAudio('all');
+                  setSelectedStatus('all');
+                  window.setTimeout(() => {
+                    document.getElementById('app-sec-trending')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 80);
+                }}
+                onJumpToSchedule={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedAudio('all');
+                  setSelectedStatus('all');
+                  window.setTimeout(() => {
+                    document.getElementById('app-sec-schedule')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 80);
+                }}
+                onSelectCategoryFilter={(cat) => {
+                  setSearchQuery('');
+                  setSelectedAudio('all');
+                  setSelectedStatus('all');
+                  setSelectedCategory(cat);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onSelectComingSoonFilter={() => {
+                  setSearchQuery('');
+                  setSelectedAudio('all');
+                  setSelectedCategory('all');
+                  setSelectedStatus('Coming Soon');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onSelectAudioFilter={(audio) => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedStatus('all');
+                  setSelectedAudio(audio);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onOpenRequest={() => setIsRequestOpen(true)}
+                onOpenArcade={() => setIsArcadeOpen(true)}
+                onOpenSupport={() => setIsSupportOpen(true)}
+                onOpenNotifications={() => setIsNotificationsOpen(true)}
+                onOpenAdmin={() => setIsAdminOpen(true)}
+              />
+            </>
+          ) : (
+            <>
       {/* VIP Perks Bar - Horizontal Strip Below Navbar & Above Hero Banner */}
       <section className="bg-gradient-to-r from-[#0d0d14] via-[#14121c] to-[#0d0d14] border-b border-white/[0.06] py-2.5 md:py-3 px-3 sm:px-6 lg:px-8 relative z-30">
         <div className="max-w-[1600px] mx-auto">
@@ -4002,6 +4303,8 @@ export default function App() {
         onGoHome={handleGoHome}
         onFocusSearch={() => setIsInstantSearchOpen(true)}
       />
+            </>
+          )}
         </>
       )}
 

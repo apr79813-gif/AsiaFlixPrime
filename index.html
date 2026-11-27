@@ -3,6 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1360, initial-scale=0.28, minimum-scale=0.2, maximum-scale=2.0, user-scalable=yes" />
+    <script>
+      (function () {
+        try {
+          var isApp =
+            (window.matchMedia &&
+              (window.matchMedia('(display-mode: standalone)').matches ||
+                window.matchMedia('(display-mode: window-controls-overlay)').matches)) ||
+            window.navigator.standalone === true ||
+            document.referrer.indexOf('android-app://') !== -1;
+          if (isApp) {
+            var vp = document.querySelector('meta[name="viewport"]');
+            if (vp) {
+              vp.setAttribute(
+                'content',
+                'width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover'
+              );
+            }
+            document.documentElement.classList.add('installed-app-mode');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <title>AsiaFlix Prime</title>
     <meta name="application-name" content="AsiaFlix Prime" />
     <meta name="apple-mobile-web-app-title" content="AsiaFlix Prime" />

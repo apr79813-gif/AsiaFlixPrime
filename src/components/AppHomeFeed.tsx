@@ -401,59 +401,64 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
             const heroAgeInfo = getAgeRatingMeta(heroDrama.ageRating);
             return (
               <section className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3">
-                <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#07070c] aspect-[16/10] sm:aspect-[21/9] min-h-[260px] sm:min-h-[370px] lg:min-h-[430px] flex items-end shadow-2xl">
+                <div className="aspect-[16/10] sm:aspect-[21/9] w-full relative rounded-2xl overflow-hidden border border-white/10 bg-[#07070c] flex items-end shadow-2xl">
                   <img
                     src={activeSlide.backdropUrl || heroDrama.backdrop || heroDrama.poster}
                     alt={activeSlide.title}
                     referrerPolicy="no-referrer"
                     className="absolute inset-0 w-full h-full object-cover object-center"
                   />
-                  {/* Edge-Only Cinema Gradients (keep main artwork faces & stage bright and unobstructed) */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-[#07070c] via-[#07070c]/60 to-transparent" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#07070c] via-[#07070c]/30 to-transparent" />
+                  {/* Edge-Only Cinema Gradients (keep main artwork faces & upper/right 65% uncovered) */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#07070c] via-[#07070c]/40 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-[#07070c]/80 via-[#07070c]/25 to-transparent" />
 
-                  <div className="relative z-10 p-4 sm:p-8 max-w-2xl w-full space-y-2.5 sm:space-y-3">
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs font-bold text-zinc-100">
-                      <span className="px-2.5 py-0.5 rounded bg-[#e50914] text-white font-black uppercase tracking-wider shadow">
+                  <div className="relative z-10 p-3 sm:p-6 max-w-2xl w-full flex flex-col justify-end">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] sm:text-xs font-bold text-zinc-100">
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white font-black uppercase tracking-wider shadow">
+                        {activeSlide.badge && !activeSlide.badge.includes(',') && activeSlide.badge.length < 24
+                          ? activeSlide.badge
+                          : '🔥 VIP PICK'}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-white/15 backdrop-blur-sm text-white font-bold">
                         {heroDrama.category}
                       </span>
                       {heroDrama.ageRating &&
                         (heroAgeInfo.is18Plus ? (
-                          <AdultsOnlyBadge size="sm" />
+                          <AdultsOnlyBadge size="xs" />
                         ) : (
-                          <span className={`px-2 py-0.5 rounded ${heroAgeInfo.pillClass}`}>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${heroAgeInfo.pillClass}`}>
                             {heroAgeInfo.label}
                           </span>
                         ))}
-                      <span>{heroDrama.releaseYear}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="inline-flex items-center gap-1 text-amber-300 font-black">
-                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-zinc-200 font-bold">
+                        {heroDrama.releaseYear}
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-black">
+                        <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
                         {heroDrama.rating}
                       </span>
                       {heroDrama.defaultAudio && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span className="text-emerald-300 font-extrabold">{heroDrama.defaultAudio}</span>
-                        </>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-extrabold">
+                          {heroDrama.defaultAudio}
+                        </span>
                       )}
                     </div>
 
-                    <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight leading-tight text-balance drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)]">
+                    <h1 className="text-lg sm:text-2xl font-black text-white leading-tight mt-1 line-clamp-1 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
                       {heroDrama.title}
                     </h1>
 
-                    <p className="text-xs sm:text-sm text-gray-200 font-medium leading-relaxed line-clamp-2 sm:line-clamp-3 max-w-xl drop-shadow-[0_1px_6px_rgba(0,0,0,0.85)]">
+                    <p className="text-[11px] sm:text-xs text-gray-200 line-clamp-2 max-w-[90%] mt-0.5 leading-snug drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]">
                       {heroDrama.synopsis || activeSlide.synopsis}
                     </p>
 
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
                       <button
                         type="button"
                         onClick={() => onSelectDrama(heroDrama)}
-                        className="h-10 px-4 sm:px-5 rounded-xl bg-[#e50914] hover:bg-[#f6121d] text-white text-xs sm:text-sm font-black flex items-center gap-2 shadow-lg shadow-red-600/35 cursor-pointer transition-transform active:scale-95"
+                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-red-600/35 cursor-pointer transition-transform active:scale-95"
                       >
-                        <Play className="w-4 h-4 fill-white" />
+                        <Play className="w-3.5 h-3.5 fill-white" />
                         <span>▶ Watch Now</span>
                       </button>
 
@@ -462,39 +467,38 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
                           href={heroTelegramUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="h-10 px-3.5 sm:px-4 rounded-xl bg-[#0088cc]/30 hover:bg-[#0088cc]/50 border border-[#38bdf8]/50 text-[#e0f2fe] text-xs sm:text-sm font-extrabold flex items-center gap-1.5 backdrop-blur-md transition-colors"
+                          className="bg-white/15 hover:bg-[#0088cc]/45 backdrop-blur-md border border-white/20 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-colors"
                         >
                           <Send className="w-3.5 h-3.5 text-[#38bdf8]" />
-                          <span>🚀 Open in Telegram</span>
+                          <span>✈️ Open in Telegram</span>
                         </a>
                       )}
 
                       <button
                         type="button"
                         onClick={() => onToggleWatchlist(heroDrama)}
-                        className={`h-10 px-3.5 sm:px-4 rounded-xl text-xs sm:text-sm font-bold border flex items-center gap-1.5 cursor-pointer transition-colors backdrop-blur-md ${
+                        className={`px-2.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1 cursor-pointer backdrop-blur-md transition-colors ${
                           isWatchlisted(heroDrama.id)
                             ? 'bg-amber-500/25 border-amber-400/55 text-amber-200'
-                            : 'bg-white/12 hover:bg-white/20 border-white/20 text-white'
+                            : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
                         }`}
+                        aria-label={isWatchlisted(heroDrama.id) ? 'Saved in Watchlist' : 'Add to Watchlist'}
+                        title={isWatchlisted(heroDrama.id) ? 'Saved in Watchlist' : 'Add to Watchlist'}
                       >
                         {isWatchlisted(heroDrama.id) ? (
-                          <>
-                            <BookmarkCheck className="w-4 h-4 text-amber-400" />
-                            <span>Saved</span>
-                          </>
+                          <BookmarkCheck className="w-3.5 h-3.5 text-amber-400" />
                         ) : (
-                          <>
-                            <Bookmark className="w-4 h-4" />
-                            <span>+ Watchlist</span>
-                          </>
+                          <Bookmark className="w-3.5 h-3.5" />
                         )}
+                        <span className="hidden sm:inline">
+                          {isWatchlisted(heroDrama.id) ? 'Saved' : 'Watchlist'}
+                        </span>
                       </button>
                     </div>
                   </div>
 
                   {heroSlides.length > 1 && (
-                    <div className="flex items-center gap-2 absolute bottom-4 right-4 z-20">
+                    <div className="flex items-center gap-2 absolute bottom-2.5 right-3 sm:bottom-4 sm:right-4 z-20">
                       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/10">
                         {heroSlides.map((sl, sIdx) => (
                           <button

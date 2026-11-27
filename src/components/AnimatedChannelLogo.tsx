@@ -43,11 +43,11 @@ export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
-            if (r < 32 && g < 32 && b < 32) {
+            const maxChannel = Math.max(r, g, b);
+            if (maxChannel < 45) {
               data[i + 3] = 0;
-            } else if (r < 54 && g < 54 && b < 54) {
-              const maxChannel = Math.max(r, g, b);
-              data[i + 3] = Math.round(((maxChannel - 32) / 22) * data[i + 3]);
+            } else if (maxChannel < 75) {
+              data[i + 3] = Math.round(((maxChannel - 45) / 30) * data[i + 3]);
             }
           }
           ctx.putImageData(imageData, 0, 0);
@@ -175,6 +175,7 @@ export const AnimatedChannelLogo: React.FC<AnimatedChannelLogoProps> = ({
           referrerPolicy="no-referrer"
           style={{
             background: 'transparent',
+            mixBlendMode: 'screen',
             border: 'none',
             boxShadow: 'none',
             backdropFilter: 'none',
@@ -815,6 +816,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
               height: 'clamp(115px, 19vw, 190px)',
               width: 'auto',
               background: 'transparent',
+              mixBlendMode: 'screen',
               border: 'none',
               boxShadow: 'none',
               filter:
@@ -914,7 +916,7 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
     <div
       onClick={finishSplash}
       role="presentation"
-      className={`fixed inset-0 z-[120] bg-[#050509] flex flex-col items-center justify-center overflow-hidden select-none transition-all duration-[460ms] ease-out ${
+      className={`fixed inset-0 z-[120] bg-[#000000] flex flex-col items-center justify-center overflow-hidden select-none transition-all duration-[460ms] ease-out ${
         phase === 'exit'
           ? 'opacity-0 scale-[1.14] pointer-events-none'
           : 'opacity-100 scale-100'
@@ -930,29 +932,24 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
           60% { opacity: 1; transform: perspective(900px) scale(1.04) rotateY(3deg); }
           100% { opacity: 1; transform: perspective(900px) scale(1) rotateY(0deg); }
         }
-        @keyframes afpAppSplashSweep {
-          0% { transform: translateX(-140%) skewX(-22deg); opacity: 0; }
-          30% { opacity: 0.9; }
-          100% { transform: translateX(220%) skewX(-22deg); opacity: 0; }
-        }
       `}</style>
 
-      {/* Deep ambient crimson-magenta radial aura (seamless on #050509, zero square box) */}
+      {/* Deep ambient crimson-magenta radial aura (seamless on #000000, zero square box) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute w-[340px] h-[340px] sm:w-[440px] sm:h-[440px] rounded-full blur-3xl opacity-75"
+        className="pointer-events-none absolute w-[360px] h-[360px] sm:w-[460px] sm:h-[460px] rounded-full blur-3xl opacity-80"
         style={{
           background:
-            'radial-gradient(circle, rgba(229,9,20,0.42) 0%, rgba(255,0,128,0.22) 45%, rgba(5,5,9,0) 74%)',
+            'radial-gradient(circle, rgba(229,9,20,0.42) 0%, rgba(255,0,128,0.22) 45%, rgba(0,0,0,0) 74%)',
         }}
       />
 
-      {/* Centered Transparent 3D Emblem + Rotating Neon-Crimson & Magenta Aura Ring */}
+      {/* Single Centered 100% Transparent Animated Emblem + Neon-Crimson Aura Ring (Zero Duplicate Bottom Text) */}
       <div
         style={{ animation: 'afpAppSplashLogoPop 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards' }}
-        className="relative flex flex-col items-center justify-center gap-5"
+        className="relative flex items-center justify-center"
       >
-        <div className="relative w-36 h-36 sm:w-44 sm:h-44 flex items-center justify-center">
+        <div className="relative w-44 h-44 sm:w-52 sm:h-52 flex items-center justify-center">
           {/* Outer rotating neon-crimson & magenta conic aura ring */}
           <div
             aria-hidden="true"
@@ -963,39 +960,21 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
               mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
               animation: 'afpAppSplashRingSpin 1.35s linear infinite',
             }}
-            className="absolute inset-0 rounded-full opacity-95 drop-shadow-[0_0_18px_rgba(229,9,20,0.75)]"
+            className="absolute inset-0 rounded-full opacity-95 drop-shadow-[0_0_20px_rgba(229,9,20,0.78)]"
           />
 
-          {/* 100% Transparent Chroma-Keyed Official Emblem */}
+          {/* 100% Transparent Chroma-Keyed + Mix-Blend Screen Official Emblem */}
           <img
             src={transparentLogo}
             alt="AsiaFlix Prime"
             referrerPolicy="no-referrer"
             style={{
               background: 'transparent',
+              mixBlendMode: 'screen',
               filter:
                 'drop-shadow(0 0 22px rgba(229,9,20,0.72)) drop-shadow(0 6px 18px rgba(0,0,0,0.95))',
             }}
-            className="w-28 h-28 sm:w-32 sm:h-32 object-contain relative z-10"
-          />
-        </div>
-
-        {/* Volumetric light-sweep across AsiaFlix PRIME brand title */}
-        <div className="relative overflow-hidden px-4 py-1 flex items-center gap-2">
-          <span className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            AsiaFlix
-          </span>
-          <span className="px-2 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white text-xs sm:text-sm font-black tracking-widest shadow-[0_0_16px_rgba(229,9,20,0.65)]">
-            PRIME
-          </span>
-          <div
-            aria-hidden="true"
-            style={{
-              background:
-                'linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.85) 50%, transparent 90%)',
-              animation: 'afpAppSplashSweep 1.25s ease-in-out 0.15s 1',
-            }}
-            className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/2"
+            className="w-36 h-36 sm:w-44 sm:h-44 object-contain relative z-10"
           />
         </div>
       </div>

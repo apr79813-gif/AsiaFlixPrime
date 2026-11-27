@@ -92,13 +92,23 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
           epSubMap[s.code] = { code: s.code, label: s.label, langTag: s.langTag, url: s.url };
         });
         const parsedAudio = u.display_label ? parseSheetAudioCell(u.display_label) : null;
+        const isTelegramUrl = /(?:t\.me|telegram\.me|telegram\.dog)\//i.test(u.telegram_url || '');
+        const directStreamUrl =
+          u.telegram_url && /^https?:\/\//i.test(u.telegram_url) && !isTelegramUrl
+            ? u.telegram_url
+            : undefined;
 
         return {
           id: u.id,
           episodeNumber: u.episode_number || (u.upload_format === 'complete_series' ? 'Full Pack' : idx + 1),
           title: u.display_label || `${t.title} ${u.upload_format}`,
           audio: mappedAudio,
-          telegramUrl: u.telegram_url,
+          telegramUrl: isTelegramUrl ? u.telegram_url : '',
+          ...(directStreamUrl && mappedAudio === 'Hindi Dubbed' ? { streamLink: directStreamUrl } : {}),
+          ...(directStreamUrl && (mappedAudio === 'Hindi Fan Dubbed' || mappedAudio === 'Fan Dubbed')
+            ? { hindiFanDubStreamLink: directStreamUrl }
+            : {}),
+          ...(directStreamUrl && mappedAudio === 'Original / Eng Sub' ? { engSubStreamLink: directStreamUrl } : {}),
           duration: u.upload_format === 'complete_series' ? 'Full Binge' : '60m',
           quality: '1080p FHD',
           isMerged: u.upload_format === 'merged_episodes' || u.upload_format === 'complete_series',
@@ -108,6 +118,21 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
           ...(parsedAudio?.fanDubAudioMap.get(epNum) ? { fanDubCustomAudioLink: parsedAudio.fanDubAudioMap.get(epNum) } : {}),
           ...(parsedAudio?.origAudioMap.get(epNum) ? { origCustomAudioLink: parsedAudio.origAudioMap.get(epNum) } : {}),
         };
+      });
+
+      // Share single video URL across Hindi/Fan/Original tracks for matching episodes with custom external audio
+      episodes.forEach((ep) => {
+        const epNum = typeof ep.episodeNumber === 'number' ? ep.episodeNumber : 1;
+        const sharedVideo =
+          ep.engSubStreamLink ||
+          ep.streamLink ||
+          ep.hindiFanDubStreamLink ||
+          episodes.find((other) => (typeof other.episodeNumber === 'number' ? other.episodeNumber : 1) === epNum && (other.engSubStreamLink || other.streamLink || other.hindiFanDubStreamLink))?.engSubStreamLink;
+        if (sharedVideo) {
+          if (ep.hindiCustomAudioLink && !ep.streamLink) ep.streamLink = sharedVideo;
+          if (ep.fanDubCustomAudioLink && !ep.hindiFanDubStreamLink) ep.hindiFanDubStreamLink = sharedVideo;
+          if (ep.origCustomAudioLink && !ep.engSubStreamLink) ep.engSubStreamLink = sharedVideo;
+        }
       });
 
       // Map content_type

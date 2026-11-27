@@ -165,7 +165,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               src={transparentLogoSrc}
               alt="AsiaFlix Prime"
               referrerPolicy="no-referrer"
-              style={{ background: 'transparent' }}
+              style={{ background: 'transparent', mixBlendMode: 'screen' }}
               className="w-9 h-9 object-contain shrink-0 drop-shadow-[0_0_8px_rgba(229,9,20,0.45)]"
             />
             <div className="flex items-center gap-1.5 min-w-0">
@@ -259,7 +259,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 src={transparentLogoSrc} 
                 alt="AsiaFlix Prime" 
                 referrerPolicy="no-referrer"
-                style={{ background: 'transparent' }}
+                style={{ background: 'transparent', mixBlendMode: 'screen' }}
                 className="w-full h-full shrink-0 object-contain group-hover:scale-105 transition-transform drop-shadow-[0_0_12px_rgba(229,9,20,0.55)]"
               />
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 md:w-3 md:h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />
@@ -361,7 +361,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Install AsiaFlix Prime App or Download APK"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>📲 Download App / APK</span>
+              <span>📲 Install App / Download APK</span>
             </button>
           )}
 

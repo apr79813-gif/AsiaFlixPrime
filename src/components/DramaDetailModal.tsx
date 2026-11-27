@@ -90,6 +90,8 @@ import {
   normalizeUniversalAssetUrl,
   sanitizeExternalAudioUrl,
   isExtractorAudioUrl,
+  resolveExternalAudioStream,
+  getCachedExternalAudioResolution,
   SubtitleCue,
   SUBTITLE_LANGUAGE_CATALOG,
   resolveSubtitleLangMeta,
@@ -212,7 +214,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 }) => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hudTimerRef = useRef<number | null>(null);
   const pendingRestoreTimeRef = useRef<{ time: number; shouldPlay: boolean } | null>(
@@ -1161,32 +1163,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [effectiveVideoSrc]);
 
-  // Resolve OK.ru / VK video links used as external audio tracks (pick lowest-bandwidth progressive MP4 or proxied HLS)
+  // Resolve external audio tracks (OK.ru, VK, Archive.org item/embed, or direct MP3/M4A/MP4 media URLs)
   useEffect(() => {
     if (!trackCustomAudio || forceBuiltinAudio) {
       setResolvedExternalAudioSrc({ rawKey: '', src: '', isHls: false, resolving: false });
       return;
     }
 
-    if (!isExtractorAudioUrl(trackCustomAudio)) {
-      const isHls = /\.m3u8(\?|$)/i.test(trackCustomAudio);
+    const cached = getCachedExternalAudioResolution(trackCustomAudio);
+    if (cached && cached.src) {
       setResolvedExternalAudioSrc({
         rawKey: trackCustomAudio,
-        src: trackCustomAudio,
-        isHls,
+        src: cached.src,
+        isHls: cached.isHls,
         resolving: false,
       });
       return;
     }
 
-    const cached = getCachedOkRuOrVkNativeStream(trackCustomAudio);
-    if (cached && cached.ok && (cached.streams.length > 0 || cached.proxiedHlsUrl)) {
-      const sortedLow = [...cached.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
-      const audioStream = sortedLow[0]?.proxiedUrl || cached.proxiedHlsUrl || '';
+    if (!isExtractorAudioUrl(trackCustomAudio)) {
+      const normalized = normalizeUniversalAssetUrl(trackCustomAudio);
+      const isHls = /\.m3u8(\?|$)/i.test(normalized);
       setResolvedExternalAudioSrc({
         rawKey: trackCustomAudio,
-        src: audioStream,
-        isHls: !sortedLow[0]?.proxiedUrl && Boolean(cached.proxiedHlsUrl),
+        src: normalized,
+        isHls,
         resolving: false,
       });
       return;
@@ -1194,16 +1195,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     let cancelled = false;
     setResolvedExternalAudioSrc({ rawKey: trackCustomAudio, src: '', isHls: false, resolving: true });
-    resolveOkRuOrVkNativeStream(trackCustomAudio, false)
+    resolveExternalAudioStream(trackCustomAudio)
       .then((res) => {
         if (cancelled) return;
-        if (res.ok && (res.streams.length > 0 || res.proxiedHlsUrl)) {
-          const sortedLow = [...res.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
-          const audioStream = sortedLow[0]?.proxiedUrl || res.proxiedHlsUrl || '';
+        if (res.ok && res.src) {
           setResolvedExternalAudioSrc({
             rawKey: trackCustomAudio,
-            src: audioStream,
-            isHls: !sortedLow[0]?.proxiedUrl && Boolean(res.proxiedHlsUrl),
+            src: res.src,
+            isHls: res.isHls,
             resolving: false,
           });
         } else {
@@ -1377,9 +1376,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       }
     }
 
-    // Only mute native <video> when external <audio> is actively playing without error
+    // Only mute native <video> (both muted=true and volume=0) when external audio is actively playing without error
     if (isExternalAudioConfirmedPlaying && !aud.paused) {
       vid.muted = true;
+      vid.volume = 0;
     } else {
       vid.muted = isAudioMuted;
       if (!isSubtitleAudioOn) {
@@ -1395,6 +1395,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             setIsExternalAudioConfirmedPlaying(true);
             if (videoRef.current) {
               videoRef.current.muted = true;
+              videoRef.current.volume = 0;
             }
           })
           .catch(() => {
@@ -1675,7 +1676,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (isExternalAudioActive) {
       if (vid) {
         vid.muted = shouldMuteVideoForExternalAudio ? true : isAudioMuted;
-        if (!shouldMuteVideoForExternalAudio && !isSubtitleAudioOn) {
+        if (shouldMuteVideoForExternalAudio) {
+          vid.volume = 0;
+        } else if (!isSubtitleAudioOn) {
           vid.volume = audibleCorsSupported && wantsAudioStudio ? (isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume))) : nativeVol;
         }
       }
@@ -1696,7 +1699,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             .play()
             .then(() => {
               setIsExternalAudioConfirmedPlaying(true);
-              if (videoRef.current) videoRef.current.muted = true;
+              if (videoRef.current) {
+                videoRef.current.muted = true;
+                videoRef.current.volume = 0;
+              }
             })
             .catch(() => {});
         }
@@ -3054,6 +3060,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   voiceEngineRef.current?.attachVideo(vid);
                   if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
+                    vid.volume = 0;
                   } else {
                     vid.muted = isAudioMuted;
                     vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -3118,6 +3125,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   setMediaErrorState(null);
                   if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
+                    vid.volume = 0;
                   } else {
                     vid.muted = isAudioMuted;
                     vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -3136,9 +3144,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                   lastPlaybackTickMsRef.current = Date.now();
                   bumpPlayerControlsActivity();
-                  if (vid && !shouldMuteVideoForExternalAudio) {
-                    vid.muted = isAudioMuted;
-                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                  if (vid) {
+                    if (shouldMuteVideoForExternalAudio) {
+                      vid.muted = true;
+                      vid.volume = 0;
+                    } else {
+                      vid.muted = isAudioMuted;
+                      vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                    }
                   }
                   voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
@@ -3163,9 +3176,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   setIsVideoFrameReady(true);
                   setMediaErrorState(null);
                   lastPlaybackTickMsRef.current = Date.now();
-                  if (vid && !shouldMuteVideoForExternalAudio) {
-                    vid.muted = isAudioMuted;
-                    vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                  if (vid) {
+                    if (shouldMuteVideoForExternalAudio) {
+                      vid.muted = true;
+                      vid.volume = 0;
+                    } else {
+                      vid.muted = isAudioMuted;
+                      vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+                    }
                   }
                   voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
@@ -3354,9 +3372,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }
                   }
 
-                  // 7. External Audio Sync (> 0.25s drift auto-resync)
+                  // 7. External Audio Sync (> 0.25s drift auto-resync + strict main video mute guard)
                   if (isExternalAudioActive && audioRef.current) {
                     const aud = audioRef.current;
+                    if (isExternalAudioConfirmedPlaying && !aud.paused) {
+                      vid.muted = true;
+                      vid.volume = 0;
+                    }
                     if (!vid.paused) {
                       const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
                       if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.25) {
@@ -3379,13 +3401,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 className={`w-full h-full ${videoFitClass} bg-black transition-[filter] duration-300`}
               />
 
-              {/* Track-Specific Synced External Dubbed Audio Element (supports direct MP3 & OK.ru/VK audio extraction with silent fallback) */}
+              {/* Track-Specific Synced External Dubbed Audio Element (hidden <video> supports MP3, M4A, Archive.org, OK.ru/VK progressive MP4 & HLS with silent fallback) */}
               {isExternalAudioActive && activeExternalAudioUrl && (
-                <audio
+                <video
                   ref={audioRef}
                   key={`${activeAudio}-${activeStreamEp}-${activeExternalAudioUrl}`}
                   src={resolvedExternalAudioSrc.isHls ? undefined : activeExternalAudioUrl}
+                  playsInline
                   preload="auto"
+                  style={{ display: 'none' }}
                   onLoadedMetadata={() => syncAudioToVideo()}
                   onCanPlay={() => {
                     syncAudioToVideo(!videoRef.current?.paused);
@@ -3394,6 +3418,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     setIsExternalAudioConfirmedPlaying(true);
                     if (videoRef.current) {
                       videoRef.current.muted = true;
+                      videoRef.current.volume = 0;
                     }
                   }}
                   onPause={() => {
@@ -4709,164 +4734,179 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   return (
                     <div
                       key={`mob-ep-${ep.id}`}
-                      className={`flex items-center gap-3 p-2.5 rounded-xl bg-[#10121c] border transition-colors ${
+                      className={`flex flex-col gap-2.5 p-3 rounded-xl bg-[#10121c] border overflow-hidden w-full transition-colors ${
                         isCurrentlyPlaying
                           ? 'border-[#e50914] shadow-[0_0_16px_rgba(229,9,20,0.22)]'
                           : 'border-white/[0.08] hover:border-red-500/40'
                       }`}
                     >
-                      {/* Left: 16:9 Thumbnail with centered subtle play & EP X badge */}
-                      <div
-                        onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                        className="w-28 h-16 rounded-lg flex-shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
-                      >
-                        <img
-                          src={epCustomThumbnail}
-                          alt={ep.title}
-                          referrerPolicy="no-referrer"
-                          className={`w-full h-full object-cover ${
-                            isSpoilerBlurred ? 'blur-md brightness-50 scale-110' : ''
-                          }`}
-                        />
-                        {hasStreamLink && (
-                          <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
-                            <div className="w-7 h-7 rounded-full bg-[#e50914]/90 flex items-center justify-center shadow">
-                              <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
+                      {/* Row 1: Thumbnail + Full Readable Title + Watched Checkmark */}
+                      <div className="flex items-center gap-3 min-w-0 w-full">
+                        <div
+                          onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
+                          className="w-24 sm:w-28 aspect-video rounded-lg shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
+                        >
+                          <img
+                            src={epCustomThumbnail}
+                            alt={ep.title}
+                            referrerPolicy="no-referrer"
+                            className={`w-full h-full object-cover ${
+                              isSpoilerBlurred ? 'blur-md brightness-50 scale-110' : ''
+                            }`}
+                          />
+                          {hasStreamLink && (
+                            <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                              <div className="w-7 h-7 rounded-full bg-[#e50914]/90 flex items-center justify-center shadow">
+                                <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
+                              </div>
                             </div>
+                          )}
+                          <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 text-white text-[9px] font-black leading-none border border-white/15">
+                            EP {numericEp}
+                          </span>
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <h4
+                            onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
+                            className={`text-[13px] sm:text-sm font-bold text-white line-clamp-2 leading-snug cursor-pointer ${
+                              isSpoilerBlurred ? 'blur-sm select-none' : ''
+                            }`}
+                          >
+                            {ep.title && !/^ep(isode)?\s*\d+$/i.test(ep.title.trim())
+                              ? `Episode ${numericEp} • ${ep.title}`
+                              : `Episode ${numericEp} — ${drama.title}`}
+                          </h4>
+                          <div className="flex items-center justify-between gap-2 mt-1 min-w-0">
+                            <p className="text-[11px] text-emerald-400 font-semibold truncate">
+                              {trackIcon} {ep.audio} • {ep.quality || '1080p FHD'}
+                            </p>
+                            <button
+                              onClick={() => onToggleEpisodeWatched(drama.id, ep.episodeNumber)}
+                              className="shrink-0 cursor-pointer p-0.5"
+                              title={isWatched ? 'Mark as Unwatched' : 'Mark as Watched'}
+                            >
+                              {isWatched ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                              ) : (
+                                <Circle className="w-4 h-4 text-zinc-500" />
+                              )}
+                            </button>
                           </div>
-                        )}
-                        <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 text-white text-[9px] font-black leading-none border border-white/15">
-                          EP {numericEp}
-                        </span>
+                          {isSpoilerBlurred && (
+                            <button
+                              onClick={() => setRevealedSpoilerEpKeys((prev) => ({ ...prev, [ep.id]: true }))}
+                              className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-bold cursor-pointer"
+                            >
+                              👁 Reveal
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Center: Readable Episode Title + Audio/Quality Tag */}
-                      <div className="flex-1 min-w-0">
-                        <h4
-                          onClick={(e) => hasStreamLink && handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                          className={`text-xs sm:text-sm font-bold text-white line-clamp-2 leading-snug cursor-pointer ${
-                            isSpoilerBlurred ? 'blur-sm select-none' : ''
+                      {/* Row 2: Full-Width Grid Action Buttons (Never Overflow Screen) */}
+                      {(hasStreamLink || hasTelegramLink) && (
+                        <div
+                          className={`grid gap-2 w-full ${
+                            hasStreamLink && hasTelegramLink ? 'grid-cols-2' : 'grid-cols-1'
                           }`}
                         >
-                          {ep.title && !/^ep(isode)?\s*\d+$/i.test(ep.title.trim())
-                            ? `Episode ${numericEp} • ${ep.title}`
-                            : `Episode ${numericEp} — ${drama.title}`}
-                        </h4>
-                        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                          <p className="text-[11px] text-emerald-400 font-medium truncate">
-                            {trackIcon} {ep.audio} • {ep.quality || '1080p FHD'}
-                          </p>
-                          <button
-                            onClick={() => onToggleEpisodeWatched(drama.id, ep.episodeNumber)}
-                            className="shrink-0 cursor-pointer p-0.5"
-                            title={isWatched ? 'Mark as Unwatched' : 'Mark as Watched'}
-                          >
-                            {isWatched ? (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Circle className="w-3.5 h-3.5 text-zinc-500" />
-                            )}
-                          </button>
+                          {hasStreamLink && (
+                            <button
+                              onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
+                              className="w-full justify-center bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-2 rounded-lg text-xs font-extrabold shadow flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-white shrink-0" />
+                              <span className="truncate">Stream HD</span>
+                            </button>
+                          )}
+                          {hasTelegramLink && (
+                            <a
+                              href={ep.telegramUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-full justify-center bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors"
+                              title="Open on Telegram"
+                            >
+                              <Send className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">Telegram</span>
+                            </a>
+                          )}
                         </div>
-                        {isSpoilerBlurred && (
-                          <button
-                            onClick={() => setRevealedSpoilerEpKeys((prev) => ({ ...prev, [ep.id]: true }))}
-                            className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-bold cursor-pointer"
-                          >
-                            👁 Reveal
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Right: Clear Side-by-Side Stream HD + Telegram Action Buttons */}
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {hasStreamLink && (
-                          <button
-                            onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                            className="bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-2 rounded-lg text-xs font-extrabold shadow whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Play className="w-3 h-3 fill-white" />
-                            <span>Stream HD</span>
-                          </button>
-                        )}
-                        {hasTelegramLink && (
-                          <a
-                            href={ep.telegramUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-colors"
-                            title="Open on Telegram"
-                          >
-                            <Send className="w-3.5 h-3.5 shrink-0" />
-                            <span>Telegram</span>
-                          </a>
-                        )}
-                      </div>
+                      )}
                     </div>
                   );
                 })
               ) : (
-                <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#0e1017] border border-white/10 hover:border-red-500/40">
-                  <div
-                    onClick={(e) =>
-                      activeTrackStreamables.length > 0 &&
-                      handleOpenStream(
-                        activeTrackStreamables[0].epNum,
-                        activeAudio,
-                        activeTrackStreamables[0].episodeKey,
-                        e
-                      )
-                    }
-                    className="w-24 h-14 sm:w-28 sm:h-16 rounded-lg flex-shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
-                  >
-                    <img
-                      src={drama.thumbnailUrl || drama.backdrop || drama.poster}
-                      alt={drama.title}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                      <Play className="w-4 h-4 text-white fill-white" />
+                <div className="flex flex-col gap-2.5 p-3 rounded-xl bg-[#0e1017] border border-white/10 hover:border-red-500/40 overflow-hidden w-full">
+                  <div className="flex items-center gap-3 min-w-0 w-full">
+                    <div
+                      onClick={(e) =>
+                        activeTrackStreamables.length > 0 &&
+                        handleOpenStream(
+                          activeTrackStreamables[0].epNum,
+                          activeAudio,
+                          activeTrackStreamables[0].episodeKey,
+                          e
+                        )
+                      }
+                      className="w-24 sm:w-28 aspect-video rounded-lg shrink-0 relative overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer"
+                    >
+                      <img
+                        src={drama.thumbnailUrl || drama.backdrop || drama.poster}
+                        alt={drama.title}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <Play className="w-4 h-4 text-white fill-white" />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-[13px] sm:text-sm font-bold text-white leading-snug line-clamp-2">
+                        {drama.title}
+                      </h4>
+                      <p className="text-[11px] text-emerald-400 font-semibold mt-0.5 truncate">
+                        {activeAudio} • 1080p FHD
+                      </p>
                     </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-[13px] sm:text-sm font-bold text-white leading-snug line-clamp-1">
-                      {drama.title}
-                    </h4>
-                    <p className="text-[11px] text-emerald-400 font-medium mt-0.5 truncate">
-                      {activeAudio} • 1080p FHD
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {activeTrackStreamables.length > 0 && (
-                      <button
-                        onClick={(e) =>
-                          handleOpenStream(
-                            activeTrackStreamables[0].epNum,
-                            activeAudio,
-                            activeTrackStreamables[0].episodeKey,
-                            e
-                          )
-                        }
-                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold px-3 py-2 rounded-lg shadow whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Play className="w-3 h-3 fill-white" />
-                        <span>Stream HD</span>
-                      </button>
-                    )}
-                    {currentAudioLink && (
-                      <a
-                        href={currentAudioLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-colors"
-                        title="Open on Telegram"
-                      >
-                        <Send className="w-3.5 h-3.5 shrink-0" />
-                        <span>Telegram</span>
-                      </a>
-                    )}
-                  </div>
+                  {(activeTrackStreamables.length > 0 || currentAudioLink) && (
+                    <div
+                      className={`grid gap-2 w-full ${
+                        activeTrackStreamables.length > 0 && currentAudioLink ? 'grid-cols-2' : 'grid-cols-1'
+                      }`}
+                    >
+                      {activeTrackStreamables.length > 0 && (
+                        <button
+                          onClick={(e) =>
+                            handleOpenStream(
+                              activeTrackStreamables[0].epNum,
+                              activeAudio,
+                              activeTrackStreamables[0].episodeKey,
+                              e
+                            )
+                          }
+                          className="w-full justify-center bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold px-3 py-2 rounded-lg shadow flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white shrink-0" />
+                          <span className="truncate">Stream HD</span>
+                        </button>
+                      )}
+                      {currentAudioLink && (
+                        <a
+                          href={currentAudioLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full justify-center bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors"
+                          title="Open on Telegram"
+                        >
+                          <Send className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">Telegram</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -92,6 +92,8 @@ interface AdminStudioModalProps {
   onUpdateTelegramBotSettings?: (settings: TelegramBotSettings) => void;
   adConfig?: AdConfig;
   onUpdateAdConfig?: (config: AdConfig) => Promise<{ success: boolean; error?: string }>;
+  customApkUrl?: string;
+  onUpdateCustomApkUrl?: (url: string) => void;
 }
 
 export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
@@ -118,6 +120,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   onUpdateTelegramBotSettings,
   adConfig,
   onUpdateAdConfig,
+  customApkUrl = '/AsiaFlix-Prime.apk',
+  onUpdateCustomApkUrl,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(isAuthenticatedParent);
   const [authMethod, setAuthMethod] = useState<'pin' | 'password'>('pin');
@@ -148,6 +152,9 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     return localStorage.getItem('asiaflix_google_apps_script_url') || '';
   });
   const [appsScriptFeedback, setAppsScriptFeedback] = useState<string | null>(null);
+  const [apkUrlDraft, setApkUrlDraft] = useState<string>(customApkUrl);
+  const [apkSaveFeedback, setApkSaveFeedback] = useState<string | null>(null);
+  const [installLinkCopied, setInstallLinkCopied] = useState<boolean>(false);
 
   // Telegram Bot Local State
   const [botDraft, setBotDraft] = useState<TelegramBotSettings>(() => {
@@ -182,6 +189,10 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       setSheetUrlDraft(googleSheetUrl);
     }
   }, [googleSheetUrl]);
+
+  useEffect(() => {
+    setApkUrlDraft(customApkUrl);
+  }, [customApkUrl]);
 
   useEffect(() => {
     if (telegramBotSettings) {
@@ -3417,6 +3428,74 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>View Live Sheet CSV</span>
                     </a>
+                  </div>
+                </div>
+
+                {/* Direct 1-Click App Install Link (?install=app) & Custom .APK Download URL */}
+                <div className="p-4 rounded-xl bg-gradient-to-r from-red-950/30 via-[#14151f] to-amber-950/20 border border-red-500/30 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-white font-black text-xs">
+                      <Link2 className="w-4 h-4 text-red-400" />
+                      <span>📲 Direct App Install Link &amp; Official .APK URL</span>
+                    </div>
+                    <span className="text-[10px] text-amber-300 font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40">
+                      Telegram Share Ready
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Share the direct 1-click install URL on Telegram to open the app installer immediately, and optionally link your custom hosted Android <strong>.apk</strong> release file.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={typeof window !== 'undefined' ? `${window.location.origin}/?install=app` : 'https://asiaflixprime.pages.dev/?install=app'}
+                      className="flex-1 min-w-[200px] px-3 py-2 rounded-lg bg-black/50 border border-white/10 text-sky-300 text-xs font-mono outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const directUrl = `${window.location.origin}/?install=app`;
+                        navigator.clipboard?.writeText(directUrl).catch(() => {});
+                        setInstallLinkCopied(true);
+                        window.setTimeout(() => setInstallLinkCopied(false), 2400);
+                      }}
+                      className="px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{installLinkCopied ? 'Copied!' : 'Copy ?install=app Link'}</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[11px] font-bold text-zinc-300">
+                      Custom Android .APK Direct Download URL (optional, defaults to /AsiaFlix-Prime.apk)
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="url"
+                        value={apkUrlDraft}
+                        onChange={(e) => setApkUrlDraft(e.target.value)}
+                        placeholder="https://github.com/.../AsiaFlix-Prime.apk"
+                        className="flex-1 min-w-[220px] px-3 py-2 rounded-lg bg-black/50 border border-white/10 text-white text-xs font-mono outline-none focus:border-red-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onUpdateCustomApkUrl?.(apkUrlDraft);
+                          setApkSaveFeedback('✅ Custom .APK URL saved for all Download buttons!');
+                          window.setTimeout(() => setApkSaveFeedback(null), 3000);
+                        }}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black cursor-pointer"
+                      >
+                        Save .APK URL
+                      </button>
+                    </div>
+                    {apkSaveFeedback && (
+                      <p className="text-[11px] text-emerald-300 font-bold">{apkSaveFeedback}</p>
+                    )}
                   </div>
                 </div>
 

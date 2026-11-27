@@ -583,6 +583,19 @@ export default function App() {
     );
   });
   const [directAppLinkCopied, setDirectAppLinkCopied] = useState<boolean>(false);
+  const [customApkUrl, setCustomApkUrl] = useState<string>(() => {
+    if (typeof window === 'undefined') return '/AsiaFlix-Prime.apk';
+    return localStorage.getItem('asiaflix_custom_apk_url') || '/AsiaFlix-Prime.apk';
+  });
+  const handleUpdateCustomApkUrl = (nextUrl: string) => {
+    const trimmed = (nextUrl || '').trim() || '/AsiaFlix-Prime.apk';
+    setCustomApkUrl(trimmed);
+    try {
+      localStorage.setItem('asiaflix_custom_apk_url', trimmed);
+    } catch {
+      // ignore storage quota errors
+    }
+  };
 
   useEffect(() => {
     // Preload Official Channel Logo so first-click 8s Cinema Intro & Watermark render at 0ms
@@ -1361,7 +1374,9 @@ export default function App() {
 
       const urlMatch = lineForTelegram.match(/https?:\/\/[^\s"',|<>]+/);
       if (!urlMatch) return;
-      const url = urlMatch[0];
+      const rawMatchedUrl = urlMatch[0];
+      const isTelegramUrl = /(?:t\.me|telegram\.me|telegram\.dog)\//i.test(rawMatchedUrl);
+      const url = isTelegramUrl ? rawMatchedUrl : normalizeDirectMediaUrl(rawMatchedUrl);
 
       // Match explicit episode range or episode number (e.g. "Ep 1-3", "Episodes 7-10", "Ep 4", "Part 2", "E05")
       const rangeMatch =
@@ -1373,32 +1388,39 @@ export default function App() {
 
       if (rangeMatch) {
         const epRange = rangeMatch[1].replace(/\s+/g, '');
-        episodes.push({
+        const newEp: EpisodeItem = {
           id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epRange}`,
           episodeNumber: epRange,
           title: `${cleanTitle} — Episodes ${epRange} (${audioLabel})`,
           audio,
-          telegramUrl: url,
+          telegramUrl: isTelegramUrl ? url : '',
           duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
           quality: '1080p FHD',
           isMerged: true,
           format: 'merged',
-        });
+        };
+        if (!isTelegramUrl) assignStream(newEp, url);
+        episodes.push(newEp);
       } else if (singleMatch) {
         const epNum = parseInt(singleMatch[1], 10);
-        episodes.push({
+        const newEp: EpisodeItem = {
           id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${epNum}`,
           episodeNumber: epNum,
           title: isFilm ? `${cleanTitle} (1080p FHD Movie)` : `${cleanTitle} — Episode ${epNum} (${audioLabel})`,
           audio,
-          telegramUrl: url,
+          telegramUrl: isTelegramUrl ? url : '',
           duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
           quality: '1080p FHD',
           isMerged: false,
           format: isFilm ? 'movie' : 'single',
-        });
+        };
+        if (!isTelegramUrl) {
+          assignStream(newEp, url);
+          if (!streamMap.has(epNum)) streamMap.set(epNum, url);
+        }
+        episodes.push(newEp);
       } else {
-        // Direct link without explicit Ep label (e.g. "https://t.me/c/...") -> Master Pack / Full Series / Movie
+        // Direct link without explicit Ep label (e.g. "https://t.me/c/..." or direct video link) -> Master Pack / Full Series / Movie
         const telegramOnlyLineCount = rawLines.filter(
           (l) =>
             l
@@ -1407,7 +1429,7 @@ export default function App() {
         ).length;
         const isMulti = telegramOnlyLineCount > 1;
         const fallbackEp = isFilm ? 'Full Movie' : isMulti ? idx + 1 : 'Full Series Batch';
-        episodes.push({
+        const newEp: EpisodeItem = {
           id: `ep-${dramaId}-${audio.replace(/[^a-z0-9]/gi, '')}-${isMulti ? idx + 1 : 'batch'}`,
           episodeNumber: fallbackEp,
           title: isFilm
@@ -1416,12 +1438,18 @@ export default function App() {
             ? `${cleanTitle} — Episode ${idx + 1} (${audioLabel})`
             : `${cleanTitle} — Full Series Batch (${audioLabel})`,
           audio,
-          telegramUrl: url,
+          telegramUrl: isTelegramUrl ? url : '',
           duration: detailsRaw || (isFilm ? 'Full Movie' : '1080p FHD'),
           quality: '1080p FHD',
           isMerged: !isFilm,
           format: isFilm ? 'movie' : isMulti ? 'single' : 'merged',
-        });
+        };
+        if (!isTelegramUrl) {
+          assignStream(newEp, url);
+          const epIdxNum = isFilm ? 1 : isMulti ? idx + 1 : 1;
+          if (!streamMap.has(epIdxNum)) streamMap.set(epIdxNum, url);
+        }
+        episodes.push(newEp);
       }
     });
 
@@ -2304,6 +2332,42 @@ export default function App() {
                 existing.subtitles = { ...(existing.subtitles || {}), ...ep.subtitles };
               }
               if (ep.subtitleLink && !existing.subtitleLink) existing.subtitleLink = ep.subtitleLink;
+            }
+          });
+          // Cross-row single-video sharing: if any track added custom audio across merged rows, share matching episode video stream
+          const sharedVideoByEp = new Map<number, string>();
+          prev.episodes.forEach((ep) => {
+            const epNum =
+              typeof ep.episodeNumber === 'number'
+                ? ep.episodeNumber
+                : ep.episodeNumber === 'Full Movie'
+                ? 1
+                : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+            const candidateVid = ep.engSubStreamLink || ep.streamLink || ep.hindiFanDubStreamLink;
+            if (epNum > 0 && candidateVid && !sharedVideoByEp.has(epNum)) {
+              sharedVideoByEp.set(epNum, candidateVid);
+            }
+          });
+          prev.episodes.forEach((ep) => {
+            const epNum =
+              typeof ep.episodeNumber === 'number'
+                ? ep.episodeNumber
+                : ep.episodeNumber === 'Full Movie'
+                ? 1
+                : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
+            const sharedVid = epNum > 0 ? sharedVideoByEp.get(epNum) : undefined;
+            if (!sharedVid) return;
+            if (ep.audio === 'Hindi Dubbed' && ep.hindiCustomAudioLink && !ep.streamLink) {
+              ep.streamLink = sharedVid;
+              if (!prev.availableAudios.includes('Hindi Dubbed')) prev.availableAudios.push('Hindi Dubbed');
+            }
+            if ((ep.audio === 'Hindi Fan Dubbed' || ep.audio === 'Fan Dubbed') && ep.fanDubCustomAudioLink && !ep.hindiFanDubStreamLink) {
+              ep.hindiFanDubStreamLink = sharedVid;
+              if (!prev.availableAudios.includes('Hindi Fan Dubbed')) prev.availableAudios.push('Hindi Fan Dubbed');
+            }
+            if (ep.audio === 'Original / Eng Sub' && ep.origCustomAudioLink && !ep.engSubStreamLink) {
+              ep.engSubStreamLink = sharedVid;
+              if (!prev.availableAudios.includes('Original / Eng Sub')) prev.availableAudios.push('Original / Eng Sub');
             }
           });
           if (prev.thumbnailUrl || prev.episodeThumbnails) {
@@ -4255,6 +4319,8 @@ export default function App() {
           onUpdateTelegramBotSettings={setTelegramBotSettings}
           adConfig={adConfig}
           onUpdateAdConfig={handleUpdateAdConfig}
+          customApkUrl={customApkUrl}
+          onUpdateCustomApkUrl={handleUpdateCustomApkUrl}
         />
       )}
 
@@ -4552,7 +4618,7 @@ export default function App() {
                 src={transparentAppLogo}
                 alt="AsiaFlix Prime"
                 referrerPolicy="no-referrer"
-                style={{ background: 'transparent' }}
+                style={{ background: 'transparent', mixBlendMode: 'screen' }}
                 className="w-12 h-12 object-contain shrink-0 drop-shadow-[0_0_10px_rgba(229,9,20,0.55)]"
               />
               <div>
@@ -4577,11 +4643,17 @@ export default function App() {
 
               {/* Option 2: Download Official Android .APK File */}
               <a
-                href="/AsiaFlix-Prime.apk"
-                download="AsiaFlix-Prime.apk"
+                href={customApkUrl || '/AsiaFlix-Prime.apk'}
+                download={customApkUrl && customApkUrl.startsWith('http') ? undefined : 'AsiaFlix-Prime.apk'}
+                target={customApkUrl && customApkUrl.startsWith('http') ? '_blank' : undefined}
+                rel={customApkUrl && customApkUrl.startsWith('http') ? 'noopener noreferrer' : undefined}
                 onClick={async (e) => {
+                  const targetApk = customApkUrl || '/AsiaFlix-Prime.apk';
+                  if (targetApk.startsWith('http')) {
+                    return;
+                  }
                   try {
-                    const head = await fetch('/AsiaFlix-Prime.apk', { method: 'HEAD' });
+                    const head = await fetch(targetApk, { method: 'HEAD' });
                     const ct = head.headers.get('content-type') || '';
                     if (!head.ok || ct.includes('text/html')) {
                       e.preventDefault();

@@ -721,6 +721,126 @@ export async function resolveOkRuOrVkNativeStream(
   return reqPromise;
 }
 
+const archiveOrgAudioCache = new Map<string, string>();
+const archiveOrgAudioInflight = new Map<string, Promise<string | null>>();
+
+export function parseArchiveOrgAudioCandidate(rawUrl: string): { id: string; hasDirectMediaFile: boolean } | null {
+  const m = (rawUrl || '').trim().match(
+    /^https?:\/\/(?:[\w-]+\.)?archive\.org\/(?:details|embed|download|stream)\/([^/?#]+)(\/[^?#]+)?/i
+  );
+  if (!m) return null;
+  const id = m[1];
+  const filePart = m[2] || '';
+  const hasDirectMediaFile =
+    Boolean(filePart && filePart !== '/') &&
+    /\.(mp3|m4a|aac|ogg|opus|wav|mp4|m4v|m3u8|webm|mkv|mov)$/i.test(filePart.split(/[?#]/)[0]);
+  return { id, hasDirectMediaFile };
+}
+
+export async function resolveArchiveOrgAudioStream(identifier: string): Promise<string | null> {
+  const cleanId = decodeURIComponent((identifier || '').trim());
+  if (!cleanId) return null;
+
+  const mem = archiveOrgAudioCache.get(cleanId);
+  if (mem) return mem;
+
+  const inflight = archiveOrgAudioInflight.get(cleanId);
+  if (inflight) return inflight;
+
+  const task = (async (): Promise<string | null> => {
+    try {
+      const resp = await fetch(`https://archive.org/metadata/${encodeURIComponent(cleanId)}`);
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as {
+        files?: Array<{
+          name?: string;
+          format?: string;
+          height?: string | number;
+          size?: string | number;
+          source?: string;
+        }>;
+      };
+      const files = Array.isArray(data?.files) ? data.files : [];
+      if (files.length === 0) return null;
+
+      const buildDirectUrl = (fileName: string) => {
+        const encodedFilePath = fileName
+          .split('/')
+          .map((seg) => encodeURIComponent(seg))
+          .join('/');
+        return `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
+      };
+
+      // Priority 1: Dedicated audio files (.mp3, .m4a, .aac, .ogg, .opus, .wav)
+      const audioFiles = files.filter((f) => {
+        const name = (f.name || '').toLowerCase();
+        return /\.(mp3|m4a|aac|ogg|opus|wav)$/i.test(name) && !name.includes('__ia_thumb');
+      });
+
+      if (audioFiles.length > 0) {
+        const scoredAudio = [...audioFiles].sort((a, b) => {
+          const score = (f: (typeof audioFiles)[number]) => {
+            const name = (f.name || '').toLowerCase();
+            let s = 0;
+            if (name.endsWith('.mp3')) s += 50000;
+            else if (name.endsWith('.m4a') || name.endsWith('.aac')) s += 40000;
+            else if (name.endsWith('.ogg') || name.endsWith('.opus')) s += 25000;
+            if (f.source === 'original') s += 10000;
+            if (name.includes('sample') || name.includes('preview')) s -= 20000;
+            return s;
+          };
+          return score(b) - score(a);
+        });
+        const bestAudio = scoredAudio[0];
+        if (bestAudio?.name) {
+          const url = buildDirectUrl(bestAudio.name);
+          archiveOrgAudioCache.set(cleanId, url);
+          return url;
+        }
+      }
+
+      // Priority 2: Video container (.mp4, .m4v, .mkv, .webm) when dubbed audio is hosted as video
+      const videoFiles = files.filter((f) => {
+        const name = (f.name || '').toLowerCase();
+        return /\.(mp4|m4v|mkv|webm|mov)$/i.test(name) && !name.includes('__ia_thumb');
+      });
+
+      if (videoFiles.length > 0) {
+        const scoredVideo = [...videoFiles].sort((a, b) => {
+          const score = (f: (typeof videoFiles)[number]) => {
+            const name = (f.name || '').toLowerCase();
+            const h = Number(f.height) || 0;
+            let s = 0;
+            if (name.endsWith('.mp4')) s += 40000;
+            else if (name.endsWith('.m4v') || name.endsWith('.webm')) s += 25000;
+            // Prefer lighter bandwidth tier when using video only for its audio track
+            if (h > 0 && h <= 480) s += 12000;
+            else if (h > 0 && h <= 720) s += 8000;
+            if (name.endsWith('.ia.mp4')) s += 5000;
+            return s;
+          };
+          return score(b) - score(a);
+        });
+        const bestVid = scoredVideo[0];
+        if (bestVid?.name) {
+          const url = buildDirectUrl(bestVid.name);
+          archiveOrgAudioCache.set(cleanId, url);
+          return url;
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    } finally {
+      archiveOrgAudioInflight.delete(cleanId);
+    }
+  })();
+
+  archiveOrgAudioInflight.set(cleanId, task);
+  return task;
+}
+
 export async function preResolveStreamUrl(rawUrl?: string): Promise<void> {
   if (!rawUrl) return;
   const meta = resolveUniversalVideoSource(rawUrl, 0);
@@ -746,12 +866,14 @@ export function normalizeUniversalAssetUrl(rawUrl: string): string {
     trimmed = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}/${ghBlobMatch[3]}`;
   }
 
-  // 3. Archive.org /details/ or /embed/ <id>(/<file>)? -> /download/<id>(/<file>)?
+  // 3. Archive.org /details/ or /embed/ <id>/<file> -> /download/<id>/<file> ONLY when an actual filename exists
   const archiveMatch = trimmed.match(/^https?:\/\/(?:www\.)?archive\.org\/(?:details|embed|download)\/([^/?#]+)(\/[^?#]+)?/i);
   if (archiveMatch) {
     const id = archiveMatch[1];
     const filePart = archiveMatch[2] || '';
-    trimmed = `https://archive.org/download/${id}${filePart}`;
+    if (filePart && filePart.length > 1) {
+      trimmed = `https://archive.org/download/${id}${filePart}`;
+    }
   }
 
   // 4. Google Drive share URL -> direct download when used for audio/srt assets
@@ -774,7 +896,105 @@ export function isDeadExternalAudioUrl(rawUrl?: string): boolean {
 
 export function isExtractorAudioUrl(rawUrl?: string): boolean {
   if (!rawUrl) return false;
-  return /(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru)\/(?:video|videoembed|live)/i.test(rawUrl.trim());
+  const trimmed = rawUrl.trim();
+  if (/(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru)\/(?:video|videoembed|live)/i.test(trimmed)) {
+    return true;
+  }
+  const arch = parseArchiveOrgAudioCandidate(trimmed);
+  if (arch && !arch.hasDirectMediaFile) {
+    return true;
+  }
+  return false;
+}
+
+export function getCachedExternalAudioResolution(
+  rawAudioUrl?: string
+): { src: string; isHls: boolean } | null {
+  const trimmed = (rawAudioUrl || '').trim();
+  if (!trimmed) return null;
+
+  if (/(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru)\/(?:video|videoembed|live)/i.test(trimmed)) {
+    const cached = getCachedOkRuOrVkNativeStream(trimmed);
+    if (cached && cached.ok && (cached.streams.length > 0 || cached.proxiedHlsUrl)) {
+      const sortedLow = [...cached.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
+      const src = sortedLow[0]?.proxiedUrl || cached.proxiedHlsUrl || '';
+      if (src) {
+        return { src, isHls: !sortedLow[0]?.proxiedUrl && Boolean(cached.proxiedHlsUrl) };
+      }
+    }
+    return null;
+  }
+
+  const arch = parseArchiveOrgAudioCandidate(trimmed);
+  if (arch && !arch.hasDirectMediaFile) {
+    const mem = archiveOrgAudioCache.get(decodeURIComponent(arch.id));
+    if (mem) return { src: mem, isHls: false };
+    return null;
+  }
+
+  return null;
+}
+
+export async function resolveExternalAudioStream(
+  rawAudioUrl: string
+): Promise<{ ok: boolean; src: string; isHls: boolean; error?: string }> {
+  const trimmed = (rawAudioUrl || '').trim();
+  if (!trimmed || isDeadExternalAudioUrl(trimmed)) {
+    return { ok: false, src: '', isHls: false, error: 'Invalid or unavailable audio URL.' };
+  }
+
+  // 1. OK.ru / VK Video Extractor (pick lowest-bandwidth progressive MP4 or proxied HLS)
+  if (/(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru)\/(?:video|videoembed|live)/i.test(trimmed)) {
+    const res = await resolveOkRuOrVkNativeStream(trimmed, false);
+    if (res.ok && (res.streams.length > 0 || res.proxiedHlsUrl)) {
+      const sortedLow = [...res.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
+      const src = sortedLow[0]?.proxiedUrl || res.proxiedHlsUrl || '';
+      if (src) {
+        return {
+          ok: true,
+          src,
+          isHls: !sortedLow[0]?.proxiedUrl && Boolean(res.proxiedHlsUrl),
+        };
+      }
+    }
+    return {
+      ok: false,
+      src: '',
+      isHls: false,
+      error: res.error || 'Could not extract OK.ru/VK audio stream.',
+    };
+  }
+
+  // 2. Archive.org Item Page / Embed Extractor (prefer .mp3/.m4a/.aac/.ogg/.opus/.wav, fallback .mp4/.m4v/.mkv/.webm)
+  const arch = parseArchiveOrgAudioCandidate(trimmed);
+  if (arch) {
+    if (arch.hasDirectMediaFile) {
+      const direct = normalizeUniversalAssetUrl(trimmed);
+      return {
+        ok: Boolean(direct),
+        src: direct,
+        isHls: /\.m3u8(\?|$)/i.test(direct),
+      };
+    }
+    const resolvedArchive = await resolveArchiveOrgAudioStream(arch.id);
+    if (resolvedArchive) {
+      return { ok: true, src: resolvedArchive, isHls: false };
+    }
+    return {
+      ok: false,
+      src: '',
+      isHls: false,
+      error: 'No playable audio or MP4 file found in Archive.org item metadata.',
+    };
+  }
+
+  // 3. Direct .mp3 / .m4a / .wav / .mp4 / .m3u8 URL
+  const normalized = normalizeUniversalAssetUrl(trimmed);
+  return {
+    ok: Boolean(normalized),
+    src: normalized,
+    isHls: /\.m3u8(\?|$)/i.test(normalized),
+  };
 }
 
 export function sanitizeExternalAudioUrl(rawUrl?: string): string | undefined {

@@ -451,66 +451,151 @@ export interface ExtractedNativeStreamResult {
 
 const archiveOrgResolvedCache = new Map<string, string>();
 const okVkExtractedCache = new Map<string, ExtractedNativeStreamResult>();
+const archiveOrgInflight = new Map<string, Promise<string | null>>();
+const okVkInflight = new Map<string, Promise<ExtractedNativeStreamResult>>();
+
+const ARCHIVE_SESSION_KEY = 'asiaflix_archive_stream_cache_v1';
+const OKVK_SESSION_KEY = 'asiaflix_okvk_stream_cache_v1';
+const ARCHIVE_TTL_MS = 60 * 60 * 1000; // 60 minutes
+const OKVK_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function readSessionCacheEntry<T>(storageKey: string, entryKey: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    const map = JSON.parse(raw) as Record<string, { value: T; expiresAt: number }>;
+    const entry = map?.[entryKey];
+    if (!entry || typeof entry.expiresAt !== 'number' || entry.expiresAt <= Date.now()) {
+      return null;
+    }
+    return entry.value;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionCacheEntry<T>(storageKey: string, entryKey: string, value: T, ttlMs: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    const map = raw ? (JSON.parse(raw) as Record<string, { value: T; expiresAt: number }>) : {};
+    const now = Date.now();
+    // Prune expired entries & cap size at 40 entries
+    const cleaned: Record<string, { value: T; expiresAt: number }> = {};
+    for (const [k, v] of Object.entries(map)) {
+      if (v && typeof v.expiresAt === 'number' && v.expiresAt > now) {
+        cleaned[k] = v;
+      }
+    }
+    const keys = Object.keys(cleaned);
+    if (keys.length >= 40) {
+      delete cleaned[keys[0]];
+    }
+    cleaned[entryKey] = { value, expiresAt: now + ttlMs };
+    sessionStorage.setItem(storageKey, JSON.stringify(cleaned));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function getCachedArchiveOrgDirectStream(identifier: string): string | null {
+  const cleanId = decodeURIComponent((identifier || '').trim());
+  if (!cleanId) return null;
+  const mem = archiveOrgResolvedCache.get(cleanId);
+  if (mem) return mem;
+  const sess = readSessionCacheEntry<string>(ARCHIVE_SESSION_KEY, cleanId);
+  if (sess) {
+    archiveOrgResolvedCache.set(cleanId, sess);
+    return sess;
+  }
+  return null;
+}
+
+export function getCachedOkRuOrVkNativeStream(rawUrl: string): ExtractedNativeStreamResult | null {
+  const key = (rawUrl || '').trim();
+  if (!key) return null;
+  const mem = okVkExtractedCache.get(key);
+  if (mem && mem.ok) return mem;
+  const sess = readSessionCacheEntry<ExtractedNativeStreamResult>(OKVK_SESSION_KEY, key);
+  if (sess && sess.ok) {
+    okVkExtractedCache.set(key, sess);
+    return sess;
+  }
+  return null;
+}
 
 export async function resolveArchiveOrgDirectStream(identifier: string): Promise<string | null> {
   const cleanId = decodeURIComponent((identifier || '').trim());
   if (!cleanId) return null;
-  const cached = archiveOrgResolvedCache.get(cleanId);
+
+  const cached = getCachedArchiveOrgDirectStream(cleanId);
   if (cached) return cached;
 
-  try {
-    const resp = await fetch(`https://archive.org/metadata/${encodeURIComponent(cleanId)}`);
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as {
-      files?: Array<{
-        name?: string;
-        format?: string;
-        height?: string | number;
-        width?: string | number;
-        size?: string | number;
-        source?: string;
-      }>;
-    };
+  const existingInflight = archiveOrgInflight.get(cleanId);
+  if (existingInflight) return existingInflight;
 
-    const files = Array.isArray(data?.files) ? data.files : [];
-    const videoFiles = files.filter((f) => {
-      const name = (f.name || '').toLowerCase();
-      return /\.(mp4|m4v|webm|mkv|mov|ogv)$/i.test(name) && !name.includes('__ia_thumb');
-    });
+  const reqPromise = (async (): Promise<string | null> => {
+    try {
+      const resp = await fetch(`https://archive.org/metadata/${encodeURIComponent(cleanId)}`);
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as {
+        files?: Array<{
+          name?: string;
+          format?: string;
+          height?: string | number;
+          width?: string | number;
+          size?: string | number;
+          source?: string;
+        }>;
+      };
 
-    if (videoFiles.length === 0) return null;
+      const files = Array.isArray(data?.files) ? data.files : [];
+      const videoFiles = files.filter((f) => {
+        const name = (f.name || '').toLowerCase();
+        return /\.(mp4|m4v|webm|mkv|mov|ogv)$/i.test(name) && !name.includes('__ia_thumb');
+      });
 
-    const scoreFile = (f: (typeof videoFiles)[number]): number => {
-      const name = (f.name || '').toLowerCase();
-      const format = (f.format || '').toLowerCase();
-      let score = 0;
-      if (name.endsWith('.mp4')) score += 100000;
-      else if (name.endsWith('.m4v') || name.endsWith('.webm')) score += 60000;
-      else if (name.endsWith('.mkv') || name.endsWith('.mov')) score += 30000;
+      if (videoFiles.length === 0) return null;
 
-      if (format.includes('mpeg4') || format.includes('h.264') || format.includes('mp4')) score += 25000;
-      if (f.source === 'derivative' && name.endsWith('.mp4')) score += 5000;
-      const height = Number(f.height) || 0;
-      score += height * 10;
-      const sizeMb = Math.min(4000, (Number(f.size) || 0) / (1024 * 1024));
-      score += sizeMb;
-      return score;
-    };
+      const scoreFile = (f: (typeof videoFiles)[number]): number => {
+        const name = (f.name || '').toLowerCase();
+        const format = (f.format || '').toLowerCase();
+        let score = 0;
+        if (name.endsWith('.mp4')) score += 100000;
+        else if (name.endsWith('.m4v') || name.endsWith('.webm')) score += 60000;
+        else if (name.endsWith('.mkv') || name.endsWith('.mov')) score += 30000;
 
-    videoFiles.sort((a, b) => scoreFile(b) - scoreFile(a));
-    const best = videoFiles[0];
-    if (!best?.name) return null;
+        if (format.includes('mpeg4') || format.includes('h.264') || format.includes('mp4')) score += 25000;
+        if (f.source === 'derivative' && name.endsWith('.mp4')) score += 5000;
+        const height = Number(f.height) || 0;
+        score += height * 10;
+        const sizeMb = Math.min(4000, (Number(f.size) || 0) / (1024 * 1024));
+        score += sizeMb;
+        return score;
+      };
 
-    const encodedFilePath = best.name
-      .split('/')
-      .map((seg) => encodeURIComponent(seg))
-      .join('/');
-    const directUrl = `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
-    archiveOrgResolvedCache.set(cleanId, directUrl);
-    return directUrl;
-  } catch {
-    return null;
-  }
+      videoFiles.sort((a, b) => scoreFile(b) - scoreFile(a));
+      const best = videoFiles[0];
+      if (!best?.name) return null;
+
+      const encodedFilePath = best.name
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      const directUrl = `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
+      archiveOrgResolvedCache.set(cleanId, directUrl);
+      writeSessionCacheEntry(ARCHIVE_SESSION_KEY, cleanId, directUrl, ARCHIVE_TTL_MS);
+      return directUrl;
+    } catch {
+      return null;
+    } finally {
+      archiveOrgInflight.delete(cleanId);
+    }
+  })();
+
+  archiveOrgInflight.set(cleanId, reqPromise);
+  return reqPromise;
 }
 
 export async function resolveOkRuOrVkNativeStream(
@@ -518,27 +603,52 @@ export async function resolveOkRuOrVkNativeStream(
   bypassCache = false
 ): Promise<ExtractedNativeStreamResult> {
   const key = rawUrl.trim();
-  if (!bypassCache && okVkExtractedCache.has(key)) {
-    return okVkExtractedCache.get(key)!;
+  if (!bypassCache) {
+    const cached = getCachedOkRuOrVkNativeStream(key);
+    if (cached) return cached;
   }
-  try {
-    const resp = await fetch(`/api/okru-stream?url=${encodeURIComponent(key)}`);
-    const data = (await resp.json()) as ExtractedNativeStreamResult;
-    if (data && data.ok) {
-      okVkExtractedCache.set(key, data);
-      return data;
+
+  const existingInflight = !bypassCache ? okVkInflight.get(key) : undefined;
+  if (existingInflight) return existingInflight;
+
+  const reqPromise = (async (): Promise<ExtractedNativeStreamResult> => {
+    try {
+      const resp = await fetch(`/api/okru-stream?url=${encodeURIComponent(key)}`);
+      const data = (await resp.json()) as ExtractedNativeStreamResult;
+      if (data && data.ok) {
+        okVkExtractedCache.set(key, data);
+        writeSessionCacheEntry(OKVK_SESSION_KEY, key, data, OKVK_TTL_MS);
+        return data;
+      }
+      return {
+        ok: false,
+        streams: [],
+        error: data?.error || 'Could not extract direct stream URL',
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        streams: [],
+        error: err instanceof Error ? err.message : 'Extractor network error',
+      };
+    } finally {
+      okVkInflight.delete(key);
     }
-    return {
-      ok: false,
-      streams: [],
-      error: data?.error || 'Could not extract direct stream URL',
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      streams: [],
-      error: err instanceof Error ? err.message : 'Extractor network error',
-    };
+  })();
+
+  if (!bypassCache) {
+    okVkInflight.set(key, reqPromise);
+  }
+  return reqPromise;
+}
+
+export async function preResolveStreamUrl(rawUrl?: string): Promise<void> {
+  if (!rawUrl) return;
+  const meta = resolveUniversalVideoSource(rawUrl, 0);
+  if (meta.asyncProvider?.provider === 'archive') {
+    await resolveArchiveOrgDirectStream(meta.asyncProvider.id);
+  } else if (meta.asyncProvider?.provider === 'okru' || meta.asyncProvider?.provider === 'vk') {
+    await resolveOkRuOrVkNativeStream(meta.asyncProvider.rawUrl);
   }
 }
 

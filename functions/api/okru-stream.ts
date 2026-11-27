@@ -60,7 +60,7 @@ function collectCookiePairs(headers: Headers): string {
 
 function mapOkQuality(name: string): { quality: string; label: string; height: number } {
   const n = (name || '').toLowerCase();
-  if (n === 'ultra' || n === 'quad') return { quality: 'full', label: '1080p FHD (Ultra)', height: 2160 };
+  if (n === 'ultra' || n === 'quad') return { quality: 'ultra', label: '2160p 4K (Ultra)', height: 2160 };
   if (n === 'full' || n === '1080') return { quality: 'full', label: '1080p FHD', height: 1080 };
   if (n === 'hd' || n === '720') return { quality: 'hd', label: '720p HD', height: 720 };
   if (n === 'sd' || n === '480') return { quality: 'sd', label: '480p Saver', height: 480 };

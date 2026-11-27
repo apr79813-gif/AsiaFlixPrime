@@ -641,9 +641,11 @@ async function startServer(): Promise<void> {
     return `/api/okru-proxy?${qs.toString()}`;
   };
 
+  const okruExtractionCache = new Map<string, { expiresAt: number; payload: Record<string, unknown> }>();
+
   const mapOkStreamQuality = (name: string): { quality: string; label: string; height: number } => {
     const n = (name || '').toLowerCase();
-    if (n === 'ultra' || n === 'quad') return { quality: 'full', label: '1080p FHD (Ultra)', height: 2160 };
+    if (n === 'ultra' || n === 'quad') return { quality: 'ultra', label: '2160p 4K (Ultra)', height: 2160 };
     if (n === 'full' || n === '1080') return { quality: 'full', label: '1080p FHD', height: 1080 };
     if (n === 'hd' || n === '720') return { quality: 'hd', label: '720p HD', height: 720 };
     if (n === 'sd' || n === '480') return { quality: 'sd', label: '480p Saver', height: 480 };
@@ -658,6 +660,17 @@ async function startServer(): Promise<void> {
     try {
       const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
       const rawId = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+
+      const cacheKey = rawId || rawUrl;
+      if (cacheKey) {
+        const hit = okruExtractionCache.get(cacheKey);
+        if (hit && hit.expiresAt > Date.now()) {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Cache-Control', 'public, max-age=300');
+          res.json(hit.payload);
+          return;
+        }
+      }
 
       let okId = rawId && /^\d+$/.test(rawId) ? rawId : '';
       if (!okId && rawUrl) {
@@ -747,9 +760,7 @@ async function startServer(): Promise<void> {
         }
 
         const movieObj = (metadata.movie as Record<string, unknown> | undefined) || {};
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cache-Control', 'public, max-age=300');
-        res.json({
+        const payload = {
           ok: true,
           provider: 'okru',
           id: okId,
@@ -757,7 +768,13 @@ async function startServer(): Promise<void> {
           hlsUrl: hlsManifestUrl || undefined,
           proxiedHlsUrl: hlsManifestUrl ? buildVideoProxyUrl(hlsManifestUrl, ckToken, 'https://ok.ru/') : undefined,
           streams,
-        });
+        };
+        if (cacheKey) {
+          okruExtractionCache.set(cacheKey, { expiresAt: Date.now() + 300_000, payload });
+        }
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.json(payload);
         return;
       }
 
@@ -928,6 +945,8 @@ async function startServer(): Promise<void> {
 
       res.status(upstream.status);
       res.setHeader('Content-Type', ct);
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Cache-Control', 'private, max-age=300');
       const contentRange = upstream.headers.get('content-range');
       if (contentRange) res.setHeader('Content-Range', contentRange);
       const contentLength = upstream.headers.get('content-length');
@@ -938,6 +957,7 @@ async function startServer(): Promise<void> {
         return;
       }
 
+      res.flushHeaders?.();
       if (upstream.body) {
         const nodeStream = Readable.fromWeb(upstream.body as unknown as WebReadableStream<Uint8Array>);
         req.on('close', () => {

@@ -50,7 +50,12 @@ import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { createDramaSlug } from '../services/urlHelper';
 import { SubtitleVoiceEngine } from '../services/subtitleVoiceEngine';
-import { AnimatedChannelLogo } from './AnimatedChannelLogo';
+import {
+  AnimatedChannelLogo,
+  AsiaFlixCinematicIntro,
+  IntroAudioHandle,
+  startAsiaFlixIntroAudio,
+} from './AnimatedChannelLogo';
 import {
   recordWatchSeconds,
   recordEpisodeCompleted,
@@ -73,6 +78,9 @@ import {
   resolveUniversalVideoSource,
   resolveArchiveOrgDirectStream,
   resolveOkRuOrVkNativeStream,
+  getCachedArchiveOrgDirectStream,
+  getCachedOkRuOrVkNativeStream,
+  preResolveStreamUrl,
   UniversalResolvedVideo,
   ExtractedQualityStream,
   normalizeUniversalAssetUrl,
@@ -392,6 +400,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [iframeControlNotice, setIframeControlNotice] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
   const [isVideoLoading, setIsVideoLoading] = useState<boolean>(true);
+  const [hasPlaybackStarted, setHasPlaybackStarted] = useState<boolean>(false);
+  const [isMidStreamBuffering, setIsMidStreamBuffering] = useState<boolean>(false);
+  const [isCinematicIntroPlaying, setIsCinematicIntroPlaying] = useState<boolean>(false);
+  const isCinematicIntroPlayingRef = useRef<boolean>(false);
+  const introAudioRef = useRef<IntroAudioHandle | null>(null);
   const [audioVolume, setAudioVolume] = useState<number>(1);
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [audioSyncOffset, setAudioSyncOffset] = useState<number>(0);
@@ -517,11 +530,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
-            const lum = Math.max(r, g, b);
-            if (lum < 26) {
+            if (r < 35 && g < 35 && b < 35) {
               data[i + 3] = 0;
-            } else if (lum < 58) {
-              data[i + 3] = Math.round(((lum - 26) / 32) * data[i + 3]);
+            } else if (r < 58 && g < 58 && b < 58) {
+              const maxChannel = Math.max(r, g, b);
+              data[i + 3] = Math.round(((maxChannel - 35) / 23) * data[i + 3]);
             }
           }
           ctx.putImageData(imageData, 0, 0);
@@ -578,6 +591,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
+    setHasPlaybackStarted(false);
+    setIsMidStreamBuffering(false);
     setForceBuiltinAudio(false);
     setIsAudioCorsFallback(false);
     setMediaErrorState(null);
@@ -618,6 +633,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
+    setHasPlaybackStarted(false);
+    setIsMidStreamBuffering(false);
+    isCinematicIntroPlayingRef.current = false;
+    setIsCinematicIntroPlaying(false);
+    if (introAudioRef.current) {
+      introAudioRef.current.stop();
+      introAudioRef.current = null;
+    }
     setAudioSyncOffset(0);
     setForceBuiltinAudio(false);
     setIsExternalAudioConfirmedPlaying(false);
@@ -762,6 +785,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         studioAudioGraphRef.current.ctx.close().catch(() => {});
         studioAudioGraphRef.current = null;
       }
+      if (introAudioRef.current) {
+        introAudioRef.current.stop();
+        introAudioRef.current = null;
+      }
     };
   }, []);
 
@@ -773,6 +800,23 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       'Original / Eng Sub': getStreamableEpisodesForTrack('Original / Eng Sub'),
     };
   }, [drama]);
+
+  // Background Stream Pre-Resolution on Modal Open (Episode 1 across active/available tracks)
+  useEffect(() => {
+    if (!drama) return;
+    const seen = new Set<string>();
+    const candidates = [
+      streamablesByTrack['Hindi Dubbed']?.[0]?.streamUrl,
+      streamablesByTrack['Hindi Fan Dubbed']?.[0]?.streamUrl,
+      streamablesByTrack['Original / Eng Sub']?.[0]?.streamUrl,
+    ];
+    candidates.forEach((url) => {
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        void preResolveStreamUrl(url);
+      }
+    });
+  }, [drama?.id, streamablesByTrack]);
 
   if (!drama) return null;
 
@@ -922,7 +966,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     if (targetHeight >= 1080) {
       return (
-        qualities.find((q) => q.quality === 'full' || q.height >= 1080)?.proxiedUrl ||
+        qualities.find((q) => q.quality === 'full' || q.height === 1080)?.proxiedUrl ||
+        qualities.find((q) => q.quality === 'hd' || q.height === 720)?.proxiedUrl ||
+        qualities.find((q) => q.height >= 1080)?.proxiedUrl ||
         qualities[0]?.proxiedUrl ||
         hlsUrl ||
         ''
@@ -952,6 +998,36 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (!asyncResolveKey || !meta) {
       setAsyncResolvedStream({ key: '', status: 'idle', src: '' });
       return;
+    }
+
+    // 0ms Instant Hydrate from Memory / sessionStorage pre-resolution cache
+    if (meta.provider === 'archive') {
+      const instantArchive = getCachedArchiveOrgDirectStream(meta.id);
+      if (instantArchive) {
+        setMediaErrorState(null);
+        setAsyncResolvedStream({
+          key: asyncResolveKey,
+          status: 'ready',
+          src: instantArchive,
+          provider: 'archive',
+        });
+        return;
+      }
+    } else if (streamReloadNonce === 0) {
+      const instantOkVk = getCachedOkRuOrVkNativeStream(meta.rawUrl);
+      if (instantOkVk && instantOkVk.ok && (instantOkVk.streams.length > 0 || instantOkVk.proxiedHlsUrl)) {
+        const pickedUrl = pickOkRuQualityUrl(instantOkVk.streams, instantOkVk.proxiedHlsUrl, selectedQuality);
+        setMediaErrorState(null);
+        setAsyncResolvedStream({
+          key: asyncResolveKey,
+          status: 'ready',
+          src: pickedUrl || instantOkVk.proxiedHlsUrl || '',
+          hlsUrl: instantOkVk.proxiedHlsUrl,
+          qualities: instantOkVk.streams,
+          provider: meta.provider,
+        });
+        return;
+      }
     }
 
     let cancelled = false;
@@ -1208,7 +1284,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (!vid || !isHlsVideoSrc || !effectiveVideoSrc) return;
 
     if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true });
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        startFragPrefetch: true,
+        startLevel: -1,
+        maxBufferLength: 12,
+        maxMaxBufferLength: 24,
+        manifestLoadingTimeOut: 7000,
+      });
       hlsInstanceRef.current = hls;
       hls.loadSource(effectiveVideoSrc);
       hls.attachMedia(vid);
@@ -1221,7 +1305,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           } catch {}
           pendingRestoreTimeRef.current = null;
         }
-        vid.play().catch(() => {});
+        if (!isCinematicIntroPlayingRef.current) {
+          vid.play().catch(() => {});
+        }
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
@@ -1231,6 +1317,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             hls.recoverMediaError();
           } else {
             setIsVideoLoading(false);
+            setIsMidStreamBuffering(false);
             setIsVideoPlaying(false);
             setMediaErrorState({
               source: 'video',
@@ -1247,6 +1334,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       vid.src = effectiveVideoSrc;
     }
   }, [effectiveVideoSrc, isHlsVideoSrc, streamReloadNonce, activeStreamEp, activeAudio]);
+
+  // Progressive MP4 background pre-buffer trigger as soon as video URL attaches (including during 8s intro)
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || isHlsVideoSrc || !effectiveVideoSrc) return;
+    if (vid.networkState === 0 || vid.readyState === 0) {
+      try {
+        vid.load();
+      } catch {
+        // ignore load errors
+      }
+    }
+  }, [effectiveVideoSrc, isHlsVideoSrc]);
 
   // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on native video element (never touch external .mp3 audio)
   const activeAudibleUrl =
@@ -1738,6 +1838,36 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     showHudFeedback(`🎧 Audio: ${nextTrack}`);
   };
 
+  const stopCinematicIntroAudio = () => {
+    if (introAudioRef.current) {
+      introAudioRef.current.stop();
+      introAudioRef.current = null;
+    }
+  };
+
+  const launchCinematicIntro = () => {
+    stopCinematicIntroAudio();
+    isCinematicIntroPlayingRef.current = true;
+    setIsCinematicIntroPlaying(true);
+    setHasPlaybackStarted(false);
+    setIsMidStreamBuffering(false);
+    introAudioRef.current = startAsiaFlixIntroAudio();
+  };
+
+  const finishOrSkipCinematicIntro = () => {
+    stopCinematicIntroAudio();
+    isCinematicIntroPlayingRef.current = false;
+    setIsCinematicIntroPlaying(false);
+    const vid = videoRef.current;
+    if (vid) {
+      if (!shouldMuteVideoForExternalAudio) {
+        vid.muted = false;
+        vid.volume = 1.0;
+      }
+      vid.play().catch(() => {});
+    }
+  };
+
   const handleOpenStream = (
     epNum: number,
     trackOverride?: AudioType,
@@ -1748,6 +1878,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setMediaErrorState(null);
     setForceBuiltinAudio(false);
     setIsExternalAudioConfirmedPlaying(false);
+    setHasPlaybackStarted(false);
+    setIsMidStreamBuffering(false);
     if (trackOverride) {
       setActiveAudio(trackOverride);
     }
@@ -1759,9 +1891,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
     }
 
-    // Only unlock immediately for trusted human mouse/touch clicks
+    // Only unlock immediately & launch 8-second intro for trusted human mouse/touch clicks
     if (clickEvent && clickEvent.nativeEvent?.isTrusted) {
       setIsStreamUnlocked(true);
+      launchCinematicIntro();
     }
 
     const markKey = epKey ?? epNum;
@@ -1778,6 +1911,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     e.stopPropagation();
     if (e.nativeEvent?.isTrusted) {
       setIsStreamUnlocked(true);
+      launchCinematicIntro();
       if (videoRef.current && !shouldMuteVideoForExternalAudio) {
         videoRef.current.muted = isAudioMuted;
         videoRef.current.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -1786,6 +1920,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   };
 
   const handleClosePlayer = () => {
+    stopCinematicIntroAudio();
+    isCinematicIntroPlayingRef.current = false;
+    setIsCinematicIntroPlaying(false);
+    setHasPlaybackStarted(false);
+    setIsMidStreamBuffering(false);
     if (audioRef.current) {
       audioRef.current.pause();
     }
@@ -2559,7 +2698,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 crossOrigin={!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
                 poster=""
                 controls
-                autoPlay
+                preload="auto"
+                autoPlay={!isCinematicIntroPlaying}
                 playsInline
                 muted={shouldMuteVideoForExternalAudio || isAudioMuted}
                 onLoadStart={() => setIsVideoLoading(true)}
@@ -2581,16 +2721,20 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     } catch {
                       // Ignore
                     }
-                    if (pending.shouldPlay) {
+                    if (pending.shouldPlay && !isCinematicIntroPlayingRef.current) {
                       vid.play().catch(() => {});
                     }
                     pendingRestoreTimeRef.current = null;
+                  }
+                  if (isCinematicIntroPlayingRef.current && !vid.paused) {
+                    vid.pause();
                   }
                   syncAudioToVideo(false, true);
                   syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
                 }}
                 onLoadedData={() => {
                   setIsVideoLoading(false);
+                  setIsMidStreamBuffering(false);
                 }}
                 onError={() => {
                   // Auto-fallback from OK.ru progressive MP4 to proxied HLS manifest if available
@@ -2610,6 +2754,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     return;
                   }
                   setIsVideoLoading(false);
+                  setIsMidStreamBuffering(false);
                   setIsVideoPlaying(false);
                   setMediaErrorState({
                     source: 'video',
@@ -2619,6 +2764,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 onCanPlay={(e) => {
                   const vid = e.currentTarget;
                   setIsVideoLoading(false);
+                  setIsMidStreamBuffering(false);
                   setMediaErrorState(null);
                   if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
@@ -2627,12 +2773,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                     applyStudioEqGraph(vid);
                   }
+                  if (isCinematicIntroPlayingRef.current && !vid.paused) {
+                    vid.pause();
+                  }
                   syncAudioToVideo();
                 }}
                 onPlay={() => {
+                  const vid = videoRef.current;
+                  if (isCinematicIntroPlayingRef.current) {
+                    if (vid && !vid.paused) vid.pause();
+                    return;
+                  }
                   lastPlaybackTickMsRef.current = Date.now();
                   bumpPlayerControlsActivity();
-                  const vid = videoRef.current;
                   if (vid && !shouldMuteVideoForExternalAudio) {
                     vid.muted = isAudioMuted;
                     vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -2647,11 +2800,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                 }}
                 onPlaying={() => {
+                  const vid = videoRef.current;
+                  if (isCinematicIntroPlayingRef.current) {
+                    if (vid && !vid.paused) vid.pause();
+                    return;
+                  }
+                  setHasPlaybackStarted(true);
                   setIsVideoPlaying(true);
                   setIsVideoLoading(false);
+                  setIsMidStreamBuffering(false);
                   setMediaErrorState(null);
                   lastPlaybackTickMsRef.current = Date.now();
-                  const vid = videoRef.current;
                   if (vid && !shouldMuteVideoForExternalAudio) {
                     vid.muted = isAudioMuted;
                     vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
@@ -2667,6 +2826,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onPause={() => {
                   setIsVideoPlaying(false);
+                  setIsMidStreamBuffering(false);
                   lastPlaybackTickMsRef.current = null;
                   voiceEngineRef.current?.onPausedOrEnded();
                   if (audioRef.current && !audioRef.current.paused) {
@@ -2674,6 +2834,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                 }}
                 onWaiting={() => {
+                  if (hasPlaybackStarted && !isCinematicIntroPlayingRef.current) {
+                    setIsMidStreamBuffering(true);
+                  }
                   lastPlaybackTickMsRef.current = null;
                   voiceEngineRef.current?.onPausedOrEnded();
                   if (audioRef.current && !audioRef.current.paused) {
@@ -2731,8 +2894,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 onTimeUpdate={(e) => {
                   const vid = e.currentTarget;
                   if (vid.currentTime > 0.1) {
+                    setHasPlaybackStarted(true);
                     setIsVideoPlaying(true);
                     setIsVideoLoading(false);
+                    setIsMidStreamBuffering(false);
                   }
 
                   // 1. A-B Scene Looper
@@ -2950,8 +3115,40 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </button>
               )}
 
-              {/* 16:9 Full-Widescreen Custom Thumbnail Overlay + AsiaFlix Prime Cyber-Prism & Neon Equalizer */}
-              {!isVideoPlaying && !mediaErrorState && (
+              {/* 100% Transparent Mid-Playback Buffer Indicator (Dual-Orbiting Neon Plasma Ring, Zero Dark Box, Zero Text) */}
+              {isMidStreamBuffering && isVideoPlaying && !isCinematicIntroPlaying && !mediaErrorState && (
+                <div className="pointer-events-none absolute inset-0 z-25 flex items-center justify-center bg-transparent">
+                  <div className="w-14 h-14 bg-transparent relative flex items-center justify-center">
+                    <div
+                      style={{
+                        borderRadius: '9999px',
+                        background:
+                          'conic-gradient(from 0deg, transparent 0%, #ff1e56 40%, #ffac41 65%, transparent 100%)',
+                        mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                        WebkitMask:
+                          'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                        animation: 'spin 1.1s linear infinite',
+                      }}
+                      className="absolute inset-0"
+                    />
+                    <div
+                      style={{
+                        borderRadius: '9999px',
+                        background:
+                          'conic-gradient(from 180deg, transparent 0%, #00f2fe 45%, #ff2a85 75%, transparent 100%)',
+                        mask: 'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
+                        WebkitMask:
+                          'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
+                        animation: 'spin 1.6s linear infinite reverse',
+                      }}
+                      className="absolute inset-2"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 100% Transparent Holographic Ring Play Button / Buffer Portal (Never covers center video with dark boxes) */}
+              {!isVideoPlaying && !mediaErrorState && !isCinematicIntroPlaying && (
                 <div
                   onClick={() => {
                     const vid = videoRef.current;
@@ -2964,89 +3161,107 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       vid.play().catch(() => {});
                     }
                   }}
-                  className="absolute inset-0 z-20 overflow-hidden cursor-pointer group bg-[#050508]"
+                  className={`absolute top-0 left-0 right-0 ${
+                    hasPlaybackStarted ? 'bottom-14' : 'bottom-0'
+                  } z-20 overflow-hidden cursor-pointer group bg-transparent`}
                 >
-                  {activeCustomThumbnail ? (
-                    <>
-                      <img
-                        src={activeCustomThumbnail}
-                        alt={drama.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/35" />
-                    </>
-                  ) : (
-                    <>
-                      <img
-                        src={drama.poster}
-                        alt=""
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover scale-125 blur-2xl opacity-45"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-[#050508]/65 to-black/60" />
-                    </>
-                  )}
+                  {/* Show episode thumbnail only before playback starts; keep paused video frame 100% visible */}
+                  {!hasPlaybackStarted &&
+                    (activeCustomThumbnail ? (
+                      <>
+                        <img
+                          src={activeCustomThumbnail}
+                          alt={drama.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-black/25" />
+                      </>
+                    ) : (
+                      <>
+                        <img
+                          src={drama.poster}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover scale-125 blur-2xl opacity-40"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/40" />
+                      </>
+                    ))}
 
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                  <div className="absolute inset-0 flex items-center justify-center p-4 bg-transparent">
                     {isVideoLoading ? (
-                      <div className="px-6 py-4 rounded-3xl bg-black/25 backdrop-blur-md border border-white/10 shadow-[0_0_32px_rgba(255,42,133,0.2)] flex flex-col items-center gap-3">
-                        <div className="flex items-end gap-1.5 h-10" aria-hidden="true">
-                          <span
-                            style={{ animationDelay: '0ms', animationDuration: '850ms' }}
-                            className="w-1.5 h-4 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
-                          />
-                          <span
-                            style={{ animationDelay: '150ms', animationDuration: '850ms' }}
-                            className="w-1.5 h-8 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
-                          />
-                          <span
-                            style={{ animationDelay: '300ms', animationDuration: '850ms' }}
-                            className="w-1.5 h-10 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
-                          />
-                          <span
-                            style={{ animationDelay: '450ms', animationDuration: '850ms' }}
-                            className="w-1.5 h-6 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
-                          />
-                          <span
-                            style={{ animationDelay: '600ms', animationDuration: '850ms' }}
-                            className="w-1.5 h-5 bg-gradient-to-t from-[#e50914] via-[#ff2a85] to-[#ffb800] rounded-full animate-pulse"
-                          />
-                        </div>
-                        <span className="tracking-[0.25em] text-[10px] font-bold text-white/90 uppercase">
-                          AsiaFlix VIP • Stream Ready
-                        </span>
+                      <div className="w-14 h-14 bg-transparent relative flex items-center justify-center pointer-events-none">
+                        <div
+                          style={{
+                            borderRadius: '9999px',
+                            background:
+                              'conic-gradient(from 0deg, transparent 0%, #ff1e56 40%, #ffac41 65%, transparent 100%)',
+                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                            WebkitMask:
+                              'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                            animation: 'spin 1.1s linear infinite',
+                          }}
+                          className="absolute inset-0"
+                        />
+                        <div
+                          style={{
+                            borderRadius: '9999px',
+                            background:
+                              'conic-gradient(from 180deg, transparent 0%, #00f2fe 45%, #ff2a85 75%, transparent 100%)',
+                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
+                            WebkitMask:
+                              'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
+                            animation: 'spin 1.6s linear infinite reverse',
+                          }}
+                          className="absolute inset-2"
+                        />
                       </div>
                     ) : (
-                      <div className="relative flex items-center justify-center">
-                        <div className="absolute w-24 h-24 rounded-3xl bg-gradient-to-tr from-[#ff2a85]/45 via-[#8b5cf6]/40 to-[#ffb800]/35 blur-md animate-pulse pointer-events-none" />
-                        <div className="absolute w-24 h-24 rounded-3xl border border-pink-500/35 animate-ping pointer-events-none" />
-                        <div className="relative w-20 h-20 rounded-3xl bg-black/35 backdrop-blur-xl border border-pink-500/40 shadow-[0_0_35px_rgba(255,42,133,0.45)] flex items-center justify-center group transition-all duration-300 hover:scale-110">
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="w-8 h-8 ml-1 drop-shadow-[0_0_12px_rgba(255,42,133,0.7)]"
-                            aria-hidden="true"
-                          >
-                            <defs>
-                              <linearGradient id="asiaflixPrismPlayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" stopColor="#ff2a85" />
-                                <stop offset="55%" stopColor="#a855f7" />
-                                <stop offset="100%" stopColor="#ffb800" />
-                              </linearGradient>
-                            </defs>
-                            <path
-                              d="M7.5 5.25C7.5 4.35 8.48 3.79 9.26 4.25L19.12 10.0C19.89 10.45 19.89 11.55 19.12 12.0L9.26 17.75C8.48 18.21 7.5 17.65 7.5 16.75V5.25Z"
-                              fill="url(#asiaflixPrismPlayGrad)"
-                            />
-                          </svg>
-                        </div>
+                      <div className="w-20 h-20 sm:w-24 sm:h-24 bg-transparent flex items-center justify-center relative cursor-pointer group">
+                        {/* Outer Ring: Razor-sharp rotating conic-gradient neon laser ring */}
+                        <div
+                          style={{
+                            borderRadius: '9999px',
+                            background:
+                              'conic-gradient(from 0deg, transparent 0%, #ff1e56 35%, #ffac41 50%, #00f2fe 85%, transparent 100%)',
+                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                            WebkitMask:
+                              'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                            animation: 'spin 2.4s linear infinite',
+                          }}
+                          className="absolute inset-0 pointer-events-none"
+                        />
+                        {/* Inner Ring: Counter-rotating dashed cyan/pink energy ring */}
+                        <div
+                          style={{ animation: 'spin 5s linear infinite reverse' }}
+                          className="absolute inset-2 rounded-full border border-dashed border-white/30 border-t-[#00f2fe]/80 border-b-[#ff2a85]/80 group-hover:scale-110 transition-transform duration-300 pointer-events-none"
+                        />
+                        {/* Center Play Emblem: High-contrast glowing white-to-pink SVG play triangle */}
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="w-9 h-9 sm:w-11 sm:h-11 ml-1 drop-shadow-[0_0_16px_rgba(255,42,133,0.95)] group-hover:scale-125 transition-all duration-300"
+                          aria-hidden="true"
+                        >
+                          <defs>
+                            <linearGradient id="asiaflixHoloPlayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#ffffff" />
+                              <stop offset="55%" stopColor="#ff9ec7" />
+                              <stop offset="100%" stopColor="#ff2a85" />
+                            </linearGradient>
+                          </defs>
+                          <path
+                            d="M7.5 5.25C7.5 4.35 8.48 3.79 9.26 4.25L19.12 10.0C19.89 10.45 19.89 11.55 19.12 12.0L9.26 17.75C8.48 18.21 7.5 17.65 7.5 16.75V5.25Z"
+                            fill="url(#asiaflixHoloPlayGrad)"
+                          />
+                        </svg>
                       </div>
                     )}
                   </div>
                 </div>
               )}
             </div>
-          ) : (
+          ) : !isCinematicIntroPlaying ? (
             <iframe
               ref={iframeRef}
               key={`${resolvedPlayerSource.src}-${activeMirrorIndex}-${streamReloadNonce}`}
@@ -3056,6 +3271,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               allowFullScreen
               referrerPolicy="no-referrer-when-downgrade"
+            />
+          ) : (
+            <div className="w-full h-full bg-black" />
+          )}
+
+          {/* 8-Second Netflix-Style Full-Frame "AsiaFlix Prime" Cinematic Intro Overlay (Video pre-buffers underneath!) */}
+          {isStreamUnlocked && isCinematicIntroPlaying && !mediaErrorState && (
+            <AsiaFlixCinematicIntro
+              logoSrc={transparentLogoUrl}
+              onComplete={finishOrSkipCinematicIntro}
+              onSkip={finishOrSkipCinematicIntro}
             />
           )}
         </div>

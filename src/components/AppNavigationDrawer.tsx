@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Volume2,
   Check,
+  Download,
 } from 'lucide-react';
 
 interface AppNavigationDrawerProps {
@@ -39,6 +40,7 @@ interface AppNavigationDrawerProps {
   onOpenSupport: () => void;
   onOpenNotifications: () => void;
   onOpenAdmin: () => void;
+  onOpenAppDownloadModal?: () => void;
 }
 
 export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
@@ -64,6 +66,7 @@ export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
   onOpenSupport,
   onOpenNotifications,
   onOpenAdmin,
+  onOpenAppDownloadModal,
 }) => {
   if (!isOpen) return null;
 
@@ -311,6 +314,17 @@ export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
               </span>
             )}
           </button>
+
+          {onOpenAppDownloadModal && (
+            <button
+              type="button"
+              onClick={() => runAction(onOpenAppDownloadModal)}
+              className="w-full px-3 py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-600/30 text-emerald-200 hover:text-white border border-emerald-400/35 text-sm font-semibold flex items-center gap-3 transition-colors cursor-pointer text-left"
+            >
+              <Download className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>📲 Install App / Download APK</span>
+            </button>
+          )}
 
           <button
             type="button"

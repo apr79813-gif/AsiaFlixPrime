@@ -85,6 +85,7 @@ import {
   ExtractedQualityStream,
   normalizeUniversalAssetUrl,
   sanitizeExternalAudioUrl,
+  isExtractorAudioUrl,
   SubtitleCue,
   TIMESTAMPS_UPDATED_EVENT,
   WatchTimestampEntry,
@@ -169,12 +170,6 @@ const QUALITY_OPTIONS = [
     filter: 'contrast(0.95) saturate(0.88) brightness(0.98)',
     hudText: '💎 Quality: 480p Saver Mode',
   },
-  {
-    id: 'Auto HDR',
-    label: 'Auto HDR',
-    filter: 'contrast(1.16) saturate(1.26) brightness(1.05) drop-shadow(0 0 12px rgba(0,242,254,0.25))',
-    hudText: '💎 Quality: Auto HDR Cinema Boost Active',
-  },
 ] as const;
 
 type AudioEqMode = 'normal' | 'dialogue' | 'bass3d' | 'night';
@@ -241,6 +236,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const seekRippleTimerRef = useRef<number | null>(null);
   const controlsFadeTimerRef = useRef<number | null>(null);
   const hlsInstanceRef = useRef<Hls | null>(null);
+  const audioHlsInstanceRef = useRef<Hls | null>(null);
   const voiceEngineRef = useRef<SubtitleVoiceEngine | null>(null);
   if (!voiceEngineRef.current) {
     voiceEngineRef.current = new SubtitleVoiceEngine();
@@ -395,11 +391,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [isLightsOff, setIsLightsOff] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [selectedQuality, setSelectedQuality] = useState<string>('1080p FHD (Ultra)');
+  const [isAutoHdrOn, setIsAutoHdrOn] = useState<boolean>(false);
   const [streamReloadNonce, setStreamReloadNonce] = useState<number>(0);
   const [hudToast, setHudToast] = useState<string | null>(null);
   const [iframeControlNotice, setIframeControlNotice] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
   const [isVideoLoading, setIsVideoLoading] = useState<boolean>(true);
+  const [isVideoFrameReady, setIsVideoFrameReady] = useState<boolean>(false);
   const [hasPlaybackStarted, setHasPlaybackStarted] = useState<boolean>(false);
   const [isMidStreamBuffering, setIsMidStreamBuffering] = useState<boolean>(false);
   const [isCinematicIntroPlaying, setIsCinematicIntroPlaying] = useState<boolean>(false);
@@ -411,6 +409,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [forceBuiltinAudio, setForceBuiltinAudio] = useState<boolean>(false);
   const [isExternalAudioConfirmedPlaying, setIsExternalAudioConfirmedPlaying] = useState<boolean>(false);
   const [isAudioCorsFallback, setIsAudioCorsFallback] = useState<boolean>(false);
+  const [resolvedExternalAudioSrc, setResolvedExternalAudioSrc] = useState<{
+    rawKey: string;
+    src: string;
+    isHls: boolean;
+    resolving: boolean;
+  }>({ rawKey: '', src: '', isHls: false, resolving: false });
 
   const [copied, setCopied] = useState(false);
   const [epLinkCopied, setEpLinkCopied] = useState(false);
@@ -451,8 +455,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [detectedHardcodedSubs, setDetectedHardcodedSubs] = useState<boolean>(false);
   const [isPlayerControlsActive, setIsPlayerControlsActive] = useState<boolean>(false);
   const [subFontSize, setSubFontSize] = useState<'sm' | 'md' | 'lg'>('md');
-  const [subColor, setSubColor] = useState<'white' | 'yellow' | 'cyan'>('yellow');
+  const [subColor, setSubColor] = useState<'white' | 'yellow' | 'cyan' | 'pink'>('white');
   const [isSubLoading, setIsSubLoading] = useState<boolean>(false);
+  const [isCaptionMenuOpen, setIsCaptionMenuOpen] = useState<boolean>(false);
+  const [isInCaptionGapWatermark, setIsInCaptionGapWatermark] = useState<boolean>(false);
+  const [captionShowBrandPrefix, setCaptionShowBrandPrefix] = useState<boolean>(false);
   const activeCueRef = useRef<{ id: number; start: number; end: number; text: string } | null>(null);
 
   // Danmaku Live Hype & Watch Party
@@ -571,7 +578,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
     hudTimerRef.current = window.setTimeout(() => {
       setHudToast(null);
-    }, 1500);
+    }, 1800);
   };
 
   // Sync saved watch progress on mount / update
@@ -591,6 +598,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
+    setIsVideoFrameReady(false);
     setHasPlaybackStarted(false);
     setIsMidStreamBuffering(false);
     setForceBuiltinAudio(false);
@@ -601,6 +609,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setAutoNextCountdown(null);
     setFloatingDanmaku([]);
     setActiveCue(null);
+    setIsInCaptionGapWatermark(false);
+    setCaptionShowBrandPrefix(false);
     activeCueRef.current = null;
     setDetectedHardcodedSubs(false);
     hardSubCorsBlockedRef.current = false;
@@ -633,8 +643,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
+    setIsVideoFrameReady(false);
     setHasPlaybackStarted(false);
     setIsMidStreamBuffering(false);
+    setIsCaptionMenuOpen(false);
     isCinematicIntroPlayingRef.current = false;
     setIsCinematicIntroPlaying(false);
     if (introAudioRef.current) {
@@ -775,6 +787,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
         hlsInstanceRef.current = null;
+      }
+      if (audioHlsInstanceRef.current) {
+        audioHlsInstanceRef.current.destroy();
+        audioHlsInstanceRef.current = null;
       }
       voiceEngineRef.current?.dispose();
       if (videoAudioNodeRef.current) {
@@ -1122,6 +1138,103 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [effectiveVideoSrc]);
 
+  // Resolve OK.ru / VK video links used as external audio tracks (pick lowest-bandwidth progressive MP4 or proxied HLS)
+  useEffect(() => {
+    if (!trackCustomAudio || forceBuiltinAudio) {
+      setResolvedExternalAudioSrc({ rawKey: '', src: '', isHls: false, resolving: false });
+      return;
+    }
+
+    if (!isExtractorAudioUrl(trackCustomAudio)) {
+      const isHls = /\.m3u8(\?|$)/i.test(trackCustomAudio);
+      setResolvedExternalAudioSrc({
+        rawKey: trackCustomAudio,
+        src: trackCustomAudio,
+        isHls,
+        resolving: false,
+      });
+      return;
+    }
+
+    const cached = getCachedOkRuOrVkNativeStream(trackCustomAudio);
+    if (cached && cached.ok && (cached.streams.length > 0 || cached.proxiedHlsUrl)) {
+      const sortedLow = [...cached.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
+      const audioStream = sortedLow[0]?.proxiedUrl || cached.proxiedHlsUrl || '';
+      setResolvedExternalAudioSrc({
+        rawKey: trackCustomAudio,
+        src: audioStream,
+        isHls: !sortedLow[0]?.proxiedUrl && Boolean(cached.proxiedHlsUrl),
+        resolving: false,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    setResolvedExternalAudioSrc({ rawKey: trackCustomAudio, src: '', isHls: false, resolving: true });
+    resolveOkRuOrVkNativeStream(trackCustomAudio, false)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok && (res.streams.length > 0 || res.proxiedHlsUrl)) {
+          const sortedLow = [...res.streams].sort((a, b) => (a.height || 9999) - (b.height || 9999));
+          const audioStream = sortedLow[0]?.proxiedUrl || res.proxiedHlsUrl || '';
+          setResolvedExternalAudioSrc({
+            rawKey: trackCustomAudio,
+            src: audioStream,
+            isHls: !sortedLow[0]?.proxiedUrl && Boolean(res.proxiedHlsUrl),
+            resolving: false,
+          });
+        } else {
+          setResolvedExternalAudioSrc({ rawKey: trackCustomAudio, src: '', isHls: false, resolving: false });
+          setForceBuiltinAudio(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedExternalAudioSrc({ rawKey: trackCustomAudio, src: '', isHls: false, resolving: false });
+          setForceBuiltinAudio(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trackCustomAudio, forceBuiltinAudio]);
+
+  // Attach HLS.js onto hidden <audio> element whenever an OK.ru/VK external audio track returns an HLS stream
+  useEffect(() => {
+    if (audioHlsInstanceRef.current) {
+      audioHlsInstanceRef.current.destroy();
+      audioHlsInstanceRef.current = null;
+    }
+    const aud = audioRef.current;
+    if (!aud || !resolvedExternalAudioSrc.isHls || !resolvedExternalAudioSrc.src || forceBuiltinAudio) {
+      return;
+    }
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        maxBufferLength: 10,
+      });
+      audioHlsInstanceRef.current = hls;
+      hls.loadSource(resolvedExternalAudioSrc.src);
+      hls.attachMedia(aud);
+      hls.on(Hls.Events.ERROR, (_ev, data) => {
+        if (data.fatal) {
+          setForceBuiltinAudio(true);
+        }
+      });
+      return () => {
+        hls.destroy();
+        if (audioHlsInstanceRef.current === hls) audioHlsInstanceRef.current = null;
+      };
+    } else if (aud.canPlayType('application/vnd.apple.mpegurl')) {
+      aud.src = resolvedExternalAudioSrc.src;
+    }
+  }, [resolvedExternalAudioSrc.src, resolvedExternalAudioSrc.isHls, forceBuiltinAudio]);
+
+  const activeExternalAudioUrl =
+    resolvedExternalAudioSrc.rawKey === (trackCustomAudio || '') ? resolvedExternalAudioSrc.src : '';
   const isExternalAudioActive =
     Boolean(trackCustomAudio) && !forceBuiltinAudio && resolvedPlayerSource?.type === 'video';
   const shouldMuteVideoForExternalAudio = isExternalAudioActive && isExternalAudioConfirmedPlaying;
@@ -1131,11 +1244,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsExternalAudioConfirmedPlaying(false);
   }, [activeStreamEp, activeAudio, trackCustomAudio, forceBuiltinAudio, streamReloadNonce]);
 
-  // Silent fallback timeout: if external .mp3 audio hangs or fails without playing within 3.5s, fall back to built-in video sound silently
+  // Silent fallback timeout: if external audio hangs or fails without playing, fall back to built-in video sound silently
   useEffect(() => {
     if (!isExternalAudioActive || isExternalAudioConfirmedPlaying || !isStreamUnlocked || !effectiveVideoSrc) {
       return;
     }
+    const timeoutMs = isExtractorAudioUrl(trackCustomAudio) ? 6500 : 3500;
     const timer = window.setTimeout(() => {
       const aud = audioRef.current;
       if (!aud || aud.error || aud.paused || aud.readyState < 2) {
@@ -1149,13 +1263,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           }
         }
       }
-    }, 3500);
+    }, timeoutMs);
     return () => window.clearTimeout(timer);
   }, [
     isExternalAudioActive,
     isExternalAudioConfirmedPlaying,
     isStreamUnlocked,
     effectiveVideoSrc,
+    trackCustomAudio,
     isAudioMuted,
     audioVolume,
     isSubtitleAudioOn,
@@ -1351,7 +1466,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on native video element (never touch external .mp3 audio)
   const activeAudibleUrl =
     !isExternalAudioActive && resolvedPlayerSource?.type === 'video' ? effectiveVideoSrc : '';
-  const wantsAudioStudio = !isExternalAudioActive && (audioEqMode !== 'normal' || volumeBoost > 100);
+  const wantsAudioStudio =
+    !isExternalAudioActive && !isSubtitleAudioOn && (audioEqMode !== 'normal' || volumeBoost > 100);
 
   useEffect(() => {
     if (!wantsAudioStudio || !activeAudibleUrl) {
@@ -1604,9 +1720,34 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   const syncSubtitleAndVoiceOnTime = (tNow: number, isSeekEvent: boolean, isPaused: boolean) => {
     const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(tNow);
+
+    // Subtle in-caption gap watermark whenever captions are ON and dialogue gap >= 1.5s
+    if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
+      if (!matchedCue) {
+        const prevCue = [...parsedSubCues].reverse().find((c) => c.end < tNow) || null;
+        const nextCue = upcomingIdx >= 0 ? parsedSubCues[upcomingIdx] : null;
+        const gapFromPrev = prevCue ? tNow - prevCue.end : tNow;
+        const gapToNext = nextCue ? nextCue.start - tNow : 99;
+        const totalGapWidth = (prevCue && nextCue ? nextCue.start - prevCue.end : 99);
+        const showGapBrand = totalGapWidth >= 1.5 && gapFromPrev >= 0.2 && gapToNext >= 0.2;
+        setIsInCaptionGapWatermark((prev) => (prev === showGapBrand ? prev : showGapBrand));
+      } else {
+        setIsInCaptionGapWatermark((prev) => (prev ? false : prev));
+      }
+    } else {
+      setIsInCaptionGapWatermark((prev) => (prev ? false : prev));
+    }
+
     if ((activeCueRef.current?.id ?? null) !== (matchedCue?.id ?? null)) {
       activeCueRef.current = matchedCue;
       setActiveCue(matchedCue);
+      if (matchedCue && matchedIdx >= 0) {
+        const prevCue = matchedIdx > 0 ? parsedSubCues[matchedIdx - 1] : null;
+        const shouldPrefix = matchedIdx === 0 || (prevCue ? matchedCue.start - prevCue.end >= 6.0 : false);
+        setCaptionShowBrandPrefix(shouldPrefix);
+      } else {
+        setCaptionShowBrandPrefix(false);
+      }
       if (!isSeekEvent && !isPaused) {
         voiceEngineRef.current?.onActiveCueChanged(matchedIdx);
       }
@@ -1832,6 +1973,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
 
     if (isDifferentVideoSrc) {
+      setIsVideoFrameReady(false);
       setIsVideoLoading(true);
     }
     setActiveAudio(nextTrack);
@@ -1878,6 +2020,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setMediaErrorState(null);
     setForceBuiltinAudio(false);
     setIsExternalAudioConfirmedPlaying(false);
+    setIsVideoFrameReady(false);
+    setIsVideoLoading(true);
     setHasPlaybackStarted(false);
     setIsMidStreamBuffering(false);
     if (trackOverride) {
@@ -2005,7 +2149,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
+  const handleToggleAutoHdr = () => {
+    setIsAutoHdrOn((prev) => {
+      const next = !prev;
+      showHudFeedback(next ? '✨ Auto HDR Cinema Boost: ON' : '✨ Auto HDR: OFF');
+      return next;
+    });
+  };
+
   const handleQualityChange = (qualityId: string) => {
+    if (qualityId === 'Auto HDR') {
+      handleToggleAutoHdr();
+      return;
+    }
     setSelectedQuality(qualityId);
     if (resolvedPlayerSource?.type === 'iframe') {
       iframeRef.current?.focus();
@@ -2023,6 +2179,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         const curTime = vid && Number.isFinite(vid.currentTime) ? vid.currentTime : 0;
         const wasPlaying = vid ? !vid.paused : true;
         pendingRestoreTimeRef.current = { time: curTime, shouldPlay: wasPlaying };
+        setIsVideoFrameReady(false);
         setIsVideoLoading(true);
         setMediaErrorState(null);
         setAsyncResolvedStream((prev) => ({ ...prev, src: nextUrl }));
@@ -2037,6 +2194,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setMediaErrorState(null);
     setIsVideoPlaying(false);
+    setIsVideoFrameReady(false);
     setIsVideoLoading(true);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback(`Switched to ${label}`);
@@ -2056,6 +2214,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setMediaErrorState(null);
     setIsVideoPlaying(false);
+    setIsVideoFrameReady(false);
     setIsVideoLoading(true);
     setStreamReloadNonce((n) => n + 1);
     showHudFeedback('🔄 Stream Reloaded');
@@ -2403,14 +2562,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const baseQualityFilter =
     QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
     'contrast(1.07) saturate(1.14) brightness(1.02)';
-  const combinedVideoFilter = isEyeCareOn
-    ? `${baseQualityFilter} sepia(0.16) brightness(0.95)`
-    : baseQualityFilter;
+  const hdrCssFilter = isAutoHdrOn ? ' contrast(1.12) saturate(1.22) brightness(1.04)' : '';
+  const combinedVideoFilter = `${baseQualityFilter}${hdrCssFilter}${isEyeCareOn ? ' sepia(0.16) brightness(0.95)' : ''}`;
 
   const activeSubtitleLabel =
     activeSubLang === 'off'
-      ? 'Sub: Off'
-      : availableSubLanguages.find((s) => s.code === activeSubLang)?.label || 'Subtitles';
+      ? '💬 Captions'
+      : availableSubLanguages.find((s) => s.code === activeSubLang)?.label || '💬 Captions';
 
   const handleCycleMobileSubtitle = () => {
     if (availableSubLanguages.length === 0) return;
@@ -2470,12 +2628,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           {/* Single Official Top-Right Motion-Animated AsiaFlix Prime Watermark (No Center Logo) */}
           <AnimatedChannelLogo src={transparentLogoUrl} />
 
-          {/* Center-Screen Animated Gold/Obsidian HUD Overlay */}
+          {/* 100% Transparent Floating Neon Holographic HUD Badge (Top-Center, Auto-Fades cleanly) */}
           {hudToast && (
-            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-4">
-              <div className="px-5 py-2.5 rounded-2xl bg-black/90 backdrop-blur-xl border border-[#f59e0b]/60 text-white text-xs sm:text-base font-black tracking-wide shadow-[0_0_30px_rgba(245,158,11,0.35)] animate-fade-in">
-                {hudToast}
-              </div>
+            <div
+              style={{
+                position: 'absolute',
+                top: '16px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 30,
+                pointerEvents: 'none',
+                background: 'rgba(10, 12, 22, 0.25)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                border: '1px solid rgba(0, 242, 254, 0.35)',
+                boxShadow: '0 0 25px rgba(0, 242, 254, 0.25)',
+                borderRadius: '9999px',
+                padding: '6px 18px',
+              }}
+              className="whitespace-nowrap max-w-[90%] truncate text-[#00f2fe] text-xs sm:text-sm font-black tracking-wide animate-fade-in"
+            >
+              {hudToast}
             </div>
           )}
 
@@ -2529,8 +2702,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
-          {/* 100% Transparent Branded Subtitle Overlay (Locked inside 16:9 stage; returns null when inactive) */}
-          {activeSubLang !== 'off' && !isMiniPlayer && activeCue?.text ? (
+          {/* Pure White Cinema Subtitles + In-Caption Silent-Gap Brand Watermark */}
+          {activeSubLang !== 'off' && !isMiniPlayer && (activeCue?.text || isInCaptionGapWatermark) ? (
             <div
               className={`pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center justify-center px-4 transition-all duration-200 ${
                 isPlayerControlsActive ? 'bottom-[11%]' : 'bottom-[8.5%]'
@@ -2538,7 +2711,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             >
               <div
                 style={
-                  shouldBlurSubArea
+                  activeCue?.text && shouldBlurSubArea
                     ? {
                         backdropFilter: 'blur(22px)',
                         WebkitBackdropFilter: 'blur(22px)',
@@ -2553,33 +2726,52 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }
                 className="inline-flex flex-col items-center justify-center text-center max-w-[92%] sm:max-w-[84%] transition-all duration-200"
               >
-                <span className="text-[9px] sm:text-[10px] font-black tracking-[0.22em] uppercase text-amber-300/95 mb-0.5 drop-shadow-[0_2px_6px_rgba(0,0,0,0.98)]">
-                  ⚡ AsiaFlix Prime
-                </span>
-                <span
-                  style={{
-                    fontSize:
-                      subFontSize === 'sm'
-                        ? 'clamp(1rem, 1.9vw, 1.65rem)'
-                        : subFontSize === 'lg'
-                        ? 'clamp(1.38rem, 2.9vw, 2.55rem)'
-                        : 'clamp(1.2rem, 2.4vw, 2.15rem)',
-                    fontWeight: 800,
-                    lineHeight: 1.38,
-                    WebkitTextStroke: '1.2px rgba(0, 0, 0, 0.95)',
-                    paintOrder: 'stroke fill',
-                    textShadow: '0 3px 8px rgba(0, 0, 0, 0.98), 0 0 4px #000',
-                  }}
-                  className={`whitespace-pre-line tracking-tight ${
-                    subColor === 'yellow'
-                      ? 'text-[#fde047]'
-                      : subColor === 'cyan'
-                      ? 'text-[#00f2fe]'
-                      : 'text-white'
-                  }`}
-                >
-                  {activeCue.text}
-                </span>
+                {activeCue?.text ? (
+                  <span
+                    style={{
+                      fontSize:
+                        subFontSize === 'sm'
+                          ? 'clamp(1rem, 1.9vw, 1.65rem)'
+                          : subFontSize === 'lg'
+                          ? 'clamp(1.38rem, 2.9vw, 2.55rem)'
+                          : 'clamp(1.2rem, 2.4vw, 2.15rem)',
+                      fontWeight: 800,
+                      lineHeight: 1.38,
+                      WebkitTextStroke: '1.2px rgba(0, 0, 0, 0.98)',
+                      paintOrder: 'stroke fill',
+                      textShadow: '0 2px 6px rgba(0, 0, 0, 0.98), 0 0 12px rgba(0, 0, 0, 0.85)',
+                    }}
+                    className={`whitespace-pre-line tracking-tight ${
+                      subColor === 'yellow'
+                        ? 'text-[#FFEA3B]'
+                        : subColor === 'cyan'
+                        ? 'text-[#00F2FE]'
+                        : subColor === 'pink'
+                        ? 'text-[#FF2A85]'
+                        : 'text-[#FFFFFF]'
+                    }`}
+                  >
+                    {captionShowBrandPrefix && (
+                      <span className="text-white/75 font-bold text-[0.72em] tracking-wide mr-1.5">
+                        AsiaFlix Prime •
+                      </span>
+                    )}
+                    {activeCue.text}
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 'clamp(0.95rem, 1.8vw, 1.45rem)',
+                      fontWeight: 800,
+                      WebkitTextStroke: '1px rgba(0, 0, 0, 0.96)',
+                      paintOrder: 'stroke fill',
+                      textShadow: '0 2px 6px rgba(0, 0, 0, 0.98), 0 0 12px rgba(0, 0, 0, 0.85)',
+                    }}
+                    className="text-white/90 tracking-wider uppercase animate-fade-in"
+                  >
+                    ⚡ AsiaFlix Prime
+                  </span>
+                )}
               </div>
             </div>
           ) : null}
@@ -2691,18 +2883,41 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </>
               )}
 
+              {/* Full-Bleed Episode/Series Thumbnail Backdrop (eliminates grey/black flash on load, seek, quality switch) */}
+              {!mediaErrorState && (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    backgroundImage: `url("${activeCustomThumbnail || drama.backdrop || drama.poster || ''}")`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    zIndex: 5,
+                    opacity: !isVideoFrameReady || isVideoLoading || isMidStreamBuffering ? 1 : 0,
+                    transition: 'opacity 0.35s ease',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-black/30" />
+                </div>
+              )}
+
               <video
                 ref={videoRef}
                 key={`${effectiveVideoSrc || asyncResolveKey || resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
                 src={isHlsVideoSrc ? undefined : effectiveVideoSrc || undefined}
                 crossOrigin={!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
-                poster=""
-                controls
+                poster={activeCustomThumbnail || drama.backdrop || drama.poster || ''}
+                controls={false}
                 preload="auto"
                 autoPlay={!isCinematicIntroPlaying}
                 playsInline
                 muted={shouldMuteVideoForExternalAudio || isAudioMuted}
-                onLoadStart={() => setIsVideoLoading(true)}
+                onLoadStart={() => {
+                  setIsVideoFrameReady(false);
+                  setIsVideoLoading(true);
+                }}
                 onLoadedMetadata={(e) => {
                   const vid = e.currentTarget;
                   vid.playbackRate = playbackSpeed;
@@ -2732,9 +2947,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   syncAudioToVideo(false, true);
                   syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
                 }}
-                onLoadedData={() => {
+                onLoadedData={(e) => {
                   setIsVideoLoading(false);
                   setIsMidStreamBuffering(false);
+                  if (e.currentTarget.readyState >= 3) {
+                    setIsVideoFrameReady(true);
+                  }
                 }}
                 onError={() => {
                   // Auto-fallback from OK.ru progressive MP4 to proxied HLS manifest if available
@@ -2746,6 +2964,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   ) {
                     const curTime = videoRef.current?.currentTime || 0;
                     pendingRestoreTimeRef.current = { time: curTime, shouldPlay: true };
+                    setIsVideoFrameReady(false);
                     setIsVideoLoading(true);
                     setAsyncResolvedStream((prev) => ({
                       ...prev,
@@ -2765,6 +2984,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   const vid = e.currentTarget;
                   setIsVideoLoading(false);
                   setIsMidStreamBuffering(false);
+                  setIsVideoFrameReady(true);
                   setMediaErrorState(null);
                   if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
@@ -2793,6 +3013,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   voiceEngineRef.current?.attachVideo(vid);
                   syncAudioToVideo(true);
                   if (vid) {
+                    if (vid.readyState >= 3) setIsVideoFrameReady(true);
                     const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(vid.currentTime);
                     activeCueRef.current = matchedCue;
                     setActiveCue(matchedCue);
@@ -2809,6 +3030,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   setIsVideoPlaying(true);
                   setIsVideoLoading(false);
                   setIsMidStreamBuffering(false);
+                  setIsVideoFrameReady(true);
                   setMediaErrorState(null);
                   lastPlaybackTickMsRef.current = Date.now();
                   if (vid && !shouldMuteVideoForExternalAudio) {
@@ -2834,8 +3056,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                 }}
                 onWaiting={() => {
-                  if (hasPlaybackStarted && !isCinematicIntroPlayingRef.current) {
-                    setIsMidStreamBuffering(true);
+                  if (!isCinematicIntroPlayingRef.current) {
+                    setIsVideoFrameReady(false);
+                    if (hasPlaybackStarted) {
+                      setIsMidStreamBuffering(true);
+                    }
                   }
                   lastPlaybackTickMsRef.current = null;
                   voiceEngineRef.current?.onPausedOrEnded();
@@ -2844,6 +3069,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   }
                 }}
                 onSeeking={() => {
+                  setIsVideoFrameReady(false);
                   voiceEngineRef.current?.onSeekingStop();
                   const vid = videoRef.current;
                   syncAudioToVideo(!vid?.paused, true);
@@ -2855,6 +3081,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onSeeked={() => {
                   const vid = videoRef.current;
+                  if (vid && vid.readyState >= 3) {
+                    setIsVideoFrameReady(true);
+                  }
                   syncAudioToVideo(!vid?.paused, true);
                   if (vid) {
                     syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
@@ -2893,11 +3122,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }}
                 onTimeUpdate={(e) => {
                   const vid = e.currentTarget;
+                  if (vid.currentTime > 0 && vid.readyState >= 3) {
+                    setIsVideoFrameReady(true);
+                    setIsVideoLoading(false);
+                    setIsMidStreamBuffering(false);
+                  }
                   if (vid.currentTime > 0.1) {
                     setHasPlaybackStarted(true);
                     setIsVideoPlaying(true);
-                    setIsVideoLoading(false);
-                    setIsMidStreamBuffering(false);
                   }
 
                   // 1. A-B Scene Looper
@@ -3017,12 +3249,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 className={`w-full h-full ${videoFitClass} bg-black transition-[filter] duration-300`}
               />
 
-              {/* Track-Specific Synced External Dubbed Audio Element (Silent Instant Fallback on Error/Timeout) */}
-              {isExternalAudioActive && trackCustomAudio && (
+              {/* Track-Specific Synced External Dubbed Audio Element (supports direct MP3 & OK.ru/VK audio extraction with silent fallback) */}
+              {isExternalAudioActive && activeExternalAudioUrl && (
                 <audio
                   ref={audioRef}
-                  key={`${activeAudio}-${activeStreamEp}-${trackCustomAudio}`}
-                  src={trackCustomAudio}
+                  key={`${activeAudio}-${activeStreamEp}-${activeExternalAudioUrl}`}
+                  src={resolvedExternalAudioSrc.isHls ? undefined : activeExternalAudioUrl}
                   preload="auto"
                   onLoadedMetadata={() => syncAudioToVideo()}
                   onCanPlay={() => {
@@ -3115,109 +3347,49 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </button>
               )}
 
-              {/* 100% Transparent Mid-Playback Buffer Indicator (Dual-Orbiting Neon Plasma Ring, Zero Dark Box, Zero Text) */}
-              {isMidStreamBuffering && isVideoPlaying && !isCinematicIntroPlaying && !mediaErrorState && (
-                <div className="pointer-events-none absolute inset-0 z-25 flex items-center justify-center bg-transparent">
-                  <div className="w-14 h-14 bg-transparent relative flex items-center justify-center">
+              {/* Single Transparent Neon Loading Ring (Zero Dual Stacked Spinners, Zero Black Boxes) */}
+              {(isVideoLoading || isMidStreamBuffering) && !isCinematicIntroPlaying && !mediaErrorState && (
+                <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-transparent">
+                  <div className="w-12 h-12 bg-transparent relative flex items-center justify-center">
                     <div
                       style={{
                         borderRadius: '9999px',
                         background:
-                          'conic-gradient(from 0deg, transparent 0%, #ff1e56 40%, #ffac41 65%, transparent 100%)',
+                          'conic-gradient(from 0deg, transparent 0%, #00f2fe 45%, #ff2a85 80%, transparent 100%)',
                         mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
                         WebkitMask:
                           'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
-                        animation: 'spin 1.1s linear infinite',
+                        animation: 'spin 1s linear infinite',
                       }}
                       className="absolute inset-0"
-                    />
-                    <div
-                      style={{
-                        borderRadius: '9999px',
-                        background:
-                          'conic-gradient(from 180deg, transparent 0%, #00f2fe 45%, #ff2a85 75%, transparent 100%)',
-                        mask: 'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
-                        WebkitMask:
-                          'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
-                        animation: 'spin 1.6s linear infinite reverse',
-                      }}
-                      className="absolute inset-2"
                     />
                   </div>
                 </div>
               )}
 
-              {/* 100% Transparent Holographic Ring Play Button / Buffer Portal (Never covers center video with dark boxes) */}
-              {!isVideoPlaying && !mediaErrorState && !isCinematicIntroPlaying && (
+              {/* Click-to-Toggle Play/Pause Surface + 100% Transparent Holographic Play Ring when Paused */}
+              {!isCinematicIntroPlaying && !mediaErrorState && (
                 <div
                   onClick={() => {
                     const vid = videoRef.current;
                     videoAudioNodeRef.current?.ctx.resume().catch(() => {});
-                    if (vid) {
+                    if (!vid) return;
+                    if (vid.paused) {
                       if (!shouldMuteVideoForExternalAudio) {
                         vid.muted = isAudioMuted;
                         vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
                       }
                       vid.play().catch(() => {});
+                    } else {
+                      vid.pause();
                     }
                   }}
-                  className={`absolute top-0 left-0 right-0 ${
-                    hasPlaybackStarted ? 'bottom-14' : 'bottom-0'
-                  } z-20 overflow-hidden cursor-pointer group bg-transparent`}
+                  className={`absolute inset-0 z-20 cursor-pointer group bg-transparent ${
+                    isVideoPlaying ? 'pointer-events-none' : ''
+                  }`}
                 >
-                  {/* Show episode thumbnail only before playback starts; keep paused video frame 100% visible */}
-                  {!hasPlaybackStarted &&
-                    (activeCustomThumbnail ? (
-                      <>
-                        <img
-                          src={activeCustomThumbnail}
-                          alt={drama.title}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-black/25" />
-                      </>
-                    ) : (
-                      <>
-                        <img
-                          src={drama.poster}
-                          alt=""
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover scale-125 blur-2xl opacity-40"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/40" />
-                      </>
-                    ))}
-
-                  <div className="absolute inset-0 flex items-center justify-center p-4 bg-transparent">
-                    {isVideoLoading ? (
-                      <div className="w-14 h-14 bg-transparent relative flex items-center justify-center pointer-events-none">
-                        <div
-                          style={{
-                            borderRadius: '9999px',
-                            background:
-                              'conic-gradient(from 0deg, transparent 0%, #ff1e56 40%, #ffac41 65%, transparent 100%)',
-                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
-                            WebkitMask:
-                              'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
-                            animation: 'spin 1.1s linear infinite',
-                          }}
-                          className="absolute inset-0"
-                        />
-                        <div
-                          style={{
-                            borderRadius: '9999px',
-                            background:
-                              'conic-gradient(from 180deg, transparent 0%, #00f2fe 45%, #ff2a85 75%, transparent 100%)',
-                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
-                            WebkitMask:
-                              'radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px))',
-                            animation: 'spin 1.6s linear infinite reverse',
-                          }}
-                          className="absolute inset-2"
-                        />
-                      </div>
-                    ) : (
+                  {!isVideoPlaying && !isVideoLoading && !isMidStreamBuffering && (
+                    <div className="absolute inset-0 flex items-center justify-center p-4 bg-transparent">
                       <div className="w-20 h-20 sm:w-24 sm:h-24 bg-transparent flex items-center justify-center relative cursor-pointer group">
                         {/* Outer Ring: Razor-sharp rotating conic-gradient neon laser ring */}
                         <div
@@ -3256,8 +3428,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           />
                         </svg>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3283,6 +3455,135 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               onComplete={finishOrSkipCinematicIntro}
               onSkip={finishOrSkipCinematicIntro}
             />
+          )}
+
+          {/* Compact Glassmorphic In-Player Captions Settings Popover */}
+          {isCaptionMenuOpen && !isMiniPlayer && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-[45] w-[270px] sm:w-[310px] max-w-[calc(100%-24px)] rounded-2xl bg-[#0a0c16]/90 backdrop-blur-xl border border-cyan-400/35 shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-3.5 space-y-3 text-xs animate-fade-in"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-black text-white flex items-center gap-1.5">
+                  <Captions className="w-3.5 h-3.5 text-[#00f2fe]" />
+                  <span>Captions &amp; Voice Dub</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsCaptionMenuOpen(false)}
+                  className="w-6 h-6 rounded-lg bg-white/10 hover:bg-[#e50914] text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Languages List */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Subtitle Language
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSubLang('off')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                      activeSubLang === 'off'
+                        ? 'bg-[#e50914] text-white border-red-400'
+                        : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
+                    }`}
+                  >
+                    🚫 Off
+                  </button>
+                  {availableSubLanguages.map((sub) => (
+                    <button
+                      type="button"
+                      key={`pop-sub-${sub.code}-${sub.url}`}
+                      onClick={() => handleSelectSubLang(sub.code)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                        activeSubLang === sub.code
+                          ? 'bg-cyan-400 text-black border-cyan-200'
+                          : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                  {isAdmin && uploadedSubCues && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSubLang('local')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                        activeSubLang === 'local'
+                          ? 'bg-cyan-400 text-black border-cyan-200'
+                          : 'bg-white/[0.06] text-zinc-200 border-white/10'
+                      }`}
+                    >
+                      📄 {uploadedSubCues.label}
+                    </button>
+                  )}
+                </div>
+                {availableSubLanguages.length === 0 && !(isAdmin && uploadedSubCues) && (
+                  <p className="text-[10px] text-zinc-400">
+                    No external subtitle file mapped for this episode.
+                  </p>
+                )}
+              </div>
+
+              {/* Caption Voice Dub Toggle */}
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                <span className="text-[11px] font-bold text-zinc-200">🔊 Caption Voice Dub</span>
+                <button
+                  type="button"
+                  onClick={handleToggleSubtitleAudio}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition-all ${
+                    isSubtitleAudioOn
+                      ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.45)]'
+                      : 'bg-white/[0.06] text-zinc-300 border-white/15 hover:text-white'
+                  }`}
+                >
+                  {isSubtitleAudioOn ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              {/* Font Color Presets & Size */}
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                <div className="flex items-center gap-1.5">
+                  {(
+                    [
+                      { id: 'white', label: 'White', hex: '#FFFFFF' },
+                      { id: 'yellow', label: 'Gold', hex: '#FFEA3B' },
+                      { id: 'cyan', label: 'Cyan', hex: '#00F2FE' },
+                      { id: 'pink', label: 'Pink', hex: '#FF2A85' },
+                    ] as const
+                  ).map((col) => (
+                    <button
+                      type="button"
+                      key={`pop-col-${col.id}`}
+                      onClick={() => setSubColor(col.id)}
+                      title={col.label}
+                      style={{ backgroundColor: col.hex }}
+                      className={`w-5 h-5 rounded-full cursor-pointer border-2 transition-transform ${
+                        subColor === col.id ? 'border-white scale-110 shadow-[0_0_10px_#fff]' : 'border-black/60 opacity-75 hover:opacity-100'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  {(['sm', 'md', 'lg'] as const).map((sz) => (
+                    <button
+                      type="button"
+                      key={`pop-sz-${sz}`}
+                      onClick={() => setSubFontSize(sz)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-black uppercase cursor-pointer ${
+                        subFontSize === sz ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -3662,13 +3963,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         {sz === 'sm' ? 'S' : sz === 'md' ? 'M' : 'L'}
                       </button>
                     ))}
-                    {(['white', 'yellow', 'cyan'] as const).map((col) => (
+                    {(['white', 'yellow', 'cyan', 'pink'] as const).map((col) => (
                       <button
                         key={col}
                         onClick={() => setSubColor(col)}
                         className={`px-2 py-0.5 rounded text-[10px] font-black capitalize cursor-pointer border ${
                           subColor === col ? 'border-white scale-105' : 'border-white/15 opacity-70'
-                        } ${col === 'yellow' ? 'text-amber-300' : col === 'cyan' ? 'text-cyan-300' : 'text-white'}`}
+                        } ${col === 'yellow' ? 'text-[#FFEA3B]' : col === 'cyan' ? 'text-[#00F2FE]' : col === 'pink' ? 'text-[#FF2A85]' : 'text-white'}`}
                       >
                         {col}
                       </button>
@@ -4037,18 +4338,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       </>
                     )}
 
-                    {(availableSubLanguages.length > 0 || (isAdmin && Boolean(uploadedSubCues))) && (
-                      <button
-                        onClick={handleCycleMobileSubtitle}
-                        className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                          activeSubLang !== 'off'
-                            ? 'bg-sky-400 text-black border-sky-200'
-                            : 'bg-[#141622] text-zinc-200 border-white/15'
-                        }`}
-                      >
-                        {activeSubtitleLabel}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setIsCaptionMenuOpen((v) => !v)}
+                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
+                        isCaptionMenuOpen || activeSubLang !== 'off'
+                          ? 'bg-cyan-400 text-black border-cyan-200'
+                          : 'bg-[#141622] text-zinc-200 border-white/15'
+                      }`}
+                    >
+                      {activeSubtitleLabel}
+                    </button>
+
+                    <button
+                      onClick={handleToggleAutoHdr}
+                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
+                        isAutoHdrOn
+                          ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
+                          : 'bg-[#141622] text-zinc-200 border-white/15'
+                      }`}
+                    >
+                      ✨ HDR
+                    </button>
 
                     {(availableSubLanguages.length > 0 || (isAdmin && activeSubLang !== 'off')) && (
                       <button
@@ -4059,7 +4369,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             : 'bg-[#141622] text-zinc-200 border-white/15'
                         }`}
                       >
-                        {isSubtitleAudioOn ? '🔊 Sub Audio' : '🔇 Sub Audio'}
+                        {isSubtitleAudioOn ? '🔊 Dub' : '🔇 Dub'}
                       </button>
                     )}
                   </div>
@@ -5105,6 +5415,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             )}
                           </button>
 
+                          <button
+                            onClick={() => setIsCaptionMenuOpen((v) => !v)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                              isCaptionMenuOpen || activeSubLang !== 'off'
+                                ? 'bg-cyan-400 text-black border-cyan-200 shadow-[0_0_14px_rgba(0,242,254,0.45)]'
+                                : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
+                            }`}
+                          >
+                            <Captions className="w-3.5 h-3.5" />
+                            <span>{activeSubtitleLabel}</span>
+                          </button>
+
                           {(availableSubLanguages.length > 0 || activeSubLang !== 'off') && (
                             <button
                               onClick={handleToggleSubtitleAudio}
@@ -5143,7 +5465,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           })}
                         </div>
 
-                        {/* QUALITY Pod */}
+                        {/* QUALITY & Instant Auto HDR Pod */}
                         <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
                           <span className="text-[10px] font-black text-red-400 uppercase tracking-wider flex items-center gap-1 mr-1">
                             <Gem className="w-3.5 h-3.5 text-[#e50914]" />
@@ -5165,6 +5487,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               </button>
                             );
                           })}
+                          <button
+                            onClick={handleToggleAutoHdr}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap border ${
+                              isAutoHdrOn
+                                ? 'bg-cyan-400 text-black border-cyan-200 shadow-[0_0_14px_rgba(0,242,254,0.45)]'
+                                : 'bg-white/[0.04] text-zinc-300 border-white/10 hover:text-white'
+                            }`}
+                          >
+                            ✨ Auto HDR
+                          </button>
                         </div>
                       </div>
 
@@ -5260,9 +5592,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 <span className="font-black text-zinc-400">🎨 Text Style:</span>
                                 {(
                                   [
-                                    { id: 'yellow', label: 'Yellow', cls: 'text-[#facc15]' },
                                     { id: 'white', label: 'White', cls: 'text-white' },
-                                    { id: 'cyan', label: 'Cyan', cls: 'text-[#00f2fe]' },
+                                    { id: 'yellow', label: 'Gold', cls: 'text-[#FFEA3B]' },
+                                    { id: 'cyan', label: 'Cyan', cls: 'text-[#00F2FE]' },
+                                    { id: 'pink', label: 'Pink', cls: 'text-[#FF2A85]' },
                                   ] as const
                                 ).map((col) => (
                                   <button

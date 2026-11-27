@@ -569,16 +569,37 @@ export default function App() {
   const [activeAppTab, setActiveAppTab] = useState<'home' | 'hot' | 'search' | 'watchlist' | 'menu'>('home');
   const [isResumeBarDismissed, setIsResumeBarDismissed] = useState<boolean>(false);
   const [watchTimestampsVersion, setWatchTimestampsVersion] = useState<number>(0);
+  const [isAppDownloadModalOpen, setIsAppDownloadModalOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.search.includes('install=app') ||
+      window.location.hash.toLowerCase() === '#install-app'
+    );
+  });
+  const [directAppLinkCopied, setDirectAppLinkCopied] = useState<boolean>(false);
 
   useEffect(() => {
+    // Preload Official Channel Logo so first-click 8s Cinema Intro & Watermark render at 0ms
+    const preloadWatermark = new Image();
+    preloadWatermark.src = '/logo-watermark.png';
+
     const syncStats = () => setVipStats(getVipStats());
     const syncTimestamps = () => setWatchTimestampsVersion((v) => v + 1);
     const syncDisplayMode = () => setIsInstalledApp(detectInstalledAppMode());
+    const handleHashInstall = () => {
+      if (
+        window.location.search.includes('install=app') ||
+        window.location.hash.toLowerCase() === '#install-app'
+      ) {
+        setIsAppDownloadModalOpen(true);
+      }
+    };
 
     window.addEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
     window.addEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
     window.addEventListener('storage', syncStats);
     window.addEventListener('storage', syncTimestamps);
+    window.addEventListener('hashchange', handleHashInstall);
 
     const standaloneMq = window.matchMedia?.('(display-mode: standalone)');
     const overlayMq = window.matchMedia?.('(display-mode: window-controls-overlay)');
@@ -595,6 +616,7 @@ export default function App() {
     const handleAppInstalled = () => {
       deferredInstallPromptRef.current = null;
       setIsInstalledApp(true);
+      setIsAppDownloadModalOpen(false);
       setInstallGuideToast('✅ AsiaFlix Prime App installed successfully!');
       window.setTimeout(() => setInstallGuideToast(null), 3500);
     };
@@ -606,6 +628,7 @@ export default function App() {
       window.removeEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
       window.removeEventListener('storage', syncStats);
       window.removeEventListener('storage', syncTimestamps);
+      window.removeEventListener('hashchange', handleHashInstall);
       standaloneMq?.removeEventListener?.('change', syncDisplayMode);
       overlayMq?.removeEventListener?.('change', syncDisplayMode);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
@@ -1720,99 +1743,98 @@ export default function App() {
         const episodeSubtitles: Record<number, Record<string, SubtitleTrackItem>> = {};
         const dramaSubtitles: Record<string, SubtitleTrackItem> = {};
         const parsedSubtitleTracks: SubtitleTrack[] = [];
-        const skippedSubPrefixes = new Set(['ep', 'es', 'hd', 'fd', 'os', 'http', 'https']);
+        const skippedSubPrefixes = new Set(['ep', 'es', 'hd', 'fd', 'os', 'od', 'http', 'https', 'hindi', 'fan', 'orig']);
+
+        const addSubtitleMapping = (rawLangCode: string, epNum: number, rawUrl: string) => {
+          const codeKey =
+            rawLangCode.toLowerCase() === 'sub' || rawLangCode.toLowerCase() === 'srt'
+              ? 'hin'
+              : rawLangCode.toLowerCase();
+          const normalizedUrl = normalizeDirectMediaUrl(rawUrl);
+          if (Number.isNaN(epNum) || !normalizedUrl) return;
+          const langMeta = getSubtitleLangMeta(codeKey);
+          if (!episodeSubtitles[epNum]) episodeSubtitles[epNum] = {};
+          if (!episodeSubtitles[epNum][codeKey]) {
+            episodeSubtitles[epNum][codeKey] = {
+              code: codeKey,
+              label: langMeta.label,
+              langTag: langMeta.langTag,
+              url: normalizedUrl,
+            };
+          }
+          if (!dramaSubtitles[codeKey]) {
+            dramaSubtitles[codeKey] = {
+              code: codeKey,
+              label: langMeta.label,
+              langTag: langMeta.langTag,
+              url: normalizedUrl,
+            };
+          }
+          if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
+            parsedSubtitleTracks.push({
+              label: `${langMeta.label} (Ep ${epNum})`,
+              url: normalizedUrl,
+            });
+          }
+        };
 
         const parseSubtitleSourceText = (sourceText: string) => {
           if (!sourceText) return;
-          const multiLangSubRegex = /\b([a-zA-Z]{2,5})\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/g;
+          // 1. Verbose prefixes: "Sub Ep 1 = ...", "Sub-Ep 1 = ..." -> Hindi CC
+          const subEpRegex = /\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/gi;
           let m: RegExpExecArray | null;
+          while ((m = subEpRegex.exec(sourceText)) !== null) {
+            addSubtitleMapping('hin', parseInt(m[1], 10), m[2]);
+          }
+
+          // 2. Numbered prefix: "Hin1 = ...", "Eng1 = ...", "SRT1 = ...", "Sub1 = ..."
+          const multiLangSubRegex = /\b([a-zA-Z]{2,5})\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/g;
           while ((m = multiLangSubRegex.exec(sourceText)) !== null) {
             const langCode = m[1].toLowerCase();
             if (skippedSubPrefixes.has(langCode)) continue;
-            const epNum = parseInt(m[2], 10);
-            const normalizedUrl = normalizeDirectMediaUrl(m[3]);
-            if (Number.isNaN(epNum) || !normalizedUrl) continue;
-
-            const langMeta = getSubtitleLangMeta(langCode);
-            if (!episodeSubtitles[epNum]) episodeSubtitles[epNum] = {};
-            if (!episodeSubtitles[epNum][langCode]) {
-              episodeSubtitles[epNum][langCode] = {
-                code: langCode,
-                label: langMeta.label,
-                langTag: langMeta.langTag,
-                url: normalizedUrl,
-              };
-            }
-            if (!dramaSubtitles[langCode]) {
-              dramaSubtitles[langCode] = {
-                code: langCode,
-                label: langMeta.label,
-                langTag: langMeta.langTag,
-                url: normalizedUrl,
-              };
-            }
-            if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
-              parsedSubtitleTracks.push({
-                label: `${langMeta.label} (Ep ${epNum})`,
-                url: normalizedUrl,
-              });
-            }
+            addSubtitleMapping(langCode, parseInt(m[2], 10), m[3]);
           }
 
-          // Also support unnumbered subtitle tags (e.g. "Hin = https://..." for Movies / single episodes)
-          const withoutNumberedSubs = sourceText.replace(
-            /\b([a-zA-Z]{2,5})\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/g,
-            ' '
-          );
+          // 3. Unnumbered tagged subtitle URLs: "Hin = https://..."
+          const withoutNumberedSubs = sourceText
+            .replace(/\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+            .replace(/\b([a-zA-Z]{2,5})\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/g, ' ');
           const unnumberedSubRegex = /\b([a-zA-Z]{2,5})\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/g;
           while ((m = unnumberedSubRegex.exec(withoutNumberedSubs)) !== null) {
             const langCode = m[1].toLowerCase();
             if (skippedSubPrefixes.has(langCode) || langCode === 't1' || langCode === 't2' || langCode === 't3') continue;
-            const normalizedUrl = normalizeDirectMediaUrl(m[2]);
-            if (!normalizedUrl) continue;
-            const langMeta = getSubtitleLangMeta(langCode);
-            if (!dramaSubtitles[langCode]) {
-              dramaSubtitles[langCode] = {
-                code: langCode,
-                label: langMeta.label,
-                langTag: langMeta.langTag,
-                url: normalizedUrl,
-              };
-            }
-            if (!episodeSubtitles[1]) episodeSubtitles[1] = {};
-            if (!episodeSubtitles[1][langCode]) {
-              episodeSubtitles[1][langCode] = {
-                code: langCode,
-                label: langMeta.label,
-                langTag: langMeta.langTag,
-                url: normalizedUrl,
-              };
-            }
-            if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
-              parsedSubtitleTracks.push({
-                label: langMeta.label,
-                url: normalizedUrl,
-              });
-            }
+            addSubtitleMapping(langCode, 1, m[2]);
           }
+
+          // 4. Raw unlabeled .srt / .vtt / .md.srt links pasted directly into Subtitles or Audio cell
+          const rawSrtMatches = sourceText.match(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi) || [];
+          rawSrtMatches.forEach((rawUrl) => {
+            const normUrl = normalizeDirectMediaUrl(rawUrl);
+            if (!normUrl || parsedSubtitleTracks.some((s) => s.url === normUrl)) return;
+            const epFromFile =
+              rawUrl.match(/S\d{1,2}E(\d{1,3})/i) ||
+              rawUrl.match(/\bep(?:isode)?[-_ ]?(\d{1,3})\b/i);
+            const epNum = epFromFile ? parseInt(epFromFile[1], 10) : 1;
+            addSubtitleMapping('hin', epNum, normUrl);
+          });
         };
 
         parseSubtitleSourceText(rawSubtitleCell);
         parseSubtitleSourceText(rawAudioCell);
 
-        // Parse Column N (Audio) -> HD1/HD2... (Hindi Dub), FD1/FD2... (Fan Dub), OS1/OS2... (Original/Eng Sub)
+        // Parse Column N (Audio) -> HD/Hindi Ep (Hindi Dub), FD/Fan Ep (Fan Dub), OS/OD/Orig Ep (Original)
         const hindiAudioMap = new Map<number, string>();
         const fanDubAudioMap = new Map<number, string>();
         const origAudioMap = new Map<number, string>();
 
         if (rawAudioCell) {
-          // Strip subtitle tokens (e.g. Sub1, Hin1, Eng1) from Audio cell before audio parsing
-          const cellWithoutSubtitles = rawAudioCell.replace(
-            /\b(?!hd\b|fd\b|os\b|ep\b|es\b)([a-zA-Z]{2,5})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
-            ' '
-          );
+          // Strip ALL subtitle URLs & subtitle tokens (.srt/.vtt/.md.srt, Sub Ep <n>, SRT<n>, Hin<n>, Eng<n>) before audio extraction
+          const cellWithoutSubtitles = rawAudioCell
+            .replace(/\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+            .replace(/\b(?!hd\b|fd\b|os\b|od\b|ep\b|es\b|hindi\b|fan\b|orig\b)([a-zA-Z]{2,5})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+            .replace(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi, ' ');
 
-          const hdRegex = /\bhd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          const hdRegex = /\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
           let am: RegExpExecArray | null;
           while ((am = hdRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
@@ -1822,7 +1844,7 @@ export default function App() {
             }
           }
 
-          const fdRegex = /\bfd\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          const fdRegex = /\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
           while ((am = fdRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
             const aUrl = normalizeDirectMediaUrl(am[2]);
@@ -1831,7 +1853,7 @@ export default function App() {
             }
           }
 
-          const osRegex = /\bos\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+          const osRegex = /\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
           while ((am = osRegex.exec(cellWithoutSubtitles)) !== null) {
             const epNum = parseInt(am[1], 10);
             const aUrl = normalizeDirectMediaUrl(am[2]);
@@ -1840,11 +1862,11 @@ export default function App() {
             }
           }
 
-          // Generic Ep1/Ep2 fallback inside Audio column (only after stripping HD/FD/OS tokens) -> Hindi Dubbed
-          const withoutTrackAudio = cellWithoutSubtitles.replace(
-            /\b(?:hd|fd|os)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi,
-            ' '
-          );
+          // Generic Ep1/Ep2 fallback inside Audio column -> Hindi Dubbed
+          const withoutTrackAudio = cellWithoutSubtitles
+            .replace(/\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+            .replace(/\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+            .replace(/\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ');
           const epAudioRegex = /\b(?:ep|episode|e)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
           while ((am = epAudioRegex.exec(withoutTrackAudio)) !== null) {
             const epNum = parseInt(am[1], 10);
@@ -1854,7 +1876,7 @@ export default function App() {
             }
           }
 
-          // Filename S01E01..S01E99 extraction for raw Hugging Face .mp3 URLs listed without explicit HD<n> prefix
+          // Filename S01E01..S01E99 extraction for raw audio URLs listed without explicit prefix
           const allRawAudioUrls = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
           allRawAudioUrls.forEach((rawUrl) => {
             const seMatch = rawUrl.match(/S\d{1,2}E(\d{1,3})/i);
@@ -1867,16 +1889,16 @@ export default function App() {
             }
           });
 
-          // Unnumbered track prefixes or single direct movie/episode URL
-          const hdUnnumbered = cellWithoutSubtitles.match(/\bhd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          // Unnumbered track prefixes or single direct movie/episode audio URL
+          const hdUnnumbered = cellWithoutSubtitles.match(/\b(?:hd|hindi)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (hdUnnumbered && !hindiAudioMap.has(1)) {
             hindiAudioMap.set(1, normalizeDirectMediaUrl(hdUnnumbered[1]));
           }
-          const fdUnnumbered = cellWithoutSubtitles.match(/\bfd\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          const fdUnnumbered = cellWithoutSubtitles.match(/\b(?:fd|fan)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (fdUnnumbered && !fanDubAudioMap.has(1)) {
             fanDubAudioMap.set(1, normalizeDirectMediaUrl(fdUnnumbered[1]));
           }
-          const osUnnumbered = cellWithoutSubtitles.match(/\bos\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+          const osUnnumbered = cellWithoutSubtitles.match(/\b(?:os|od|orig|original)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
           if (osUnnumbered && !origAudioMap.has(1)) {
             origAudioMap.set(1, normalizeDirectMediaUrl(osUnnumbered[1]));
           }
@@ -3704,6 +3726,7 @@ export default function App() {
             onGoHome={handleGoHome}
             vipStats={vipStats}
             onInstallApp={handleInstallApp}
+            onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
             isAppInstalled={isAppInstalled}
             isInstalledApp={isInstalledApp}
             onOpenAppMenu={() => {
@@ -3888,6 +3911,7 @@ export default function App() {
                 onOpenSupport={() => setIsSupportOpen(true)}
                 onOpenNotifications={() => setIsNotificationsOpen(true)}
                 onOpenAdmin={() => setIsAdminOpen(true)}
+                onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
               />
             </>
           ) : (
@@ -4649,8 +4673,104 @@ export default function App() {
 
       {/* 13. PWA INSTALL IN-APP GUIDE TOAST */}
       {installGuideToast && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[75] px-5 py-3 rounded-2xl bg-emerald-950/95 border border-emerald-400/60 text-emerald-100 text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(16,185,129,0.45)] backdrop-blur-xl animate-fade-in">
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[90] px-5 py-3 rounded-2xl bg-emerald-950/95 border border-emerald-400/60 text-emerald-100 text-xs sm:text-sm font-black shadow-[0_0_30px_rgba(16,185,129,0.45)] backdrop-blur-xl animate-fade-in">
           {installGuideToast}
+        </div>
+      )}
+
+      {/* 14. OFFICIAL ASIAFLIX PRIME APP INSTALL & .APK DOWNLOAD MODAL */}
+      {isAppDownloadModalOpen && (
+        <div
+          onClick={() => setIsAppDownloadModalOpen(false)}
+          className="fixed inset-0 z-[85] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Download Official AsiaFlix Prime App"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl bg-gradient-to-b from-[#131522] to-[#090a10] border border-white/15 shadow-[0_25px_70px_rgba(0,0,0,0.95)] p-6 space-y-5 relative"
+          >
+            <button
+              type="button"
+              onClick={() => setIsAppDownloadModalOpen(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-xl bg-white/10 hover:bg-[#e50914] text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+              aria-label="Close App Download Modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3 pr-8">
+              <img
+                src="/logo-watermark.png"
+                alt="AsiaFlix Prime"
+                className="w-12 h-12 rounded-2xl object-contain bg-black/50 border border-white/15 p-1 shrink-0"
+              />
+              <div>
+                <h2 className="text-lg font-black text-white tracking-tight">
+                  📲 Download Official AsiaFlix Prime App
+                </h2>
+                <p className="text-xs text-zinc-400 font-medium mt-0.5">
+                  True full-screen native OTT experience with offline cache &amp; zero browser bars.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {/* Option 1: 1-Click Instant App Install */}
+              <button
+                type="button"
+                onClick={handleInstallApp}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-[#f6121d] hover:to-[#ff4268] text-white text-sm font-black shadow-[0_0_24px_rgba(229,9,20,0.45)] flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99]"
+              >
+                <span>⚡ 1-Click Instant App Install (Android / Windows / iOS)</span>
+              </button>
+
+              {/* Option 2: Download Official Android .APK File */}
+              <a
+                href="/AsiaFlix-Prime.apk"
+                download="AsiaFlix-Prime.apk"
+                onClick={async (e) => {
+                  try {
+                    const head = await fetch('/AsiaFlix-Prime.apk', { method: 'HEAD' });
+                    const ct = head.headers.get('content-type') || '';
+                    if (!head.ok || ct.includes('text/html')) {
+                      e.preventDefault();
+                      setInstallGuideToast('⚡ Tap "1-Click Instant App Install" above for direct WebAPK install on Android!');
+                      window.setTimeout(() => setInstallGuideToast(null), 4500);
+                    }
+                  } catch {
+                    // allow default download attempt
+                  }
+                }}
+                className="w-full py-3 px-4 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 hover:text-white text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <span>📦 Download Official Android .APK File</span>
+              </a>
+
+              {/* Option 3: Copy Direct App Download Link */}
+              <button
+                type="button"
+                onClick={() => {
+                  const directUrl = `${window.location.origin}/?install=app`;
+                  navigator.clipboard?.writeText(directUrl).catch(() => {});
+                  setDirectAppLinkCopied(true);
+                  window.setTimeout(() => setDirectAppLinkCopied(false), 2600);
+                }}
+                className="w-full py-2.5 px-4 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-zinc-200 hover:text-white text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <span>
+                  {directAppLinkCopied
+                    ? '✅ Copied Direct App Link!'
+                    : '🔗 Copy Direct App Download Link'}
+                </span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-zinc-400 text-center leading-relaxed">
+              Share <span className="text-sky-300 font-semibold">{typeof window !== 'undefined' ? `${window.location.origin}/?install=app` : 'https://asiaflixprime.pages.dev/?install=app'}</span> directly on Telegram for 1-tap install.
+            </p>
+          </div>
         </div>
       )}
     </div>

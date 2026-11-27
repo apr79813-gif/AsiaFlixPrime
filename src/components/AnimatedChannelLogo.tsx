@@ -386,7 +386,9 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
   onComplete,
   onSkip,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasSizeRef = useRef<{ w: number; h: number }>({ w: 1280, h: 720 });
   const completedRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
@@ -394,6 +396,33 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
   const [elapsedSec, setElapsedSec] = useState<number>(0);
 
   useEffect(() => {
+    const syncCanvasDimensions = () => {
+      const container = containerRef.current;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const parentRect = container?.parentElement?.getBoundingClientRect();
+      const fallbackW = Math.max(320, parentRect?.width || window.innerWidth || 1280);
+      const cssW = rect.width >= 32 ? rect.width : fallbackW;
+      const cssH = rect.height >= 18 ? rect.height : Math.round((cssW * 9) / 16);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.max(320, Math.round(cssW * dpr));
+      const h = Math.max(180, Math.round(cssH * dpr));
+      canvasSizeRef.current = { w, h };
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    };
+
+    syncCanvasDimensions();
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+      ro = new ResizeObserver(() => syncCanvasDimensions());
+      ro.observe(containerRef.current);
+    }
+    window.addEventListener('resize', syncCanvasDimensions);
+
     const startMs = performance.now();
     let rafId = 0;
 
@@ -405,23 +434,6 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
 
     const hardTimeoutId = window.setTimeout(finish, 8000);
 
-    // Pre-generate 160 high-speed 3D prism spectrum ribbons for Phase 3 Hyper-Warp
-    const prismPalette = ['#e50914', '#ff2a85', '#ffb800', '#7928ca', '#00f2fe'];
-    const warpRibbons = Array.from({ length: 160 }, (_, i) => {
-      const goldenAngle = i * 2.39996323;
-      const radialSpread = 0.16 + ((i * 0.6180339) % 1) * 0.95;
-      return {
-        nx: Math.cos(goldenAngle) * radialSpread,
-        ny: Math.sin(goldenAngle) * radialSpread * 0.68,
-        zStart: 0.35 + ((i * 0.317) % 1) * 1.45,
-        speed: 0.9 + (i % 7) * 0.24,
-        color: prismPalette[i % prismPalette.length],
-        width: 1.4 + (i % 5) * 0.9,
-        verticalSliceX: (((i * 0.431) % 1) - 0.5) * 2.1,
-        sliceDelay: (i % 12) * 0.055,
-      };
-    });
-
     const renderFrame = (now: number) => {
       const t = Math.min(8.0, (now - startMs) / 1000);
       setElapsedSec(t);
@@ -430,8 +442,14 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const w = Math.max(320, Math.round(rect.width * dpr));
-        const h = Math.max(180, Math.round(rect.height * dpr));
+        const w =
+          rect.width >= 32
+            ? Math.max(320, Math.round(rect.width * dpr))
+            : canvasSizeRef.current.w;
+        const h =
+          rect.height >= 18
+            ? Math.max(180, Math.round(rect.height * dpr))
+            : canvasSizeRef.current.h;
         if (canvas.width !== w || canvas.height !== h) {
           canvas.width = w;
           canvas.height = h;
@@ -447,30 +465,36 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
           // Additive cinema light blending
           ctx.globalCompositeOperation = 'lighter';
 
-          // PHASE 1 (0.0s - 2.0s, subtle tail to 2.4s): Deep Space Anamorphic Lens Flare & Energy Ignition
-          if (t < 2.45) {
+          // PHASE 1 (0.0s - 2.0s, tail to 2.5s): Horizontal Crimson-Cyan Anamorphic Lens Flare & Ignition
+          if (t < 2.55) {
             const p1 = Math.min(1, t / 2.0);
-            const fade1 = t > 1.85 ? Math.max(0, 1 - (t - 1.85) / 0.6) : 1;
-            const flareSweepX = cx + (p1 - 0.48) * w * 0.68;
+            const fade1 = t > 1.8 ? Math.max(0, 1 - (t - 1.8) / 0.75) : 1;
+            const flareSweepX = cx + (p1 - 0.45) * w * 0.65;
 
-            // Core ignition radial bloom
-            const coreR = minDim * (0.06 + Math.sin(p1 * Math.PI * 0.65) * 0.34);
+            const coreR = minDim * (0.08 + Math.sin(p1 * Math.PI * 0.65) * 0.36);
             const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
-            coreGrad.addColorStop(0, `rgba(255, 255, 255, ${0.72 * fade1 * Math.sin(Math.min(1, p1 * 1.1) * Math.PI)})`);
-            coreGrad.addColorStop(0.24, `rgba(0, 242, 254, ${0.42 * fade1})`);
-            coreGrad.addColorStop(0.55, `rgba(229, 9, 20, ${0.38 * fade1})`);
+            coreGrad.addColorStop(
+              0,
+              `rgba(255, 255, 255, ${0.76 * fade1 * Math.sin(Math.min(1, p1 * 1.15) * Math.PI)})`
+            );
+            coreGrad.addColorStop(0.24, `rgba(0, 242, 254, ${0.46 * fade1})`);
+            coreGrad.addColorStop(0.55, `rgba(229, 9, 20, ${0.42 * fade1})`);
             coreGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
             ctx.fillStyle = coreGrad;
             ctx.fillRect(0, 0, w, h);
 
-            // Electric horizontal anamorphic cyan streak
-            const cyanW = w * (0.45 + p1 * 0.55);
-            const cyanH = Math.max(3 * dpr, minDim * 0.035 * (1 - p1 * 0.25));
-            const cyanGrad = ctx.createLinearGradient(flareSweepX - cyanW * 0.5, cy, flareSweepX + cyanW * 0.5, cy);
+            const cyanW = w * (0.48 + p1 * 0.52);
+            const cyanH = Math.max(3 * dpr, minDim * 0.036 * (1 - p1 * 0.25));
+            const cyanGrad = ctx.createLinearGradient(
+              flareSweepX - cyanW * 0.5,
+              cy,
+              flareSweepX + cyanW * 0.5,
+              cy
+            );
             cyanGrad.addColorStop(0, 'rgba(0, 242, 254, 0)');
-            cyanGrad.addColorStop(0.35, `rgba(0, 242, 254, ${0.38 * fade1})`);
-            cyanGrad.addColorStop(0.5, `rgba(255, 255, 255, ${0.88 * fade1})`);
-            cyanGrad.addColorStop(0.65, `rgba(255, 42, 133, ${0.42 * fade1})`);
+            cyanGrad.addColorStop(0.35, `rgba(0, 242, 254, ${0.44 * fade1})`);
+            cyanGrad.addColorStop(0.5, `rgba(255, 255, 255, ${0.9 * fade1})`);
+            cyanGrad.addColorStop(0.65, `rgba(255, 42, 133, ${0.46 * fade1})`);
             cyanGrad.addColorStop(1, 'rgba(229, 9, 20, 0)');
 
             ctx.save();
@@ -479,14 +503,12 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             ctx.ellipse(flareSweepX, cy, cyanW * 0.5, cyanH, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            // Razor-thin electric anamorphic filament line
-            ctx.fillStyle = `rgba(220, 252, 255, ${0.85 * fade1})`;
+            ctx.fillStyle = `rgba(225, 252, 255, ${0.88 * fade1})`;
             ctx.fillRect(cx - w * 0.48, cy - 1.2 * dpr, w * 0.96, 2.4 * dpr);
 
-            // Secondary crimson horizontal diffraction streak
             const crimGrad = ctx.createLinearGradient(cx - w * 0.46, cy, cx + w * 0.46, cy);
             crimGrad.addColorStop(0, 'rgba(229, 9, 20, 0)');
-            crimGrad.addColorStop(0.5, `rgba(255, 42, 133, ${0.52 * fade1})`);
+            crimGrad.addColorStop(0.5, `rgba(255, 42, 133, ${0.56 * fade1})`);
             crimGrad.addColorStop(1, 'rgba(229, 9, 20, 0)');
             ctx.fillStyle = crimGrad;
             ctx.beginPath();
@@ -495,34 +517,40 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             ctx.restore();
           }
 
-          // PHASE 2 (1.8s - 5.9s): Rotating Volumetric Crimson/Magenta Aurora God-Rays Behind Emblem
-          if (t >= 1.75 && t < 6.05) {
-            const enter2 = Math.min(1, (t - 1.75) / 0.65);
-            const exit2 = t > 5.3 ? Math.max(0, 1 - (t - 5.3) / 0.75) : 1;
+          // PHASE 2 (1.8s - 6.6s): Rotating Volumetric Crimson/Magenta Aurora God-Rays Behind Emblem (Zero Vertical/Pencil Stripes)
+          if (t >= 1.7 && t < 7.2) {
+            const enter2 = Math.min(1, (t - 1.7) / 0.65);
+            const exit2 = t > 6.1 ? Math.max(0, 1 - (t - 6.1) / 1.1) : 1;
             const alpha2 = enter2 * exit2;
-            const pulse = 0.82 + 0.18 * Math.sin(t * 2.4);
+            const pulse = 0.84 + 0.16 * Math.sin(t * 2.2);
 
-            // Warm crimson & magenta central aurora behind logo
-            const auraGrad = ctx.createRadialGradient(cx, cy, minDim * 0.02, cx, cy, minDim * 0.56);
-            auraGrad.addColorStop(0, `rgba(255, 42, 133, ${0.34 * alpha2 * pulse})`);
-            auraGrad.addColorStop(0.38, `rgba(229, 9, 20, ${0.26 * alpha2 * pulse})`);
+            const auraGrad = ctx.createRadialGradient(cx, cy, minDim * 0.02, cx, cy, minDim * 0.6);
+            auraGrad.addColorStop(0, `rgba(255, 42, 133, ${0.38 * alpha2 * pulse})`);
+            auraGrad.addColorStop(0.38, `rgba(229, 9, 20, ${0.28 * alpha2 * pulse})`);
             auraGrad.addColorStop(0.7, `rgba(121, 40, 202, ${0.14 * alpha2})`);
             auraGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
             ctx.fillStyle = auraGrad;
             ctx.fillRect(0, 0, w, h);
 
-            // 16 rotating volumetric god-ray shafts radiating behind logo play emblem
             ctx.save();
             ctx.translate(cx, cy);
-            for (let b = 0; b < 16; b++) {
-              const angle = (b / 16) * Math.PI * 2 + t * 0.14;
+            for (let b = 0; b < 14; b++) {
+              const angle = (b / 14) * Math.PI * 2 + t * 0.12;
               const rayLen = minDim * (0.58 + (b % 3) * 0.12);
-              const raySpread = minDim * (0.045 + (b % 2) * 0.025);
+              const raySpread = minDim * (0.048 + (b % 2) * 0.024);
               ctx.save();
               ctx.rotate(angle);
               const rayGrad = ctx.createLinearGradient(0, 0, rayLen, 0);
-              rayGrad.addColorStop(0, b % 2 === 0 ? `rgba(255, 42, 133, ${0.26 * alpha2 * pulse})` : `rgba(229, 9, 20, ${0.22 * alpha2 * pulse})`);
-              rayGrad.addColorStop(0.5, b % 3 === 0 ? `rgba(121, 40, 202, ${0.1 * alpha2})` : `rgba(255, 184, 0, ${0.07 * alpha2})`);
+              rayGrad.addColorStop(
+                0,
+                b % 2 === 0
+                  ? `rgba(255, 42, 133, ${0.24 * alpha2 * pulse})`
+                  : `rgba(229, 9, 20, ${0.2 * alpha2 * pulse})`
+              );
+              rayGrad.addColorStop(
+                0.5,
+                b % 3 === 0 ? `rgba(121, 40, 202, ${0.09 * alpha2})` : `rgba(255, 184, 0, ${0.06 * alpha2})`
+              );
               rayGrad.addColorStop(1, 'rgba(2, 2, 5, 0)');
               ctx.fillStyle = rayGrad;
               ctx.beginPath();
@@ -534,47 +562,6 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
               ctx.restore();
             }
             ctx.restore();
-          }
-
-          // PHASE 3 (5.5s - 8.0s): Netflix-Style 3D Prism Spectrum Hyper-Warp Tunnel
-          if (t >= 5.45) {
-            const p3 = Math.min(1, (t - 5.45) / 2.55);
-            const warpGain = Math.sin(Math.min(1, p3 * 1.05) * Math.PI * 0.92);
-
-            for (const r of warpRibbons) {
-              // Advance 3D z-depth toward camera
-              const zSpan = r.zStart - p3 * r.speed * 1.45;
-              const zHead = Math.max(0.06, ((zSpan % 1.4) + 1.4) % 1.4);
-              const zTail = Math.min(1.8, zHead + 0.22 + p3 * 0.42);
-
-              const scaleHead = 0.42 / zHead;
-              const scaleTail = 0.42 / zTail;
-
-              const x1 = cx + r.nx * w * 0.55 * scaleTail;
-              const y1 = cy + r.ny * h * 0.65 * scaleTail;
-              const x2 = cx + r.nx * w * 0.55 * scaleHead;
-              const y2 = cy + r.ny * h * 0.65 * scaleHead;
-
-              ctx.strokeStyle = r.color;
-              ctx.globalAlpha = Math.min(0.9, (0.28 + warpGain * 0.72) * (1 - p3 * 0.28));
-              ctx.lineWidth = r.width * dpr * (0.65 + scaleHead * 0.75);
-              ctx.beginPath();
-              ctx.moveTo(x1, y1);
-              ctx.lineTo(x2, y2);
-              ctx.stroke();
-
-              // Vertical Netflix-style prism spectrum light ribbons sweeping past edges
-              if (r.width >= 2.2) {
-                const sliceP = Math.max(0, Math.min(1, p3 * 1.35 - r.sliceDelay * 0.5));
-                if (sliceP > 0) {
-                  const sx = cx + r.verticalSliceX * w * (0.55 + sliceP * 0.95);
-                  ctx.globalAlpha = Math.min(0.45, sliceP * 0.5) * (1 - p3 * 0.45);
-                  ctx.fillStyle = r.color;
-                  ctx.fillRect(sx, 0, r.width * dpr * (1.2 + sliceP * 2.8), h);
-                }
-              }
-            }
-            ctx.globalAlpha = 1;
           }
 
           ctx.globalCompositeOperation = 'source-over';
@@ -591,41 +578,46 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
     rafId = window.requestAnimationFrame(renderFrame);
 
     return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', syncCanvasDimensions);
       window.clearTimeout(hardTimeoutId);
       window.cancelAnimationFrame(rafId);
     };
   }, []);
 
-  // Compute 3-phase CSS transform & opacity for the SINGLE official transparent AsiaFlix Prime logo
+  // Smooth 3-Phase Timeline (No stripes — Zoom forward & seamless cross-fade at 6.2s -> 8.0s)
   let logoOpacity = 0;
-  let logoScale = 0.82;
+  let logoScale = 0.84;
   let logoTiltY = 0;
   let overlayOpacity = 1;
 
   if (elapsedSec < 2.0) {
-    // Phase 1 (0.0s - 2.0s): Lens flare ignition -> logo begins smooth fade-in around 1.2s
-    const emerge = Math.max(0, Math.min(1, (elapsedSec - 1.15) / 0.85));
+    // Phase 1 (0.0s - 2.0s): Lens flare ignition -> logo begins smooth fade-in around 1.15s
+    const emerge = Math.max(0, Math.min(1, (elapsedSec - 1.1) / 0.9));
     const eased = 1 - Math.pow(1 - emerge, 3);
     logoOpacity = eased;
-    logoScale = 0.82 + eased * 0.08;
-    logoTiltY = (1 - eased) * -10;
-  } else if (elapsedSec < 5.5) {
-    // Phase 2 (2.0s - 5.5s): 3D Official Logo Emergence (scale 0.90 -> 1.05) with Volumetric God-Rays
-    const p2 = (elapsedSec - 2.0) / 3.5;
+    logoScale = 0.84 + eased * 0.08;
+    logoTiltY = (1 - eased) * -9;
+  } else if (elapsedSec < 6.2) {
+    // Phase 2 (2.0s - 6.2s): 3D Official Logo Emergence with Warm Crimson Aurora & Metallic Sweep
+    const p2 = (elapsedSec - 2.0) / 4.2;
     const smooth2 = 1 - Math.pow(1 - p2, 2);
     logoOpacity = 1;
-    logoScale = 0.9 + smooth2 * 0.15;
-    logoTiltY = Math.sin(p2 * Math.PI * 1.2) * 4.5;
+    logoScale = 0.92 + smooth2 * 0.14;
+    logoTiltY = Math.sin(p2 * Math.PI * 1.35) * 4.5;
   } else {
-    // Phase 3 (5.5s - 8.0s): 3D Prism Spectrum Hyper-Warp zoom forward & seamless cross-fade to episode
-    const p3 = Math.min(1, (elapsedSec - 5.5) / 2.5);
-    logoScale = 1.05 + Math.pow(p3, 2.0) * 2.95;
-    logoOpacity = p3 > 0.52 ? Math.max(0, 1 - (p3 - 0.52) / 0.48) : 1;
-    overlayOpacity = p3 > 0.72 ? Math.max(0, 1 - (p3 - 0.72) / 0.28) : 1;
+    // Phase 3 (6.2s - 8.0s): Logo zooms forward toward camera & cross-fades cleanly into video/thumbnail
+    const p3 = Math.min(1, (elapsedSec - 6.2) / 1.8);
+    const easedZoom = 1 - Math.pow(1 - p3, 2);
+    logoScale = 1.06 + easedZoom * 2.1;
+    logoOpacity = Math.max(0, 1 - p3 * 1.05);
+    const fadeP = Math.max(0, Math.min(1, (elapsedSec - 6.6) / 1.4));
+    overlayOpacity = 1 - fadeP;
   }
 
   return (
     <div
+      ref={containerRef}
       onClick={(e) => e.stopPropagation()}
       style={{
         position: 'absolute',
@@ -637,7 +629,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
         alignItems: 'center',
         justifyContent: 'center',
         opacity: overlayOpacity,
-        transition: 'opacity 140ms linear',
+        transition: 'opacity 180ms ease-out',
       }}
       className="select-none"
     >
@@ -659,16 +651,41 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             opacity: 0;
           }
         }
+        @keyframes afpCssFlarePulse {
+          0%, 100% {
+            opacity: 0.55;
+            transform: scale(0.95);
+          }
+          50% {
+            opacity: 0.95;
+            transform: scale(1.06);
+          }
+        }
       `}</style>
+
+      {/* Instant GPU CSS Volumetric Crimson/Cyan Backdrop Layer (guarantees visibility on frame 0 even before canvas ticks) */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background:
+            elapsedSec < 2.0
+              ? 'radial-gradient(ellipse 75% 18% at 50% 50%, rgba(0,242,254,0.28) 0%, rgba(229,9,20,0.34) 42%, rgba(2,2,5,0) 78%)'
+              : 'radial-gradient(circle at 50% 50%, rgba(255,42,133,0.34) 0%, rgba(229,9,20,0.24) 36%, rgba(121,40,202,0.12) 60%, rgba(2,2,5,0) 80%)',
+          animation: 'afpCssFlarePulse 3.2s ease-in-out infinite',
+        }}
+      />
 
       {/* Canvas 60fps Volumetric Light Engine */}
       <canvas
         ref={canvasRef}
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 w-full h-full"
+        className="pointer-events-none absolute inset-0 w-full h-full block"
       />
 
-      {/* Single Official Transparent Logo (ZERO duplicate HTML PRIME text, ZERO dot artifacts) */}
+      {/* Single Official Transparent Logo (ZERO duplicate HTML PRIME text, ZERO vertical color stripes) */}
       <div
         style={{
           position: 'relative',
@@ -697,7 +714,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             }}
             className="object-contain block"
           />
-          {elapsedSec >= 2.0 && elapsedSec < 6.0 && (
+          {elapsedSec >= 2.0 && elapsedSec < 6.2 && (
             <div
               aria-hidden="true"
               style={{

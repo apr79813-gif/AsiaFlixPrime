@@ -41,6 +41,7 @@ interface NavbarProps {
   onOpenSearchModal?: () => void;
   vipStats?: VipStats;
   onInstallApp?: () => void;
+  onOpenAppDownloadModal?: () => void;
   isAppInstalled?: boolean;
   isInstalledApp?: boolean;
   onOpenAppMenu?: () => void;
@@ -70,6 +71,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSearchModal,
   vipStats,
   onInstallApp,
+  onOpenAppDownloadModal,
   isAppInstalled = false,
   isInstalledApp = false,
   onOpenAppMenu,
@@ -354,12 +356,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          {/* 1-Click Install App PWA Button */}
-          {onInstallApp && !isAppInstalled && (
+          {/* 1-Click Install App / Download APK Modal Trigger */}
+          {(onOpenAppDownloadModal || onInstallApp) && !isAppInstalled && (
             <button
-              onClick={onInstallApp}
+              onClick={onOpenAppDownloadModal || onInstallApp}
               className="px-2.5 py-1.5 md:px-3 md:py-2 text-xs md:text-[13px] font-extrabold rounded-xl bg-emerald-500/15 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.2)]"
-              title="Install AsiaFlix Prime App"
+              title="Install AsiaFlix Prime App or Download APK"
             >
               <Download className="w-3.5 h-3.5" />
               <span>📲 App</span>

@@ -693,9 +693,21 @@ export function isDeadExternalAudioUrl(rawUrl?: string): boolean {
   );
 }
 
+export function isExtractorAudioUrl(rawUrl?: string): boolean {
+  if (!rawUrl) return false;
+  return /(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru)\/(?:video|videoembed|live)/i.test(rawUrl.trim());
+}
+
 export function sanitizeExternalAudioUrl(rawUrl?: string): string | undefined {
   if (!rawUrl) return undefined;
-  const normalized = normalizeUniversalAssetUrl(rawUrl);
+  const trimmed = rawUrl.trim();
+  if (!trimmed || isDeadExternalAudioUrl(trimmed)) {
+    return undefined;
+  }
+  if (isExtractorAudioUrl(trimmed)) {
+    return trimmed;
+  }
+  const normalized = normalizeUniversalAssetUrl(trimmed);
   if (!normalized || isDeadExternalAudioUrl(normalized)) {
     return undefined;
   }

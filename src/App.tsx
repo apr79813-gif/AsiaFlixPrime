@@ -28,6 +28,7 @@ import { AdBannerSlot } from './components/AdBannerSlot';
 import { FloatingPopupAd } from './components/FloatingPopupAd';
 import { AppNavigationDrawer } from './components/AppNavigationDrawer';
 import { AppHomeFeed } from './components/AppHomeFeed';
+import { AppLaunchSplash, useTransparentLogo } from './components/AnimatedChannelLogo';
 import {
   sendNativeBrowserNotification,
   registerServiceWorker,
@@ -138,6 +139,8 @@ export default function App() {
   const [customLogoUrl, setCustomLogoUrl] = useState<string>(() => {
     return localStorage.getItem('asiaflix_custom_logo_url') || '';
   });
+  const transparentAppLogo = useTransparentLogo(customLogoUrl);
+  const [showAppSplash, setShowAppSplash] = useState<boolean>(() => detectInstalledAppMode());
 
   useEffect(() => {
     if (customLogoUrl) {
@@ -3489,6 +3492,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white w-full">
+      {/* 1.8s Native OTT App Launch Splash Screen (Installed App Mode Only) */}
+      {isInstalledApp && showAppSplash && (
+        <AppLaunchSplash
+          logoUrl={customLogoUrl}
+          onComplete={() => setShowAppSplash(false)}
+        />
+      )}
+
       {/* Crisp Falling Particle Ambience Canvas */}
       <SakuraCanvas enabled={particleMode !== 'off'} mode={particleMode} />
 
@@ -4538,9 +4549,11 @@ export default function App() {
 
             <div className="flex items-center gap-3 pr-8">
               <img
-                src="/logo-watermark.png"
+                src={transparentAppLogo}
                 alt="AsiaFlix Prime"
-                className="w-12 h-12 rounded-2xl object-contain bg-black/50 border border-white/15 p-1 shrink-0"
+                referrerPolicy="no-referrer"
+                style={{ background: 'transparent' }}
+                className="w-12 h-12 object-contain shrink-0 drop-shadow-[0_0_10px_rgba(229,9,20,0.55)]"
               />
               <div>
                 <h2 className="text-lg font-black text-white tracking-tight">

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ParticleMode } from './SakuraCanvas';
 import { VipStats, getVipRankMeta } from '../services/vipPlayerHelper';
+import { useTransparentLogo } from './AnimatedChannelLogo';
 
 interface NavbarProps {
   unreadNotifsCount: number;
@@ -103,6 +104,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     lastWatchDate: '',
   };
   const vipRank = getVipRankMeta(effectiveStats.totalMinutes);
+  const transparentLogoSrc = useTransparentLogo(logoUrl);
 
   const handleCopyPortalLink = () => {
     navigator.clipboard.writeText('https://asiaflixprime.pages.dev/');
@@ -160,14 +162,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center gap-2.5 min-w-0 cursor-pointer select-none group"
           >
             <img
-              src={logoUrl || 'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png'}
+              src={transparentLogoSrc}
               alt="AsiaFlix Prime"
               referrerPolicy="no-referrer"
-              className="w-8 h-8 rounded-lg object-cover border border-white/15 shrink-0"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src =
-                  'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
-              }}
+              style={{ background: 'transparent' }}
+              className="w-9 h-9 object-contain shrink-0 drop-shadow-[0_0_8px_rgba(229,9,20,0.45)]"
             />
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-base sm:text-lg font-black tracking-tight text-white truncate group-hover:text-red-400 transition-colors">
@@ -255,15 +254,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Brand */}
         <div className="flex items-center gap-2 shrink-0 min-w-0">
           <div onClick={handleLogoClick} className="flex items-center gap-2 group cursor-pointer select-none shrink-0">
-            <div className="relative w-9 h-9 md:w-10 md:h-10 min-w-[36px] min-h-[36px] md:min-w-[40px] md:min-h-[40px] shrink-0 overflow-hidden rounded-xl bg-zinc-900 border border-white/15 shadow-[0_0_20px_rgba(229,9,20,0.5)]">
+            <div className="relative w-10 h-10 md:w-11 md:h-11 min-w-[40px] min-h-[40px] md:min-w-[44px] md:min-h-[44px] shrink-0 flex items-center justify-center">
               <img 
-                src={logoUrl || "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png"} 
+                src={transparentLogoSrc} 
                 alt="AsiaFlix Prime" 
                 referrerPolicy="no-referrer"
-                className="w-full h-full shrink-0 object-cover group-hover:scale-105 transition-transform"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png";
-                }}
+                style={{ background: 'transparent' }}
+                className="w-full h-full shrink-0 object-contain group-hover:scale-105 transition-transform drop-shadow-[0_0_12px_rgba(229,9,20,0.55)]"
               />
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 md:w-3 md:h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />
             </div>

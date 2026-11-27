@@ -1,5 +1,113 @@
 import React, { useEffect, useRef, useState } from 'react';
 
+export const OFFICIAL_WATERMARK_LOGO_URL = '/logo-watermark.png';
+export const FALLBACK_RAW_LOGO_URL =
+  'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
+
+const transparentLogoCache = new Map<string, string>();
+const transparentLogoInflight = new Map<string, Promise<string>>();
+
+export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
+  const candidate = (rawUrl || '').trim() || OFFICIAL_WATERMARK_LOGO_URL;
+  const cached = transparentLogoCache.get(candidate);
+  if (cached) return cached;
+  const inflight = transparentLogoInflight.get(candidate);
+  if (inflight) return inflight;
+
+  const task = new Promise<string>((resolve) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve(candidate);
+      return;
+    }
+
+    const attemptLoad = (src: string, allowProxy: boolean, allowFallbackUrl: boolean) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth || img.width || 256;
+          const h = img.naturalHeight || img.height || 256;
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(candidate);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, w, h);
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const data = imageData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (r < 32 && g < 32 && b < 32) {
+              data[i + 3] = 0;
+            } else if (r < 54 && g < 54 && b < 54) {
+              const maxChannel = Math.max(r, g, b);
+              data[i + 3] = Math.round(((maxChannel - 32) / 22) * data[i + 3]);
+            }
+          }
+          ctx.putImageData(imageData, 0, 0);
+          const pngUrl = canvas.toDataURL('image/png');
+          transparentLogoCache.set(candidate, pngUrl);
+          resolve(pngUrl);
+        } catch {
+          if (allowProxy) {
+            attemptLoad(`/api/image-proxy?url=${encodeURIComponent(candidate)}`, false, allowFallbackUrl);
+          } else if (allowFallbackUrl && candidate !== FALLBACK_RAW_LOGO_URL) {
+            attemptLoad(FALLBACK_RAW_LOGO_URL, true, false);
+          } else {
+            resolve(candidate);
+          }
+        }
+      };
+      img.onerror = () => {
+        if (allowProxy) {
+          attemptLoad(`/api/image-proxy?url=${encodeURIComponent(candidate)}`, false, allowFallbackUrl);
+        } else if (allowFallbackUrl && candidate !== FALLBACK_RAW_LOGO_URL) {
+          attemptLoad(FALLBACK_RAW_LOGO_URL, true, false);
+        } else {
+          resolve(candidate);
+        }
+      };
+      img.src = src;
+    };
+
+    attemptLoad(candidate, true, true);
+  }).finally(() => {
+    transparentLogoInflight.delete(candidate);
+  });
+
+  transparentLogoInflight.set(candidate, task);
+  return task;
+}
+
+export function useTransparentLogo(rawUrl?: string): string {
+  const target = (rawUrl || '').trim() || OFFICIAL_WATERMARK_LOGO_URL;
+  const [resolved, setResolved] = useState<string>(() => transparentLogoCache.get(target) || target);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = transparentLogoCache.get(target);
+    if (cached) {
+      setResolved(cached);
+      return;
+    }
+    setResolved(target);
+    void getTransparentLogoUrl(target).then((png) => {
+      if (!cancelled) setResolved(png);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
+  return resolved;
+}
+
 interface AnimatedChannelLogoProps {
   src: string;
   alt?: string;
@@ -769,3 +877,129 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
     </div>
   );
 };
+
+interface AppLaunchSplashProps {
+  logoUrl?: string;
+  onComplete: () => void;
+}
+
+export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
+  logoUrl,
+  onComplete,
+}) => {
+  const transparentLogo = useTransparentLogo(logoUrl);
+  const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
+  const completedRef = useRef(false);
+
+  const finishSplash = () => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    onComplete();
+  };
+
+  useEffect(() => {
+    const exitTimer = window.setTimeout(() => {
+      setPhase('exit');
+    }, 1350);
+    const doneTimer = window.setTimeout(() => {
+      finishSplash();
+    }, 1820);
+    return () => {
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(doneTimer);
+    };
+  }, []);
+
+  return (
+    <div
+      onClick={finishSplash}
+      role="presentation"
+      className={`fixed inset-0 z-[120] bg-[#050509] flex flex-col items-center justify-center overflow-hidden select-none transition-all duration-[460ms] ease-out ${
+        phase === 'exit'
+          ? 'opacity-0 scale-[1.14] pointer-events-none'
+          : 'opacity-100 scale-100'
+      }`}
+    >
+      <style>{`
+        @keyframes afpAppSplashRingSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes afpAppSplashLogoPop {
+          0% { opacity: 0; transform: perspective(900px) scale(0.72) rotateY(-12deg); }
+          60% { opacity: 1; transform: perspective(900px) scale(1.04) rotateY(3deg); }
+          100% { opacity: 1; transform: perspective(900px) scale(1) rotateY(0deg); }
+        }
+        @keyframes afpAppSplashSweep {
+          0% { transform: translateX(-140%) skewX(-22deg); opacity: 0; }
+          30% { opacity: 0.9; }
+          100% { transform: translateX(220%) skewX(-22deg); opacity: 0; }
+        }
+      `}</style>
+
+      {/* Deep ambient crimson-magenta radial aura (seamless on #050509, zero square box) */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute w-[340px] h-[340px] sm:w-[440px] sm:h-[440px] rounded-full blur-3xl opacity-75"
+        style={{
+          background:
+            'radial-gradient(circle, rgba(229,9,20,0.42) 0%, rgba(255,0,128,0.22) 45%, rgba(5,5,9,0) 74%)',
+        }}
+      />
+
+      {/* Centered Transparent 3D Emblem + Rotating Neon-Crimson & Magenta Aura Ring */}
+      <div
+        style={{ animation: 'afpAppSplashLogoPop 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards' }}
+        className="relative flex flex-col items-center justify-center gap-5"
+      >
+        <div className="relative w-36 h-36 sm:w-44 sm:h-44 flex items-center justify-center">
+          {/* Outer rotating neon-crimson & magenta conic aura ring */}
+          <div
+            aria-hidden="true"
+            style={{
+              background:
+                'conic-gradient(from 0deg, transparent 0deg, #e50914 95deg, #ff0080 185deg, #f59e0b 255deg, transparent 360deg)',
+              WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+              mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+              animation: 'afpAppSplashRingSpin 1.35s linear infinite',
+            }}
+            className="absolute inset-0 rounded-full opacity-95 drop-shadow-[0_0_18px_rgba(229,9,20,0.75)]"
+          />
+
+          {/* 100% Transparent Chroma-Keyed Official Emblem */}
+          <img
+            src={transparentLogo}
+            alt="AsiaFlix Prime"
+            referrerPolicy="no-referrer"
+            style={{
+              background: 'transparent',
+              filter:
+                'drop-shadow(0 0 22px rgba(229,9,20,0.72)) drop-shadow(0 6px 18px rgba(0,0,0,0.95))',
+            }}
+            className="w-28 h-28 sm:w-32 sm:h-32 object-contain relative z-10"
+          />
+        </div>
+
+        {/* Volumetric light-sweep across AsiaFlix PRIME brand title */}
+        <div className="relative overflow-hidden px-4 py-1 flex items-center gap-2">
+          <span className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+            AsiaFlix
+          </span>
+          <span className="px-2 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white text-xs sm:text-sm font-black tracking-widest shadow-[0_0_16px_rgba(229,9,20,0.65)]">
+            PRIME
+          </span>
+          <div
+            aria-hidden="true"
+            style={{
+              background:
+                'linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.85) 50%, transparent 90%)',
+              animation: 'afpAppSplashSweep 1.25s ease-in-out 0.15s 1',
+            }}
+            className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/2"
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+

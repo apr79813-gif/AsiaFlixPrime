@@ -11,10 +11,10 @@ export function getAgeRatingMeta(ageRating?: string, fallback: string = 'UA 16+'
   // 1. A (18+) / Adult
   if (raw.includes('18') || upper.includes('ADULT') || /\bA\s*\(/.test(upper) || upper === 'A') {
     return {
-      label: '🔞 A (18+)',
+      label: '18+ ADULTS ONLY',
       is18Plus: true,
       pillClass:
-        'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border border-red-400/70 shadow-[0_0_12px_rgba(229,9,20,0.55)] font-black',
+        'bg-gradient-to-r from-[#7a0409] to-[#4a0205] text-white border border-[#e50914] shadow-[0_2px_8px_rgba(229,9,20,0.45)] font-black',
     };
   }
 

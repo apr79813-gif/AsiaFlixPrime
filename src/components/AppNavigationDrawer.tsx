@@ -16,6 +16,7 @@ import {
   Check,
   Download,
 } from 'lucide-react';
+import { useTransparentLogo } from './AnimatedChannelLogo';
 
 interface AppNavigationDrawerProps {
   isOpen: boolean;
@@ -68,6 +69,7 @@ export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
   onOpenAdmin,
   onOpenAppDownloadModal,
 }) => {
+  const transparentLogoSrc = useTransparentLogo(logoUrl);
   if (!isOpen) return null;
 
   const runAction = (fn: () => void) => {
@@ -91,14 +93,11 @@ export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
         <div className="flex items-center justify-between gap-2 pb-3.5 border-b border-white/10">
           <div className="flex items-center gap-2.5 min-w-0">
             <img
-              src={logoUrl || 'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png'}
+              src={transparentLogoSrc}
               alt="AsiaFlix Prime"
               referrerPolicy="no-referrer"
-              className="w-9 h-9 rounded-xl object-cover border border-white/15 shrink-0"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src =
-                  'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
-              }}
+              style={{ background: 'transparent' }}
+              className="w-10 h-10 object-contain shrink-0 drop-shadow-[0_0_8px_rgba(229,9,20,0.45)]"
             />
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">

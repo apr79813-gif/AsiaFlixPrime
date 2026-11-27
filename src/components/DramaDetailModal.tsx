@@ -50,11 +50,13 @@ import { isAiringToday } from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { createDramaSlug } from '../services/urlHelper';
 import { SubtitleVoiceEngine } from '../services/subtitleVoiceEngine';
+import { AdultsOnlyBadge } from './AdultsOnlyBadge';
 import {
   AnimatedChannelLogo,
   AsiaFlixCinematicIntro,
   IntroAudioHandle,
   startAsiaFlixIntroAudio,
+  useTransparentLogo,
 } from './AnimatedChannelLogo';
 import {
   recordWatchSeconds,
@@ -77,8 +79,10 @@ import {
   normalizeSubtitleUrl,
   resolveUniversalVideoSource,
   resolveArchiveOrgDirectStream,
+  resolveArchiveOrgMultiQualityStreams,
   resolveOkRuOrVkNativeStream,
   getCachedArchiveOrgDirectStream,
+  getCachedArchiveOrgMultiQualityStreams,
   getCachedOkRuOrVkNativeStream,
   preResolveStreamUrl,
   UniversalResolvedVideo,
@@ -158,20 +162,23 @@ const QUALITY_OPTIONS = [
   {
     id: '1080p FHD (Ultra)',
     label: '1080p FHD (Ultra)',
-    filter: 'contrast(1.07) saturate(1.14) brightness(1.02)',
-    hudText: '💎 Quality: 1080p FHD (Ultra) Enhanced',
+    shortBadge: '1080p FHD Ultra • High Clarity',
+    filter: 'url(#asiaflix-ultra-sharp) contrast(1.06) saturate(1.12) brightness(1.02)',
+    hudText: '💎 1080p FHD Ultra • High Clarity',
   },
   {
     id: '720p HD',
     label: '720p HD',
+    shortBadge: '720p HD • Standard',
     filter: 'contrast(1.0) saturate(1.0) brightness(1.0)',
-    hudText: '💎 Quality: 720p HD Standard Crisp',
+    hudText: '💎 720p HD • Standard',
   },
   {
     id: '480p Saver',
     label: '480p Saver',
-    filter: 'contrast(0.95) saturate(0.88) brightness(0.98)',
-    hudText: '💎 Quality: 480p Saver Mode',
+    shortBadge: '480p Data Saver • ~3.5 MB/min',
+    filter: 'contrast(0.97) saturate(0.94) brightness(0.99)',
+    hudText: '📶 480p Data Saver • ~3.5 MB/min',
   },
 ] as const;
 
@@ -491,7 +498,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   });
   const [mobileActiveTab, setMobileActiveTab] = useState<'episodes' | 'audio' | 'info'>('episodes');
   const [isSubtitleAudioOn, setIsSubtitleAudioOn] = useState<boolean>(false);
-  const [transparentLogoUrl, setTransparentLogoUrl] = useState<string>(customLogoUrl || OFFICIAL_LOGO_URL);
+  const transparentLogoUrl = useTransparentLogo(customLogoUrl || OFFICIAL_LOGO_URL);
   const [mediaErrorState, setMediaErrorState] = useState<{ source: 'video'; reason: string } | null>(null);
   const [asyncResolvedStream, setAsyncResolvedStream] = useState<{
     key: string;
@@ -515,64 +522,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       window.removeEventListener('orientationchange', checkViewport);
     };
   }, []);
-
-  // Process Official Channel Logo through Canvas Black-Key Transparency Filter
-  useEffect(() => {
-    const rawLogo = (customLogoUrl || '').trim() || OFFICIAL_LOGO_URL;
-    let cancelled = false;
-
-    const processLogo = (src: string, allowProxyFallback: boolean) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.referrerPolicy = 'no-referrer';
-      img.onload = () => {
-        if (cancelled) return;
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width || 256;
-          canvas.height = img.naturalHeight || img.height || 256;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            if (r < 35 && g < 35 && b < 35) {
-              data[i + 3] = 0;
-            } else if (r < 58 && g < 58 && b < 58) {
-              const maxChannel = Math.max(r, g, b);
-              data[i + 3] = Math.round(((maxChannel - 35) / 23) * data[i + 3]);
-            }
-          }
-          ctx.putImageData(imageData, 0, 0);
-          const transparentPng = canvas.toDataURL('image/png');
-          if (!cancelled) setTransparentLogoUrl(transparentPng);
-        } catch {
-          if (allowProxyFallback) {
-            processLogo(`/api/image-proxy?url=${encodeURIComponent(rawLogo)}`, false);
-          } else if (!cancelled) {
-            setTransparentLogoUrl(rawLogo);
-          }
-        }
-      };
-      img.onerror = () => {
-        if (allowProxyFallback && !cancelled) {
-          processLogo(`/api/image-proxy?url=${encodeURIComponent(rawLogo)}`, false);
-        } else if (!cancelled) {
-          setTransparentLogoUrl(rawLogo);
-        }
-      };
-      img.src = src;
-    };
-
-    processLogo(rawLogo, true);
-    return () => {
-      cancelled = true;
-    };
-  }, [customLogoUrl]);
 
   const showHudFeedback = (msg: string) => {
     setHudToast(msg);
@@ -1032,12 +981,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? `${resolvedPlayerSource.asyncProvider.provider}:${resolvedPlayerSource.asyncProvider.rawUrl}:${streamReloadNonce}`
       : '';
 
-  const pickOkRuQualityUrl = (
+  const pickStreamQualityUrl = (
     qualities: ExtractedQualityStream[] | undefined,
     hlsUrl: string | undefined,
     qualityId: string
   ): string => {
     if (!qualities || qualities.length === 0) return hlsUrl || '';
+    const sortedDesc = [...qualities].sort((a, b) => (b.height || 0) - (a.height || 0));
     const targetHeight =
       qualityId.includes('1080') || qualityId === 'Auto HDR'
         ? 1080
@@ -1049,27 +999,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     if (targetHeight >= 1080) {
       return (
-        qualities.find((q) => q.quality === 'full' || q.height === 1080)?.proxiedUrl ||
-        qualities.find((q) => q.quality === 'hd' || q.height === 720)?.proxiedUrl ||
-        qualities.find((q) => q.height >= 1080)?.proxiedUrl ||
-        qualities[0]?.proxiedUrl ||
+        sortedDesc.find((q) => q.quality === 'full' || q.quality === 'quad' || q.quality === 'ultra' || q.height >= 1080)
+          ?.proxiedUrl ||
+        sortedDesc[0]?.proxiedUrl ||
         hlsUrl ||
         ''
       );
     }
     if (targetHeight === 720) {
       return (
-        qualities.find((q) => q.quality === 'hd' || q.height === 720)?.proxiedUrl ||
-        qualities.find((q) => q.height <= 720)?.proxiedUrl ||
-        qualities[0]?.proxiedUrl ||
+        sortedDesc.find((q) => q.quality === 'hd' || (q.height >= 640 && q.height <= 800))?.proxiedUrl ||
+        sortedDesc.find((q) => q.height <= 720)?.proxiedUrl ||
+        sortedDesc[Math.min(1, sortedDesc.length - 1)]?.proxiedUrl ||
+        sortedDesc[0]?.proxiedUrl ||
         hlsUrl ||
         ''
       );
     }
     return (
-      qualities.find((q) => q.quality === 'sd' || q.height === 480)?.proxiedUrl ||
-      qualities.find((q) => q.height <= 480)?.proxiedUrl ||
-      qualities[qualities.length - 1]?.proxiedUrl ||
+      sortedDesc.find((q) => q.quality === 'sd' || (q.height >= 420 && q.height <= 540))?.proxiedUrl ||
+      sortedDesc.find((q) => q.quality === 'low' || q.height <= 480)?.proxiedUrl ||
+      sortedDesc[sortedDesc.length - 1]?.proxiedUrl ||
       hlsUrl ||
       ''
     );
@@ -1085,13 +1035,17 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     // 0ms Instant Hydrate from Memory / sessionStorage pre-resolution cache
     if (meta.provider === 'archive') {
-      const instantArchive = getCachedArchiveOrgDirectStream(meta.id);
-      if (instantArchive) {
+      const instantArchiveStreams = getCachedArchiveOrgMultiQualityStreams(meta.id);
+      const instantArchiveUrl = instantArchiveStreams?.length
+        ? pickStreamQualityUrl(instantArchiveStreams, undefined, selectedQuality)
+        : getCachedArchiveOrgDirectStream(meta.id);
+      if (instantArchiveUrl) {
         setMediaErrorState(null);
         setAsyncResolvedStream({
           key: asyncResolveKey,
           status: 'ready',
-          src: instantArchive,
+          src: instantArchiveUrl,
+          qualities: instantArchiveStreams || undefined,
           provider: 'archive',
         });
         return;
@@ -1099,7 +1053,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     } else if (streamReloadNonce === 0) {
       const instantOkVk = getCachedOkRuOrVkNativeStream(meta.rawUrl);
       if (instantOkVk && instantOkVk.ok && (instantOkVk.streams.length > 0 || instantOkVk.proxiedHlsUrl)) {
-        const pickedUrl = pickOkRuQualityUrl(instantOkVk.streams, instantOkVk.proxiedHlsUrl, selectedQuality);
+        const pickedUrl = pickStreamQualityUrl(instantOkVk.streams, instantOkVk.proxiedHlsUrl, selectedQuality);
         setMediaErrorState(null);
         setAsyncResolvedStream({
           key: asyncResolveKey,
@@ -1124,13 +1078,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setMediaErrorState(null);
 
     if (meta.provider === 'archive') {
-      resolveArchiveOrgDirectStream(meta.id).then((directUrl) => {
+      resolveArchiveOrgMultiQualityStreams(meta.id).then((archiveStreams) => {
         if (cancelled) return;
-        if (directUrl) {
+        const picked = pickStreamQualityUrl(archiveStreams, undefined, selectedQuality);
+        if (picked) {
           setAsyncResolvedStream({
             key: asyncResolveKey,
             status: 'ready',
-            src: directUrl,
+            src: picked,
+            qualities: archiveStreams,
             provider: 'archive',
           });
         } else {
@@ -1152,7 +1108,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       resolveOkRuOrVkNativeStream(meta.rawUrl, streamReloadNonce > 0).then((res) => {
         if (cancelled) return;
         if (res.ok && (res.streams.length > 0 || res.proxiedHlsUrl)) {
-          const pickedUrl = pickOkRuQualityUrl(res.streams, res.proxiedHlsUrl, selectedQuality);
+          const pickedUrl = pickStreamQualityUrl(res.streams, res.proxiedHlsUrl, selectedQuality);
           setAsyncResolvedStream({
             key: asyncResolveKey,
             status: 'ready',
@@ -1456,6 +1412,42 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   };
 
+  const applyHlsQualitySelection = (hls: Hls, qualityId: string) => {
+    const levels = hls.levels || [];
+    const targetH =
+      qualityId.includes('1080') ? 1080 : qualityId.includes('720') ? 720 : 480;
+    if (targetH >= 1080) {
+      hls.config.maxBufferLength = 30;
+      hls.config.maxMaxBufferLength = 45;
+    } else if (targetH === 720) {
+      hls.config.maxBufferLength = 15;
+      hls.config.maxMaxBufferLength = 25;
+    } else {
+      hls.config.maxBufferLength = 6;
+      hls.config.maxMaxBufferLength = 10;
+    }
+    if (levels.length > 0) {
+      let bestIdx = levels.length - 1;
+      if (targetH >= 1080) {
+        bestIdx = levels.reduce((acc, lvl, idx) =>
+          (lvl.height || 0) >= (levels[acc]?.height || 0) ? idx : acc, 0
+        );
+      } else if (targetH === 720) {
+        bestIdx = levels.reduce((acc, lvl, idx) => {
+          const dCurr = Math.abs((lvl.height || 0) - 720);
+          const dBest = Math.abs((levels[acc]?.height || 0) - 720);
+          return dCurr <= dBest ? idx : acc;
+        }, 0);
+      } else {
+        bestIdx = levels.reduce((acc, lvl, idx) =>
+          (lvl.height || 9999) <= (levels[acc]?.height || 9999) ? idx : acc, 0
+        );
+      }
+      hls.currentLevel = bestIdx;
+      hls.loadLevel = bestIdx;
+    }
+  };
+
   // Attach HLS.js whenever an adaptive .m3u8 stream (direct or /api/okru-proxy) is loaded
   useEffect(() => {
     if (hlsInstanceRef.current) {
@@ -1466,19 +1458,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (!vid || !isHlsVideoSrc || !effectiveVideoSrc) return;
 
     if (Hls.isSupported()) {
+      const initBuf = selectedQuality.includes('1080') ? 30 : selectedQuality.includes('720') ? 15 : 6;
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
         startFragPrefetch: true,
         startLevel: -1,
-        maxBufferLength: 12,
-        maxMaxBufferLength: 24,
+        maxBufferLength: initBuf,
+        maxMaxBufferLength: initBuf + 12,
         manifestLoadingTimeOut: 7000,
       });
       hlsInstanceRef.current = hls;
       hls.loadSource(effectiveVideoSrc);
       hls.attachMedia(vid);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        applyHlsQualitySelection(hls, selectedQuality);
         setIsVideoLoading(false);
         const pending = pendingRestoreTimeRef.current;
         if (pending) {
@@ -2284,8 +2278,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       setIframeControlNotice(true);
       return;
     }
+
+    // 1. Live HLS adaptive level & buffer-depth switching
+    if (isHlsVideoSrc && hlsInstanceRef.current) {
+      applyHlsQualitySelection(hlsInstanceRef.current, qualityId);
+    }
+
+    // 2. Archive.org / OK.ru / VK multi-bitrate MP4 stream swap while preserving exact timestamp
     if (asyncResolvedStream.key === asyncResolveKey && asyncResolvedStream.status === 'ready') {
-      const nextUrl = pickOkRuQualityUrl(
+      const nextUrl = pickStreamQualityUrl(
         asyncResolvedStream.qualities,
         asyncResolvedStream.hlsUrl,
         qualityId
@@ -2675,9 +2676,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? 'object-fill'
       : 'object-contain';
 
-  const baseQualityFilter =
-    QUALITY_OPTIONS.find((q) => q.id === selectedQuality)?.filter ||
-    'contrast(1.07) saturate(1.14) brightness(1.02)';
+  const activeQualityMeta =
+    QUALITY_OPTIONS.find((q) => q.id === selectedQuality) || QUALITY_OPTIONS[0];
+  const baseQualityFilter = activeQualityMeta.filter;
   const hdrCssFilter = isAutoHdrOn ? ' contrast(1.12) saturate(1.22) brightness(1.04)' : '';
   const combinedVideoFilter = `${baseQualityFilter}${hdrCssFilter}${isEyeCareOn ? ' sepia(0.16) brightness(0.95)' : ''}`;
 
@@ -2717,6 +2718,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         onTouchStart={bumpPlayerControlsActivity}
         className="aspect-video w-full bg-black relative overflow-hidden flex items-center justify-center"
       >
+        {/* SVG Unsharp-Mask Edge Enhancement Filter for 1080p FHD (Ultra) */}
+        <svg className="hidden" width="0" height="0" aria-hidden="true">
+          <defs>
+            <filter id="asiaflix-ultra-sharp" colorInterpolationFilters="sRGB">
+              <feConvolveMatrix
+                order="3"
+                kernelMatrix="0 -0.35 0 -0.35 2.4 -0.35 0 -0.35 0"
+                preserveAlpha="true"
+              />
+            </filter>
+          </defs>
+        </svg>
+
         {/* Strict 16:9 Inner Stage Wrapper — locks subtitles & watermark strictly inside the 16:9 frame even in mobile portrait fullscreen */}
         <div className="relative w-full aspect-video max-h-full max-w-full my-auto mx-auto overflow-hidden bg-black flex items-center justify-center">
           {/* Top-Left Compact Episode Pill — auto-hides after 3 seconds when controls fade out */}
@@ -4182,23 +4196,23 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           />
         )}
 
-        {/* 1A. Mobile Pre-Playback Hero Cover Header (Clean, Breathable, Non-Congested) */}
+        {/* 1A. Mobile Pre-Playback Hero Cover Header (Upper 65% Uncovered & Crisp Artwork) */}
         {!isPlayerActive && (
-          <div className="relative w-full overflow-hidden bg-zinc-950">
+          <div className="relative w-full overflow-hidden bg-[#07070b] min-h-[280px] sm:min-h-[340px] flex flex-col justify-end">
             <img
               src={drama.backdrop || drama.poster}
               alt={drama.title}
               referrerPolicy="no-referrer"
-              className="absolute inset-0 w-full h-full object-cover object-center filter brightness-[0.42]"
+              className="absolute inset-0 w-full h-full object-cover object-center"
               onError={(e) => {
                 (e.target as HTMLImageElement).src =
                   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200';
               }}
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#07070b] via-[#07070b]/75 to-black/25" />
+            <div className="absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-[#07070b] via-[#07070b]/85 to-transparent" />
 
-            <div className="relative z-10 p-4 sm:p-6 pt-8 flex flex-col gap-3">
-              {/* Compact Metadata Pills in Neat Single Wrap Row */}
+            <div className="relative z-10 p-4 sm:p-6 pt-36 sm:pt-44 flex flex-col gap-2.5">
+              {/* Compact Metadata Pills in Neat Bottom Wrap Row */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="bg-[#e50914] text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
                   {drama.category}
@@ -4206,26 +4220,28 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 {drama.ageRating &&
                   (() => {
                     const ageInfo = getAgeRatingMeta(drama.ageRating);
-                    return (
+                    return ageInfo.is18Plus ? (
+                      <AdultsOnlyBadge size="sm" />
+                    ) : (
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${ageInfo.pillClass}`}>
                         {ageInfo.label}
                       </span>
                     );
                   })()}
-                <span className="bg-white/10 text-zinc-200 text-[10px] font-semibold px-2 py-0.5 rounded">
+                <span className="bg-black/60 backdrop-blur-sm text-zinc-100 text-[10px] font-semibold px-2 py-0.5 rounded border border-white/10">
                   {drama.releaseYear}
                 </span>
-                <span className="flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold">
+                <span className="flex items-center gap-1 bg-black/60 backdrop-blur-sm text-amber-300 border border-amber-500/35 px-2 py-0.5 rounded text-[10px] font-bold">
                   <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
                   <span>{drama.rating}</span>
                 </span>
                 {drama.details && (
-                  <span className="bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded text-[10px] font-bold">
+                  <span className="bg-sky-500/25 text-sky-200 border border-sky-400/35 px-2 py-0.5 rounded text-[10px] font-bold">
                     {drama.details}
                   </span>
                 )}
                 {drama.schedule && drama.schedule.trim() && (
-                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold">
+                  <span className="bg-amber-500/25 text-amber-200 border border-amber-400/35 px-2 py-0.5 rounded text-[10px] font-bold">
                     {drama.schedule}
                   </span>
                 )}
@@ -4233,11 +4249,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
               {/* Series Title + Subtle Genres Text Line */}
               <div className="space-y-1">
-                <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight">
+                <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
                   {drama.title}
                 </h2>
                 {(drama.subCategory || drama.originalTitle) && (
-                  <p className="text-xs text-gray-300 font-medium leading-snug">
+                  <p className="text-xs text-gray-200 font-medium leading-snug">
                     {[drama.subCategory, drama.originalTitle].filter(Boolean).join(' · ')}
                   </p>
                 )}
@@ -4393,9 +4409,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   </button>
                   <button
                     onClick={handleCycleQuality}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#141622] border border-white/15 text-zinc-200 font-semibold shrink-0 cursor-pointer"
+                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#141622] border border-cyan-400/30 text-cyan-200 font-bold shrink-0 cursor-pointer"
+                    title={activeQualityMeta.shortBadge}
                   >
-                    {selectedQuality.split(' ')[0]}
+                    {activeQualityMeta.shortBadge}
                   </button>
                   <button
                     onClick={handleFullscreen}
@@ -4761,15 +4778,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         )}
                       </div>
 
-                      {/* Right: Compact Side-by-Side Action Buttons */}
+                      {/* Right: Clear Side-by-Side Stream HD + Telegram Action Buttons */}
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         {hasStreamLink && (
                           <button
                             onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                            className="bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow whitespace-nowrap flex items-center gap-1 cursor-pointer"
+                            className="bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-2 rounded-lg text-xs font-extrabold shadow whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
                           >
                             <Play className="w-3 h-3 fill-white" />
-                            <span>Play</span>
+                            <span>Stream HD</span>
                           </button>
                         )}
                         {hasTelegramLink && (
@@ -4777,10 +4794,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             href={ep.telegramUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs border border-white/10 flex items-center justify-center"
+                            className="bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-colors"
                             title="Open on Telegram"
                           >
-                            🚀
+                            <Send className="w-3.5 h-3.5 shrink-0" />
+                            <span>Telegram</span>
                           </a>
                         )}
                       </div>
@@ -4830,10 +4848,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             e
                           )
                         }
-                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-bold px-3 py-2 rounded-lg shadow whitespace-nowrap flex items-center gap-1 cursor-pointer"
+                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold px-3 py-2 rounded-lg shadow whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
                       >
                         <Play className="w-3 h-3 fill-white" />
-                        <span>Play</span>
+                        <span>Stream HD</span>
                       </button>
                     )}
                     {currentAudioLink && (
@@ -4841,10 +4859,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         href={currentAudioLink}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="bg-white/10 hover:bg-white/20 text-white text-xs px-2.5 py-2 rounded-lg border border-white/15 flex items-center justify-center"
+                        className="bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-colors"
                         title="Open on Telegram"
                       >
-                        🚀
+                        <Send className="w-3.5 h-3.5 shrink-0" />
+                        <span>Telegram</span>
                       </a>
                     )}
                   </div>
@@ -5190,24 +5209,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               }`
         }
       >
-        {/* Top Hero Backdrop Banner — HIDDEN cleanly while Video Player or Mini-Player is active */}
+        {/* Top Hero Backdrop Banner — Upper 65% Clear Artwork; HIDDEN cleanly while Video Player or Mini-Player is active */}
         {!isPlayerActive && !isMiniPlayer && (
-          <div className="relative w-full h-72 sm:h-96 shrink-0 overflow-hidden bg-zinc-950 sm:rounded-b-2xl">
+          <div className="relative w-full min-h-[300px] sm:min-h-[360px] lg:min-h-[410px] shrink-0 overflow-hidden bg-zinc-950 sm:rounded-b-2xl flex flex-col justify-end">
             <img
               src={drama.backdrop || drama.poster}
               alt={drama.title}
               referrerPolicy="no-referrer"
-              className="w-full h-full object-cover object-center filter brightness-[0.4]"
+              className="absolute inset-0 w-full h-full object-cover object-center"
               onError={(e) => {
                 (e.target as HTMLImageElement).src =
                   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200';
               }}
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#111218] via-[#111218]/50 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-r from-[#111218] via-transparent to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-[#050508] via-[#050508]/80 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#050508]/85 via-[#050508]/25 to-transparent max-w-3xl" />
 
-            {/* Banner Content Overlay */}
-            <div className="absolute bottom-4 left-4 right-4 sm:left-8 sm:right-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            {/* Banner Content Overlay pinned neatly to lower bar */}
+            <div className="relative z-10 px-4 sm:px-8 pb-5 pt-36 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
               <div className="max-w-2xl">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   <span className="bg-[#e50914] text-white text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow">
@@ -5218,7 +5237,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {drama.ageRating &&
                     (() => {
                       const ageInfo = getAgeRatingMeta(drama.ageRating);
-                      return (
+                      return ageInfo.is18Plus ? (
+                        <AdultsOnlyBadge size="sm" />
+                      ) : (
                         <span className={`text-xs font-black px-2.5 py-0.5 rounded ${ageInfo.pillClass}`}>
                           {ageInfo.label}
                         </span>
@@ -5616,6 +5637,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           >
                             ✨ Auto HDR
                           </button>
+                          <span className="ml-1 px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-400/30 text-[10px] font-bold text-cyan-200 whitespace-nowrap">
+                            {activeQualityMeta.shortBadge}
+                          </span>
                         </div>
                       </div>
 
@@ -6656,19 +6680,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                   e.stopPropagation();
                                   handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e);
                                 }}
-                                className="px-3.5 py-1.5 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
+                                className="px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
                               >
                                 <Play className="w-3.5 h-3.5 fill-white" />
-                                <span>Stream</span>
+                                <span>Stream HD</span>
                               </button>
                               <a
                                 href={ep.telegramUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
-                                className="px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-[#e50914] text-zinc-200 hover:text-white border border-white/15 text-xs font-black transition-all flex items-center gap-1"
+                                className="px-3 py-2 rounded-lg bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold transition-all flex items-center gap-1.5"
                               >
-                                <Send className="w-3 h-3" />
+                                <Send className="w-3.5 h-3.5" />
                                 <span>Telegram</span>
                               </a>
                             </>
@@ -6678,10 +6702,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                                 e.stopPropagation();
                                 handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e);
                               }}
-                              className="px-3.5 py-1.5 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
+                              className="px-3.5 py-2 rounded-lg bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold border border-red-400/35 shadow-[0_0_14px_rgba(229,9,20,0.4)] transition-all flex items-center gap-1.5 cursor-pointer"
                             >
                               <Play className="w-3.5 h-3.5 fill-white" />
-                              <span>Watch Online</span>
+                              <span>Stream HD</span>
                             </button>
                           ) : hasTelegramLink ? (
                             <a
@@ -6689,10 +6713,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="px-3 py-1.5 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-xs font-black shadow transition-all flex items-center gap-1 shrink-0"
+                              className="px-3 py-2 rounded-lg bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold shadow transition-all flex items-center gap-1.5 shrink-0"
                             >
-                              <Send className="w-3 h-3" />
-                              <span>Watch on Telegram</span>
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Telegram</span>
                             </a>
                           ) : null}
                         </div>

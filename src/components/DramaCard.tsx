@@ -3,6 +3,7 @@ import { DramaItem, AudioType } from '../types/drama';
 import { Play, Bookmark, BookmarkCheck, Star, Send } from 'lucide-react';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { getTrackEpisodeCounts } from '../services/scheduleHelper';
+import { AdultsOnlyBadge } from './AdultsOnlyBadge';
 import {
   getWatchTimestampForDrama,
   formatTimeSeconds,
@@ -229,18 +230,18 @@ export const DramaCard: React.FC<DramaCardProps> = ({
       ? {
           label: '🎙️ HINDI FAN DUB',
           className:
-            'bg-gradient-to-r from-[#9333ea] via-[#a855f7] to-[#ec4899] text-white border border-purple-400/40 shadow-[0_0_12px_rgba(168,85,247,0.45)]',
+            'bg-gradient-to-r from-[#7928ca] to-[#ff0080] text-white border border-purple-400/50 shadow-[0_2px_10px_rgba(121,40,202,0.6)] font-extrabold',
         }
       : displayAudio === 'Original / Eng Sub'
       ? {
-          label: '💬 ORIG / ENG SUB',
+          label: '🌐 ORIG / HINDI SUB',
           className:
-            'bg-gradient-to-r from-[#0284c7] via-[#0ea5e9] to-[#2563eb] text-white border border-sky-400/40 shadow-[0_0_12px_rgba(14,165,233,0.45)]',
+            'bg-gradient-to-r from-[#0061ff] to-[#00c6ff] text-white border border-cyan-300/50 shadow-[0_2px_10px_rgba(0,198,255,0.5)] font-extrabold',
         }
       : {
           label: '🔊 IN HINDI',
           className:
-            'bg-gradient-to-r from-[#e50914] to-[#ff2b54] text-white border border-red-400/40 shadow-[0_0_12px_rgba(229,9,20,0.45)]',
+            'bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white border border-red-400/50 shadow-[0_2px_10px_rgba(229,9,20,0.6)] font-extrabold',
         };
 
   // Smart Poster Bottom Status Pill (Zero Multi-Audio Confusion)
@@ -417,13 +418,7 @@ export const DramaCard: React.FC<DramaCardProps> = ({
           </button>
 
           {ageInfo.is18Plus && (
-            <span
-              className={`bg-[#e50914] text-white font-black rounded-md border border-white/30 shadow-[0_0_12px_rgba(229,9,20,0.8)] tracking-tighter pointer-events-none ${
-                effectiveIsPhone ? 'text-[14px] px-2.5 py-1' : 'text-[10px] px-1.5 py-0.5'
-              }`}
-            >
-              18+
-            </span>
+            <AdultsOnlyBadge size={effectiveIsPhone ? 'md' : 'xs'} />
           )}
         </div>
 
@@ -572,13 +567,17 @@ export const DramaCard: React.FC<DramaCardProps> = ({
             <span className="shrink-0">•</span>
             <span className="shrink-0">{drama.releaseYear}</span>
             <span className="shrink-0">•</span>
-            <span
-              className={`rounded font-black shrink-0 ${ageInfo.pillClass} ${
-                effectiveIsPhone ? 'text-[14px] px-3 py-0.5' : 'text-[9.5px] px-1.5 py-0.2'
-              }`}
-            >
-              {ageInfo.label}
-            </span>
+            {ageInfo.is18Plus ? (
+              <AdultsOnlyBadge size={effectiveIsPhone ? 'md' : 'xs'} />
+            ) : (
+              <span
+                className={`rounded font-black shrink-0 ${ageInfo.pillClass} ${
+                  effectiveIsPhone ? 'text-[14px] px-3 py-0.5' : 'text-[9.5px] px-1.5 py-0.2'
+                }`}
+              >
+                {ageInfo.label}
+              </span>
+            )}
           </div>
 
           {/* Row 3a: Untruncated Episodes Count + Schedule Hint */}

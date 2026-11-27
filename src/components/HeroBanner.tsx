@@ -90,19 +90,19 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
   return (
     <section className="relative overflow-hidden border-b border-white/[0.08] min-h-[520px] lg:min-h-[600px] flex items-center">
-      {/* Cinematic Backdrop Image with Dark Vignette and Proper Facial Framing */}
+      {/* Cinematic Backdrop Image with Edge-Only Gradients & Clear Panoramic Framing */}
       <div className="absolute inset-0 z-0">
         <img
           key={currentSlide.id + currentSlide.backdropUrl}
           src={currentSlide.backdropUrl}
           alt={currentSlide.title}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover object-[center_20%] filter brightness-[0.38] transition-all duration-1000 scale-105"
+          className="w-full h-full object-cover object-center brightness-[0.86] transition-all duration-1000"
         />
-        {/* Gradients */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#08080c] via-[#08080c]/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#08080c] via-[#08080c]/85 to-transparent max-w-4xl" />
-        <div className="absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-[#08080c] to-transparent" />
+        {/* Edge-only Cinema Gradients (keep right/upper artwork vibrant and clear) */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#08080c] via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#08080c] via-[#08080c]/60 to-transparent max-w-3xl" />
+        <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#08080c] to-transparent" />
       </div>
 
       <div className="relative z-20 max-w-[1600px] mx-auto px-8 py-14 lg:py-16 w-full">

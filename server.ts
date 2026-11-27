@@ -681,17 +681,18 @@ async function startServer(): Promise<void> {
 
   const okruExtractionCache = new Map<string, { expiresAt: number; payload: Record<string, unknown> }>();
 
-  const mapOkStreamQuality = (name: string): { quality: string; label: string; height: number } => {
+  const mapOkStreamQuality = (name: string): { quality: string; label: string; height: number; mbPerMin: number } => {
     const n = (name || '').toLowerCase();
-    if (n === 'ultra' || n === 'quad') return { quality: 'ultra', label: '2160p 4K (Ultra)', height: 2160 };
-    if (n === 'full' || n === '1080') return { quality: 'full', label: '1080p FHD', height: 1080 };
-    if (n === 'hd' || n === '720') return { quality: 'hd', label: '720p HD', height: 720 };
-    if (n === 'sd' || n === '480') return { quality: 'sd', label: '480p Saver', height: 480 };
-    if (n === 'low' || n === '360') return { quality: 'low', label: '360p', height: 360 };
+    if (n === 'ultra') return { quality: 'ultra', label: '2160p 4K (Ultra)', height: 2160, mbPerMin: 35 };
+    if (n === 'quad') return { quality: 'quad', label: '1440p QHD', height: 1440, mbPerMin: 22 };
+    if (n === 'full' || n === '1080') return { quality: 'full', label: '1080p FHD', height: 1080, mbPerMin: 15 };
+    if (n === 'hd' || n === '720') return { quality: 'hd', label: '720p HD', height: 720, mbPerMin: 8 };
+    if (n === 'sd' || n === '480') return { quality: 'sd', label: '480p Saver', height: 480, mbPerMin: 3.5 };
+    if (n === 'low' || n === '360') return { quality: 'low', label: '360p Saver', height: 360, mbPerMin: 2.2 };
     if (n === 'lowest' || n === 'mobile' || n === '240' || n === '144') {
-      return { quality: 'lowest', label: '240p', height: 240 };
+      return { quality: 'lowest', label: '240p Mobile', height: 240, mbPerMin: 1.4 };
     }
-    return { quality: n || 'sd', label: n.toUpperCase() || 'HD', height: 480 };
+    return { quality: n || 'sd', label: n.toUpperCase() || 'HD', height: 480, mbPerMin: 3.5 };
   };
 
   app.get('/api/okru-stream', async (req: Request, res: Response) => {
@@ -771,7 +772,7 @@ async function startServer(): Promise<void> {
           '';
 
         const rawVideos = Array.isArray(metadata.videos) ? metadata.videos : [];
-        const streams: Array<{ quality: string; label: string; height: number; url: string; proxiedUrl: string }> = [];
+        const streams: Array<{ quality: string; label: string; height: number; mbPerMin: number; url: string; proxiedUrl: string }> = [];
         const seenQ = new Set<string>();
         for (const item of rawVideos) {
           if (!item || typeof item !== 'object') continue;
@@ -786,6 +787,7 @@ async function startServer(): Promise<void> {
             quality: mapped.quality,
             label: mapped.label,
             height: mapped.height,
+            mbPerMin: mapped.mbPerMin,
             url: u,
             proxiedUrl: buildVideoProxyUrl(u, ckToken, 'https://ok.ru/'),
           });

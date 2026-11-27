@@ -434,13 +434,15 @@ export interface ExtractedQualityStream {
   quality: string;
   label: string;
   height: number;
+  mbPerMin?: number;
+  sizeBytes?: number;
   url: string;
   proxiedUrl: string;
 }
 
 export interface ExtractedNativeStreamResult {
   ok: boolean;
-  provider?: 'okru' | 'vk';
+  provider?: 'okru' | 'vk' | 'archive';
   id?: string;
   title?: string;
   hlsUrl?: string;
@@ -450,11 +452,13 @@ export interface ExtractedNativeStreamResult {
 }
 
 const archiveOrgResolvedCache = new Map<string, string>();
+const archiveOrgMultiCache = new Map<string, ExtractedQualityStream[]>();
 const okVkExtractedCache = new Map<string, ExtractedNativeStreamResult>();
-const archiveOrgInflight = new Map<string, Promise<string | null>>();
+const archiveOrgInflight = new Map<string, Promise<ExtractedQualityStream[]>>();
 const okVkInflight = new Map<string, Promise<ExtractedNativeStreamResult>>();
 
 const ARCHIVE_SESSION_KEY = 'asiaflix_archive_stream_cache_v1';
+const ARCHIVE_MULTI_SESSION_KEY = 'asiaflix_archive_multi_cache_v1';
 const OKVK_SESSION_KEY = 'asiaflix_okvk_stream_cache_v1';
 const ARCHIVE_TTL_MS = 60 * 60 * 1000; // 60 minutes
 const OKVK_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -499,9 +503,24 @@ function writeSessionCacheEntry<T>(storageKey: string, entryKey: string, value: 
   }
 }
 
+export function getCachedArchiveOrgMultiQualityStreams(identifier: string): ExtractedQualityStream[] | null {
+  const cleanId = decodeURIComponent((identifier || '').trim());
+  if (!cleanId) return null;
+  const mem = archiveOrgMultiCache.get(cleanId);
+  if (mem && mem.length > 0) return mem;
+  const sess = readSessionCacheEntry<ExtractedQualityStream[]>(ARCHIVE_MULTI_SESSION_KEY, cleanId);
+  if (sess && Array.isArray(sess) && sess.length > 0) {
+    archiveOrgMultiCache.set(cleanId, sess);
+    return sess;
+  }
+  return null;
+}
+
 export function getCachedArchiveOrgDirectStream(identifier: string): string | null {
   const cleanId = decodeURIComponent((identifier || '').trim());
   if (!cleanId) return null;
+  const multi = getCachedArchiveOrgMultiQualityStreams(cleanId);
+  if (multi && multi.length > 0) return multi[0].url;
   const mem = archiveOrgResolvedCache.get(cleanId);
   if (mem) return mem;
   const sess = readSessionCacheEntry<string>(ARCHIVE_SESSION_KEY, cleanId);
@@ -525,20 +544,22 @@ export function getCachedOkRuOrVkNativeStream(rawUrl: string): ExtractedNativeSt
   return null;
 }
 
-export async function resolveArchiveOrgDirectStream(identifier: string): Promise<string | null> {
+export async function resolveArchiveOrgMultiQualityStreams(
+  identifier: string
+): Promise<ExtractedQualityStream[]> {
   const cleanId = decodeURIComponent((identifier || '').trim());
-  if (!cleanId) return null;
+  if (!cleanId) return [];
 
-  const cached = getCachedArchiveOrgDirectStream(cleanId);
+  const cached = getCachedArchiveOrgMultiQualityStreams(cleanId);
   if (cached) return cached;
 
   const existingInflight = archiveOrgInflight.get(cleanId);
   if (existingInflight) return existingInflight;
 
-  const reqPromise = (async (): Promise<string | null> => {
+  const reqPromise = (async (): Promise<ExtractedQualityStream[]> => {
     try {
       const resp = await fetch(`https://archive.org/metadata/${encodeURIComponent(cleanId)}`);
-      if (!resp.ok) return null;
+      if (!resp.ok) return [];
       const data = (await resp.json()) as {
         files?: Array<{
           name?: string;
@@ -556,7 +577,15 @@ export async function resolveArchiveOrgDirectStream(identifier: string): Promise
         return /\.(mp4|m4v|webm|mkv|mov|ogv)$/i.test(name) && !name.includes('__ia_thumb');
       });
 
-      if (videoFiles.length === 0) return null;
+      if (videoFiles.length === 0) return [];
+
+      const buildDirectUrl = (fileName: string) => {
+        const encodedFilePath = fileName
+          .split('/')
+          .map((seg) => encodeURIComponent(seg))
+          .join('/');
+        return `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
+      };
 
       const scoreFile = (f: (typeof videoFiles)[number]): number => {
         const name = (f.name || '').toLowerCase();
@@ -567,28 +596,73 @@ export async function resolveArchiveOrgDirectStream(identifier: string): Promise
         else if (name.endsWith('.mkv') || name.endsWith('.mov')) score += 30000;
 
         if (format.includes('mpeg4') || format.includes('h.264') || format.includes('mp4')) score += 25000;
-        if (f.source === 'derivative' && name.endsWith('.mp4')) score += 5000;
+        if (f.source === 'original') score += 12000;
+        else if (f.source === 'derivative' && !name.endsWith('.ia.mp4')) score += 4000;
+        if (name.endsWith('.ia.mp4')) score -= 6000;
         const height = Number(f.height) || 0;
-        score += height * 10;
+        score += height * 25;
         const sizeMb = Math.min(4000, (Number(f.size) || 0) / (1024 * 1024));
         score += sizeMb;
         return score;
       };
 
-      videoFiles.sort((a, b) => scoreFile(b) - scoreFile(a));
-      const best = videoFiles[0];
-      if (!best?.name) return null;
+      const sorted = [...videoFiles].sort((a, b) => scoreFile(b) - scoreFile(a));
+      const streams: ExtractedQualityStream[] = [];
+      const seenUrls = new Set<string>();
 
-      const encodedFilePath = best.name
-        .split('/')
-        .map((seg) => encodeURIComponent(seg))
-        .join('/');
-      const directUrl = `https://archive.org/download/${encodeURIComponent(cleanId)}/${encodedFilePath}`;
-      archiveOrgResolvedCache.set(cleanId, directUrl);
-      writeSessionCacheEntry(ARCHIVE_SESSION_KEY, cleanId, directUrl, ARCHIVE_TTL_MS);
-      return directUrl;
+      const addTier = (
+        f: (typeof videoFiles)[number] | undefined,
+        tier: { quality: string; label: string; defaultHeight: number; mbPerMin: number }
+      ) => {
+        if (!f?.name) return;
+        const url = buildDirectUrl(f.name);
+        if (seenUrls.has(url)) return;
+        seenUrls.add(url);
+        const rawH = Number(f.height) || tier.defaultHeight;
+        streams.push({
+          quality: tier.quality,
+          label: tier.label,
+          height: tier.quality === 'full' ? Math.max(1080, rawH) : tier.defaultHeight,
+          mbPerMin: tier.mbPerMin,
+          sizeBytes: Number(f.size) || undefined,
+          url,
+          proxiedUrl: url,
+        });
+      };
+
+      const bestFile = sorted[0];
+      const saverFile =
+        sorted.find((f) => (f.name || '').toLowerCase().endsWith('.ia.mp4')) ||
+        sorted.find((f) => {
+          const h = Number(f.height) || 0;
+          return h > 0 && h <= 540;
+        }) ||
+        (sorted.length > 1 ? sorted[sorted.length - 1] : undefined);
+
+      const midFile =
+        sorted.find(
+          (f) =>
+            f !== bestFile &&
+            f !== saverFile &&
+            ((Number(f.height) || 0) >= 640 && (Number(f.height) || 0) <= 900)
+        ) || (sorted.length >= 3 ? sorted[1] : undefined);
+
+      addTier(bestFile, { quality: 'full', label: '1080p FHD', defaultHeight: 1080, mbPerMin: 15 });
+      addTier(midFile, { quality: 'hd', label: '720p HD', defaultHeight: 720, mbPerMin: 8 });
+      if (saverFile && saverFile !== bestFile) {
+        addTier(saverFile, { quality: 'sd', label: '480p Saver', defaultHeight: 480, mbPerMin: 3.5 });
+      }
+
+      if (streams.length > 0) {
+        archiveOrgMultiCache.set(cleanId, streams);
+        archiveOrgResolvedCache.set(cleanId, streams[0].url);
+        writeSessionCacheEntry(ARCHIVE_MULTI_SESSION_KEY, cleanId, streams, ARCHIVE_TTL_MS);
+        writeSessionCacheEntry(ARCHIVE_SESSION_KEY, cleanId, streams[0].url, ARCHIVE_TTL_MS);
+      }
+
+      return streams;
     } catch {
-      return null;
+      return [];
     } finally {
       archiveOrgInflight.delete(cleanId);
     }
@@ -596,6 +670,11 @@ export async function resolveArchiveOrgDirectStream(identifier: string): Promise
 
   archiveOrgInflight.set(cleanId, reqPromise);
   return reqPromise;
+}
+
+export async function resolveArchiveOrgDirectStream(identifier: string): Promise<string | null> {
+  const streams = await resolveArchiveOrgMultiQualityStreams(identifier);
+  return streams[0]?.url || null;
 }
 
 export async function resolveOkRuOrVkNativeStream(

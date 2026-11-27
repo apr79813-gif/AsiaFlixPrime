@@ -43,6 +43,9 @@ import {
   getAdminSubtitleOverrides,
   getWatchTimestamps,
   TIMESTAMPS_UPDATED_EVENT,
+  parseSheetSubtitleCell,
+  parseSheetAudioCell,
+  resolveSubtitleLangMeta,
 } from './services/vipPlayerHelper';
 import { 
   fetchDramasFromSupabase, 
@@ -1560,10 +1563,13 @@ export default function App() {
         ],
         header[14] && (header[14].includes('thumbnail') || header[14] === 'thumb') ? 14 : -1
       );
-      const subtitleIdx = findHeaderCol([
-        (h) => h === 'subtitle' || h === 'subtitles' || h === 'sub' || h === 'subs',
-        (h) => (h.includes('subtitle') || /\bsubs?\b/.test(h)) && !h.includes('category') && !h.includes('genre'),
-      ]);
+      const subtitleIdx = findHeaderCol(
+        [
+          (h) => h === 'subtitle' || h === 'subtitles' || h === 'sub' || h === 'subs',
+          (h) => (h.includes('subtitle') || /\bsubs?\b/.test(h)) && !h.includes('category') && !h.includes('genre'),
+        ],
+        header[16] && (header[16].includes('sub') || !header[16]) ? 16 : -1
+      );
       const subCategoryIdx = findHeaderCol([
         (h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'),
       ]);
@@ -1701,215 +1707,45 @@ export default function App() {
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
         const rawSubtitleCell = subtitleIdx >= 0 ? row[subtitleIdx]?.trim() || '' : '';
 
-        const SUBTITLE_LANGUAGE_META: Record<string, { label: string; langTag: string }> = {
-          hin: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
-          hi: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
-          hindi: { label: '🇮🇳 Hindi', langTag: 'hi-IN' },
-          eng: { label: '🇬🇧 English', langTag: 'en-US' },
-          en: { label: '🇬🇧 English', langTag: 'en-US' },
-          ur: { label: '🇵🇰 Urdu', langTag: 'ur-PK' },
-          urd: { label: '🇵🇰 Urdu', langTag: 'ur-PK' },
-          ben: { label: '🇮🇳 Bengali', langTag: 'bn-IN' },
-          bn: { label: '🇮🇳 Bengali', langTag: 'bn-IN' },
-          tam: { label: '🇮🇳 Tamil', langTag: 'ta-IN' },
-          ta: { label: '🇮🇳 Tamil', langTag: 'ta-IN' },
-          tel: { label: '🇮🇳 Telugu', langTag: 'te-IN' },
-          te: { label: '🇮🇳 Telugu', langTag: 'te-IN' },
-          mar: { label: '🇮🇳 Marathi', langTag: 'mr-IN' },
-          mr: { label: '🇮🇳 Marathi', langTag: 'mr-IN' },
-          ind: { label: '🇮🇩 Indonesian', langTag: 'id-ID' },
-          id: { label: '🇮🇩 Indonesian', langTag: 'id-ID' },
-          kor: { label: '🇰🇷 Korean', langTag: 'ko-KR' },
-          ko: { label: '🇰🇷 Korean', langTag: 'ko-KR' },
-          chi: { label: '🇨🇳 Chinese', langTag: 'zh-CN' },
-          zh: { label: '🇨🇳 Chinese', langTag: 'zh-CN' },
-          ara: { label: '🇸🇦 Arabic', langTag: 'ar-SA' },
-          ar: { label: '🇸🇦 Arabic', langTag: 'ar-SA' },
-          esp: { label: '🇪🇸 Spanish', langTag: 'es-ES' },
-          es: { label: '🇪🇸 Spanish', langTag: 'es-ES' },
-          sub: { label: '💬 CC Sub', langTag: 'hi-IN' },
-        };
-
-        const getSubtitleLangMeta = (code: string): { label: string; langTag: string } => {
-          const lower = code.toLowerCase();
-          if (SUBTITLE_LANGUAGE_META[lower]) return SUBTITLE_LANGUAGE_META[lower];
-          return {
-            label: lower.charAt(0).toUpperCase() + lower.slice(1),
-            langTag: lower.length === 2 ? `${lower}-${lower.toUpperCase()}` : 'en-US',
-          };
-        };
-
-        // Parse Multi-Language Subtitles from dedicated Subtitle column (and Audio column fallback)
+        // Parse Multi-Language Subtitles from dedicated Subtitle column (Column Q) and Audio column fallback
         const episodeSubtitles: Record<number, Record<string, SubtitleTrackItem>> = {};
         const dramaSubtitles: Record<string, SubtitleTrackItem> = {};
         const parsedSubtitleTracks: SubtitleTrack[] = [];
-        const skippedSubPrefixes = new Set(['ep', 'es', 'hd', 'fd', 'os', 'od', 'http', 'https', 'hindi', 'fan', 'orig']);
 
-        const addSubtitleMapping = (rawLangCode: string, epNum: number, rawUrl: string) => {
-          const codeKey =
-            rawLangCode.toLowerCase() === 'sub' || rawLangCode.toLowerCase() === 'srt'
-              ? 'hin'
-              : rawLangCode.toLowerCase();
-          const normalizedUrl = normalizeDirectMediaUrl(rawUrl);
-          if (Number.isNaN(epNum) || !normalizedUrl) return;
-          const langMeta = getSubtitleLangMeta(codeKey);
-          if (!episodeSubtitles[epNum]) episodeSubtitles[epNum] = {};
-          if (!episodeSubtitles[epNum][codeKey]) {
-            episodeSubtitles[epNum][codeKey] = {
-              code: codeKey,
-              label: langMeta.label,
-              langTag: langMeta.langTag,
-              url: normalizedUrl,
-            };
-          }
-          if (!dramaSubtitles[codeKey]) {
-            dramaSubtitles[codeKey] = {
-              code: codeKey,
-              label: langMeta.label,
-              langTag: langMeta.langTag,
-              url: normalizedUrl,
-            };
-          }
-          if (!parsedSubtitleTracks.some((s) => s.url === normalizedUrl)) {
-            parsedSubtitleTracks.push({
-              label: `${langMeta.label} (Ep ${epNum})`,
-              url: normalizedUrl,
-            });
-          }
-        };
-
-        const parseSubtitleSourceText = (sourceText: string) => {
-          if (!sourceText) return;
-          // 1. Verbose prefixes: "Sub Ep 1 = ...", "Sub-Ep 1 = ..." -> Hindi CC
-          const subEpRegex = /\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          let m: RegExpExecArray | null;
-          while ((m = subEpRegex.exec(sourceText)) !== null) {
-            addSubtitleMapping('hin', parseInt(m[1], 10), m[2]);
-          }
-
-          // 2. Numbered prefix: "Hin1 = ...", "Eng1 = ...", "SRT1 = ...", "Sub1 = ..."
-          const multiLangSubRegex = /\b([a-zA-Z]{2,5})\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/g;
-          while ((m = multiLangSubRegex.exec(sourceText)) !== null) {
-            const langCode = m[1].toLowerCase();
-            if (skippedSubPrefixes.has(langCode)) continue;
-            addSubtitleMapping(langCode, parseInt(m[2], 10), m[3]);
-          }
-
-          // 3. Unnumbered tagged subtitle URLs: "Hin = https://..."
-          const withoutNumberedSubs = sourceText
-            .replace(/\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-            .replace(/\b([a-zA-Z]{2,5})\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/g, ' ');
-          const unnumberedSubRegex = /\b([a-zA-Z]{2,5})\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/g;
-          while ((m = unnumberedSubRegex.exec(withoutNumberedSubs)) !== null) {
-            const langCode = m[1].toLowerCase();
-            if (skippedSubPrefixes.has(langCode) || langCode === 't1' || langCode === 't2' || langCode === 't3') continue;
-            addSubtitleMapping(langCode, 1, m[2]);
-          }
-
-          // 4. Raw unlabeled .srt / .vtt / .md.srt links pasted directly into Subtitles or Audio cell
-          const rawSrtMatches = sourceText.match(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi) || [];
-          rawSrtMatches.forEach((rawUrl) => {
-            const normUrl = normalizeDirectMediaUrl(rawUrl);
-            if (!normUrl || parsedSubtitleTracks.some((s) => s.url === normUrl)) return;
-            const epFromFile =
-              rawUrl.match(/S\d{1,2}E(\d{1,3})/i) ||
-              rawUrl.match(/\bep(?:isode)?[-_ ]?(\d{1,3})\b/i);
-            const epNum = epFromFile ? parseInt(epFromFile[1], 10) : 1;
-            addSubtitleMapping('hin', epNum, normUrl);
+        const registerParsedSubEntries = (entries: ReturnType<typeof parseSheetSubtitleCell>) => {
+          entries.forEach((entry) => {
+            const meta = resolveSubtitleLangMeta(entry.code);
+            if (!episodeSubtitles[entry.epNum]) episodeSubtitles[entry.epNum] = {};
+            if (!episodeSubtitles[entry.epNum][meta.code]) {
+              episodeSubtitles[entry.epNum][meta.code] = {
+                code: meta.code,
+                label: meta.label,
+                langTag: meta.langTag,
+                url: entry.url,
+              };
+            }
+            if (!dramaSubtitles[meta.code]) {
+              dramaSubtitles[meta.code] = {
+                code: meta.code,
+                label: meta.label,
+                langTag: meta.langTag,
+                url: entry.url,
+              };
+            }
+            if (!parsedSubtitleTracks.some((s) => s.url === entry.url)) {
+              parsedSubtitleTracks.push({
+                label: `${meta.label} (Ep ${entry.epNum})`,
+                url: entry.url,
+              });
+            }
           });
         };
 
-        parseSubtitleSourceText(rawSubtitleCell);
-        parseSubtitleSourceText(rawAudioCell);
+        registerParsedSubEntries(parseSheetSubtitleCell(rawSubtitleCell, { isDedicatedSubtitleCol: true }));
+        registerParsedSubEntries(parseSheetSubtitleCell(rawAudioCell, { isDedicatedSubtitleCol: false }));
 
         // Parse Column N (Audio) -> HD/Hindi Ep (Hindi Dub), FD/Fan Ep (Fan Dub), OS/OD/Orig Ep (Original)
-        const hindiAudioMap = new Map<number, string>();
-        const fanDubAudioMap = new Map<number, string>();
-        const origAudioMap = new Map<number, string>();
-
-        if (rawAudioCell) {
-          // Strip ALL subtitle URLs & subtitle tokens (.srt/.vtt/.md.srt, Sub Ep <n>, SRT<n>, Hin<n>, Eng<n>) before audio extraction
-          const cellWithoutSubtitles = rawAudioCell
-            .replace(/\b(?:sub|subtitle|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-            .replace(/\b(?!hd\b|fd\b|os\b|od\b|ep\b|es\b|hindi\b|fan\b|orig\b)([a-zA-Z]{2,5})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-            .replace(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi, ' ');
-
-          const hdRegex = /\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          let am: RegExpExecArray | null;
-          while ((am = hdRegex.exec(cellWithoutSubtitles)) !== null) {
-            const epNum = parseInt(am[1], 10);
-            const aUrl = normalizeDirectMediaUrl(am[2]);
-            if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
-              hindiAudioMap.set(epNum, aUrl);
-            }
-          }
-
-          const fdRegex = /\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          while ((am = fdRegex.exec(cellWithoutSubtitles)) !== null) {
-            const epNum = parseInt(am[1], 10);
-            const aUrl = normalizeDirectMediaUrl(am[2]);
-            if (!Number.isNaN(epNum) && aUrl && !fanDubAudioMap.has(epNum)) {
-              fanDubAudioMap.set(epNum, aUrl);
-            }
-          }
-
-          const osRegex = /\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          while ((am = osRegex.exec(cellWithoutSubtitles)) !== null) {
-            const epNum = parseInt(am[1], 10);
-            const aUrl = normalizeDirectMediaUrl(am[2]);
-            if (!Number.isNaN(epNum) && aUrl && !origAudioMap.has(epNum)) {
-              origAudioMap.set(epNum, aUrl);
-            }
-          }
-
-          // Generic Ep1/Ep2 fallback inside Audio column -> Hindi Dubbed
-          const withoutTrackAudio = cellWithoutSubtitles
-            .replace(/\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-            .replace(/\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-            .replace(/\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ');
-          const epAudioRegex = /\b(?:ep|episode|e)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-          while ((am = epAudioRegex.exec(withoutTrackAudio)) !== null) {
-            const epNum = parseInt(am[1], 10);
-            const aUrl = normalizeDirectMediaUrl(am[2]);
-            if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
-              hindiAudioMap.set(epNum, aUrl);
-            }
-          }
-
-          // Filename S01E01..S01E99 extraction for raw audio URLs listed without explicit prefix
-          const allRawAudioUrls = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
-          allRawAudioUrls.forEach((rawUrl) => {
-            const seMatch = rawUrl.match(/S\d{1,2}E(\d{1,3})/i);
-            if (seMatch) {
-              const epNum = parseInt(seMatch[1], 10);
-              const aUrl = normalizeDirectMediaUrl(rawUrl);
-              if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
-                hindiAudioMap.set(epNum, aUrl);
-              }
-            }
-          });
-
-          // Unnumbered track prefixes or single direct movie/episode audio URL
-          const hdUnnumbered = cellWithoutSubtitles.match(/\b(?:hd|hindi)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
-          if (hdUnnumbered && !hindiAudioMap.has(1)) {
-            hindiAudioMap.set(1, normalizeDirectMediaUrl(hdUnnumbered[1]));
-          }
-          const fdUnnumbered = cellWithoutSubtitles.match(/\b(?:fd|fan)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
-          if (fdUnnumbered && !fanDubAudioMap.has(1)) {
-            fanDubAudioMap.set(1, normalizeDirectMediaUrl(fdUnnumbered[1]));
-          }
-          const osUnnumbered = cellWithoutSubtitles.match(/\b(?:os|od|orig|original)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
-          if (osUnnumbered && !origAudioMap.has(1)) {
-            origAudioMap.set(1, normalizeDirectMediaUrl(osUnnumbered[1]));
-          }
-
-          if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0) {
-            const singleRawAudio = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/);
-            if (singleRawAudio) {
-              hindiAudioMap.set(1, normalizeDirectMediaUrl(singleRawAudio[0]));
-            }
-          }
-        }
+        const { hindiAudioMap, fanDubAudioMap, origAudioMap } = parseSheetAudioCell(rawAudioCell);
 
         let parsedDefaultThumbnail: string | undefined;
         let parsedEpisodeThumbnails: Record<number, string> | undefined;

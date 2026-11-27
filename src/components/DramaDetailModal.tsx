@@ -87,6 +87,9 @@ import {
   sanitizeExternalAudioUrl,
   isExtractorAudioUrl,
   SubtitleCue,
+  SUBTITLE_LANGUAGE_CATALOG,
+  resolveSubtitleLangMeta,
+  translateSubtitleCues,
   TIMESTAMPS_UPDATED_EVENT,
   WatchTimestampEntry,
 } from '../services/vipPlayerHelper';
@@ -915,29 +918,93 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       epMatch?.subtitles ||
       (drama.subtitles && Object.keys(drama.subtitles).length > 0 ? drama.subtitles : {});
 
-    const items = Object.values(subMap).map((item) => {
-      const capCode = item.code.charAt(0).toUpperCase() + item.code.slice(1);
-      const epTag = activeEpNumForLookup !== null && !isMovie ? `${capCode}${activeEpNumForLookup}` : capCode;
-      return {
-        ...item,
-        displayLabel: `${item.label} (${epTag})`,
-      };
+    type SubOptionItem = SubtitleTrackItem & {
+      displayLabel: string;
+      isDirect: boolean;
+      gtxCode: string;
+    };
+
+    const directByCode = new Map<string, SubOptionItem>();
+
+    Object.values(subMap).forEach((item) => {
+      const meta = resolveSubtitleLangMeta(item.code);
+      const epTag =
+        activeEpNumForLookup !== null && !isMovie ? `${meta.shortPrefix}${activeEpNumForLookup}` : meta.shortPrefix;
+      if (!directByCode.has(meta.code)) {
+        directByCode.set(meta.code, {
+          code: meta.code,
+          label: meta.label,
+          langTag: meta.langTag,
+          url: item.url,
+          displayLabel: `${meta.label} (${epTag})`,
+          isDirect: true,
+          gtxCode: meta.gtxCode,
+        });
+      }
     });
 
-    if (items.length === 0 && sheetSubtitleTracks.length > 0) {
+    if (directByCode.size === 0 && sheetSubtitleTracks.length > 0) {
       sheetSubtitleTracks.forEach((legacy, idx) => {
-        const code = `sub${idx + 1}`;
-        items.push({
-          code,
-          label: legacy.label,
-          langTag: legacy.label.toLowerCase().includes('eng') ? 'en-US' : 'hi-IN',
-          url: legacy.url,
-          displayLabel: legacy.label,
-        });
+        const lower = legacy.label.toLowerCase();
+        const guessedToken = lower.includes('eng')
+          ? 'en'
+          : lower.includes('kor')
+          ? 'ko'
+          : lower.includes('hin')
+          ? 'hi'
+          : `sub${idx + 1}`;
+        const meta = resolveSubtitleLangMeta(guessedToken);
+        if (!directByCode.has(meta.code)) {
+          directByCode.set(meta.code, {
+            code: meta.code,
+            label: meta.label || legacy.label,
+            langTag: meta.langTag,
+            url: legacy.url,
+            displayLabel: legacy.label,
+            isDirect: true,
+            gtxCode: meta.gtxCode,
+          });
+        }
       });
     }
 
-    return items;
+    const directList = Array.from(directByCode.values());
+    if (directList.length === 0) return [];
+
+    // Prefer English or Hindi source URL as base for instant on-the-fly translation into all 15 languages
+    const primaryBaseTrack =
+      directByCode.get('en') || directByCode.get('hi') || directList[0];
+
+    const finalOptions: SubOptionItem[] = [];
+    const includedCodes = new Set<string>();
+
+    // First include all directly uploaded tracks in catalog order, then fill out all 15 languages via auto-translate
+    SUBTITLE_LANGUAGE_CATALOG.forEach((cat) => {
+      includedCodes.add(cat.code);
+      const directHit = directByCode.get(cat.code);
+      if (directHit) {
+        finalOptions.push(directHit);
+      } else if (primaryBaseTrack?.url) {
+        finalOptions.push({
+          code: cat.code,
+          label: cat.label,
+          langTag: cat.langTag,
+          url: primaryBaseTrack.url,
+          displayLabel: `${cat.label} (Auto)`,
+          isDirect: false,
+          gtxCode: cat.gtxCode,
+        });
+      }
+    });
+
+    // Append any custom uploaded languages outside the core 15
+    directList.forEach((d) => {
+      if (!includedCodes.has(d.code)) {
+        finalOptions.push(d);
+      }
+    });
+
+    return finalOptions;
   }, [currentEpObj, activeEpNumForLookup, drama.episodes, drama.subtitles, sheetSubtitleTracks, isMovie]);
   const trackCustomAudio = (() => {
     if (activeEpNumForLookup === null) return undefined;
@@ -1463,14 +1530,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [effectiveVideoSrc, isHlsVideoSrc]);
 
-  // CORS-safe probe before attaching crossOrigin / Web Audio EQ+Boost on native video element (never touch external .mp3 audio)
+  // CORS-safe probe before attaching crossOrigin / Web Audio (EQ+Boost or Mid-Side Subtitle Voice Dub)
   const activeAudibleUrl =
     !isExternalAudioActive && resolvedPlayerSource?.type === 'video' ? effectiveVideoSrc : '';
   const wantsAudioStudio =
     !isExternalAudioActive && !isSubtitleAudioOn && (audioEqMode !== 'normal' || volumeBoost > 100);
+  const wantsCorsVideo =
+    !isExternalAudioActive && (isSubtitleAudioOn || audioEqMode !== 'normal' || volumeBoost > 100);
 
   useEffect(() => {
-    if (!wantsAudioStudio || !activeAudibleUrl) {
+    if (!wantsCorsVideo || !activeAudibleUrl) {
       setAudibleCorsSupported(false);
       return;
     }
@@ -1491,7 +1560,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       .then((res) => {
         const ok = res.ok;
         corsCheckCacheRef.current[activeAudibleUrl] = ok;
-        if (!cancelled) setAudibleCorsSupported(ok);
+        if (!cancelled) {
+          const vid = videoRef.current;
+          if (ok && vid && vid.currentTime > 0.3 && !pendingRestoreTimeRef.current) {
+            pendingRestoreTimeRef.current = { time: vid.currentTime, shouldPlay: !vid.paused };
+          }
+          setAudibleCorsSupported(ok);
+        }
       })
       .catch(() => {
         corsCheckCacheRef.current[activeAudibleUrl] = false;
@@ -1500,7 +1575,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [wantsAudioStudio, activeAudibleUrl]);
+  }, [wantsCorsVideo, activeAudibleUrl]);
 
   const applyStudioEqGraph = (audibleEl: HTMLMediaElement | null) => {
     if (!audibleEl || !wantsAudioStudio || !audibleCorsSupported) {
@@ -1760,7 +1835,11 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const handleToggleSubtitleAudio = () => {
     const engine = voiceEngineRef.current;
     if (!engine) return;
+    const vid = videoRef.current;
     if (isSubtitleAudioOn) {
+      if (vid && vid.currentTime > 0.3 && audibleCorsSupported && audioEqMode === 'normal' && volumeBoost === 100) {
+        pendingRestoreTimeRef.current = { time: vid.currentTime, shouldPlay: !vid.paused };
+      }
       engine.disable();
       setIsSubtitleAudioOn(false);
       showHudFeedback('🔇 Subtitle Audio: OFF');
@@ -1768,13 +1847,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
 
     // Auto-select first subtitle track if Subtitles are currently OFF
+    let selectedTrack = availableSubLanguages.find((s) => s.code === activeSubLang);
     if (activeSubLang === 'off' && availableSubLanguages.length > 0) {
-      setActiveSubLang(availableSubLanguages[0].code);
+      selectedTrack = availableSubLanguages.find((s) => s.code === 'hi') || availableSubLanguages[0];
+      setActiveSubLang(selectedTrack.code);
     }
 
-    const vid = videoRef.current;
+    if (vid && vid.currentTime > 0.3 && activeAudibleUrl && corsCheckCacheRef.current[activeAudibleUrl]) {
+      pendingRestoreTimeRef.current = { time: vid.currentTime, shouldPlay: !vid.paused };
+    }
+
     const curTime = vid?.currentTime ?? 0;
     const isPaused = vid ? vid.paused : true;
+    if (selectedTrack) {
+      engine.setLanguage(selectedTrack.code, selectedTrack.langTag);
+    }
     engine.attachVideo(vid);
     engine.setExternalAudioMode(shouldMuteVideoForExternalAudio);
     engine.setPlaybackRate(playbackSpeed);
@@ -1798,14 +1885,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       }
       showHudFeedback('💬 Subtitles: Off');
     } else if (langCode === 'local') {
+      voiceEngineRef.current?.setLanguage('hi', 'hi-IN');
       showHudFeedback('💬 Subtitles: Local File Active');
     } else {
       const matched = availableSubLanguages.find((s) => s.code === langCode);
-      if (matched) showHudFeedback(`💬 ${matched.displayLabel} Active`);
+      if (matched) {
+        voiceEngineRef.current?.setLanguage(matched.code, matched.langTag);
+        showHudFeedback(
+          matched.isDirect
+            ? `💬 ${matched.label} Active`
+            : `🌐 Translating to ${matched.label}...`
+        );
+      }
     }
   };
 
-  // Auto-Fetch & Parse Remote .SRT / .MD.SRT / .VTT Subtitle File whenever activeSubLang or episode changes
+  // Auto-Fetch & Parse Remote .SRT / .MD.SRT / .VTT Subtitle File (+ On-The-Fly Auto-Translation across 15 languages)
   useEffect(() => {
     if (activeSubLang === 'off') {
       setParsedSubCues([]);
@@ -1815,14 +1910,20 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       return;
     }
     if (activeSubLang === 'local' && uploadedSubCues) {
+      voiceEngineRef.current?.setLanguage('hi', 'hi-IN');
       setParsedSubCues(uploadedSubCues.cues);
       setIsSubLoading(false);
       return;
     }
-    const track =
-      currentEpObj?.subtitles?.[activeSubLang] ||
-      availableSubLanguages.find((s) => s.code === activeSubLang);
-    const resolvedUrl = track?.url ? normalizeSubtitleUrl(track.url) : '';
+    const track = availableSubLanguages.find((s) => s.code === activeSubLang);
+    const directEpTrack = currentEpObj?.subtitles?.[activeSubLang];
+    const resolvedUrl = (directEpTrack?.url || track?.url) ? normalizeSubtitleUrl(directEpTrack?.url || track?.url || '') : '';
+    const needsAutoTranslate = Boolean(track && !track.isDirect && !directEpTrack?.url);
+
+    if (track) {
+      voiceEngineRef.current?.setLanguage(track.code, track.langTag);
+    }
+
     if (resolvedUrl && (/^https?:\/\//i.test(resolvedUrl) || /^data:/i.test(resolvedUrl))) {
       let cancelled = false;
       setIsSubLoading(true);
@@ -1831,14 +1932,29 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           if (!r.ok) throw new Error('Subtitle fetch failed');
           return r.text();
         })
-        .then((txt) => {
-          if (!cancelled) {
-            const cues = parseSrtOrVttContent(txt);
-            setParsedSubCues(cues);
+        .then(async (txt) => {
+          const baseCues = parseSrtOrVttContent(txt);
+          if (cancelled) return;
+          if (baseCues.length === 0) {
+            setParsedSubCues([]);
             setIsSubLoading(false);
-            if (cues.length === 0) {
-              showHudFeedback('⚠️ Subtitle file empty or unsupported format');
+            showHudFeedback('⚠️ Subtitle file empty or unsupported format');
+            return;
+          }
+          if (needsAutoTranslate && track) {
+            const translatedCues = await translateSubtitleCues(
+              baseCues,
+              track.gtxCode,
+              `${resolvedUrl}:${track.code}`
+            );
+            if (!cancelled) {
+              setParsedSubCues(translatedCues);
+              setIsSubLoading(false);
+              showHudFeedback(`💬 ${track.label} Captions Ready`);
             }
+          } else {
+            setParsedSubCues(baseCues);
+            setIsSubLoading(false);
           }
         })
         .catch(() => {
@@ -2638,7 +2754,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 transform: 'translateX(-50%)',
                 zIndex: 30,
                 pointerEvents: 'none',
-                background: 'rgba(10, 12, 22, 0.25)',
+                background: 'rgba(10, 12, 22, 0.22)',
                 backdropFilter: 'blur(12px)',
                 WebkitBackdropFilter: 'blur(12px)',
                 border: '1px solid rgba(0, 242, 254, 0.35)',
@@ -2905,9 +3021,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
               <video
                 ref={videoRef}
-                key={`${effectiveVideoSrc || asyncResolveKey || resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'cors' : 'direct'}`}
+                key={`${effectiveVideoSrc || asyncResolveKey || resolvedPlayerSource.src}-${streamReloadNonce}-${!isExternalAudioActive && wantsCorsVideo && audibleCorsSupported ? 'cors' : 'direct'}`}
                 src={isHlsVideoSrc ? undefined : effectiveVideoSrc || undefined}
-                crossOrigin={!isExternalAudioActive && wantsAudioStudio && audibleCorsSupported ? 'anonymous' : undefined}
+                crossOrigin={!isExternalAudioActive && wantsCorsVideo && audibleCorsSupported ? 'anonymous' : undefined}
                 poster={activeCustomThumbnail || drama.backdrop || drama.poster || ''}
                 controls={false}
                 preload="auto"
@@ -3461,12 +3577,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           {isCaptionMenuOpen && !isMiniPlayer && (
             <div
               onClick={(e) => e.stopPropagation()}
-              className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-[45] w-[270px] sm:w-[310px] max-w-[calc(100%-24px)] rounded-2xl bg-[#0a0c16]/90 backdrop-blur-xl border border-cyan-400/35 shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-3.5 space-y-3 text-xs animate-fade-in"
+              className="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 z-[45] w-[285px] sm:w-[330px] max-w-[calc(100%-20px)] max-h-[82%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/90 backdrop-blur-xl border border-cyan-400/35 shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-3.5 space-y-3 text-xs animate-fade-in"
             >
               <div className="flex items-center justify-between border-b border-white/10 pb-2">
                 <span className="font-black text-white flex items-center gap-1.5">
                   <Captions className="w-3.5 h-3.5 text-[#00f2fe]" />
                   <span>Captions &amp; Voice Dub</span>
+                  {isSubLoading && (
+                    <span className="text-[10px] text-cyan-300 font-bold animate-pulse">Loading...</span>
+                  )}
                 </span>
                 <button
                   type="button"
@@ -3480,7 +3599,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               {/* Languages List */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
-                  Subtitle Language
+                  Subtitle Language ({availableSubLanguages.length > 0 ? `${availableSubLanguages.length} Languages` : 'None'})
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   <button
@@ -3497,9 +3616,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {availableSubLanguages.map((sub) => (
                     <button
                       type="button"
-                      key={`pop-sub-${sub.code}-${sub.url}`}
+                      key={`pop-sub-${sub.code}`}
                       onClick={() => handleSelectSubLang(sub.code)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
                         activeSubLang === sub.code
                           ? 'bg-cyan-400 text-black border-cyan-200'
                           : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
@@ -3908,7 +4027,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </button>
                 {availableSubLanguages.map((sub) => (
                   <button
-                    key={`${sub.code}-${sub.url}`}
+                    key={`studio-sub-${sub.code}`}
                     onClick={() => handleSelectSubLang(sub.code)}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer ${
                       activeSubLang === sub.code
@@ -5527,7 +5646,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
                             {availableSubLanguages.map((sub) => (
                               <button
-                                key={`cc-pill-${sub.code}-${sub.url}`}
+                                key={`cc-pill-${sub.code}`}
                                 onClick={() => handleSelectSubLang(sub.code)}
                                 className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
                                   activeSubLang === sub.code

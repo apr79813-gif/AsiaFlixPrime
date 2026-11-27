@@ -30,6 +30,37 @@ const ALLOWED_VOICES = new Set([
   'hi-IN-SwaraNeural',
   'en-IN-PrabhatNeural',
   'en-IN-NeerjaNeural',
+  'en-US-AndrewNeural',
+  'en-US-AriaNeural',
+  'en-US-GuyNeural',
+  'en-US-JennyNeural',
+  'ko-KR-InJoonNeural',
+  'ko-KR-SunHiNeural',
+  'ko-KR-HyunsuNeural',
+  'ur-PK-AsadNeural',
+  'ur-PK-UzmaNeural',
+  'ur-IN-SalmanNeural',
+  'ur-IN-GulNeural',
+  'bn-IN-BashkarNeural',
+  'bn-IN-TanishaaNeural',
+  'bn-BD-PradeepNeural',
+  'bn-BD-NabanitaNeural',
+  'mr-IN-ManoharNeural',
+  'mr-IN-AarohiNeural',
+  'ta-IN-ValluvarNeural',
+  'ta-IN-PallaviNeural',
+  'te-IN-MohanNeural',
+  'te-IN-ShrutiNeural',
+  'gu-IN-NiranjanNeural',
+  'gu-IN-DhwaniNeural',
+  'ne-NP-SagarNeural',
+  'ne-NP-HemkalaNeural',
+  'zh-CN-YunxiNeural',
+  'zh-CN-XiaoxiaoNeural',
+  'zh-CN-YunjianNeural',
+  'zh-CN-XiaoyiNeural',
+  'ja-JP-KeitaNeural',
+  'ja-JP-NanamiNeural',
 ]);
 
 // --- Security Helpers ---
@@ -212,7 +243,8 @@ function synthesizeEdgeNeuralTts(
       ws.send(configMsg);
 
       const safeText = escapeXml(text);
-      const lang = voice.startsWith('hi-IN') ? 'hi-IN' : 'en-IN';
+      const voiceParts = voice.split('-');
+      const lang = voiceParts.length >= 2 ? `${voiceParts[0]}-${voiceParts[1]}` : 'hi-IN';
       const ssml =
         `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${lang}'>` +
         `<voice name='${voice}'>` +
@@ -277,7 +309,10 @@ function synthesizeEdgeNeuralTts(
 }
 
 async function synthesizeGoogleGtxTts(text: string, lang: string): Promise<Buffer> {
-  const tl = lang.startsWith('hi') ? 'hi' : 'en-IN';
+  const cleanLang = (lang || 'hi').trim();
+  const tl = cleanLang.toLowerCase().startsWith('zh')
+    ? 'zh-CN'
+    : cleanLang.split('-')[0] || 'hi';
   const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(
     tl
   )}&q=${encodeURIComponent(text.slice(0, 200))}`;
@@ -508,6 +543,10 @@ async function startServer(): Promise<void> {
         typeof body.voice === 'string' && ALLOWED_VOICES.has(body.voice)
           ? body.voice
           : 'hi-IN-SwaraNeural';
+      const requestedLang =
+        typeof body.lang === 'string' && body.lang.trim()
+          ? body.lang.trim()
+          : requestedVoice.split('-').slice(0, 2).join('-');
       const rate = clampPercentDelta(body.rate, '+0%');
       const pitch = clampPitchHz(body.pitch, '+0Hz');
 
@@ -517,8 +556,7 @@ async function startServer(): Promise<void> {
       } catch {
         // Fallback to Google GTX TTS
         try {
-          const lang = requestedVoice.startsWith('hi') ? 'hi' : 'en-IN';
-          audioBuffer = await synthesizeGoogleGtxTts(cleanText, lang);
+          audioBuffer = await synthesizeGoogleGtxTts(cleanText, requestedLang);
         } catch {
           audioBuffer = null;
         }

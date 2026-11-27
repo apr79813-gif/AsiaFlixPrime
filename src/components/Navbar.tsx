@@ -364,7 +364,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Install AsiaFlix Prime App or Download APK"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>📲 App</span>
+              <span>📲 Download App / APK</span>
             </button>
           )}
 

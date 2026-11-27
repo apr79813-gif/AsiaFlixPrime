@@ -1050,3 +1050,414 @@ export function parseSrtOrVttContent(rawText: string): SubtitleCue[] {
     .map((cue, idx) => ({ ...cue, id: idx + 1 }));
 }
 
+export interface SubtitleLanguageDefinition {
+  code: string;
+  shortPrefix: string;
+  label: string;
+  langTag: string;
+  gtxCode: string;
+  aliases: string[];
+}
+
+export const SUBTITLE_LANGUAGE_CATALOG: SubtitleLanguageDefinition[] = [
+  { code: 'hi', shortPrefix: 'Hin', label: '🇮🇳 Hindi', langTag: 'hi-IN', gtxCode: 'hi', aliases: ['hin', 'hi', 'hindi', 'sub', 'srt', 'cc'] },
+  { code: 'en', shortPrefix: 'Eng', label: '🇬🇧 English', langTag: 'en-US', gtxCode: 'en', aliases: ['eng', 'en', 'english'] },
+  { code: 'ko', shortPrefix: 'Kor', label: '🇰🇷 Korean', langTag: 'ko-KR', gtxCode: 'ko', aliases: ['kor', 'ko', 'korean'] },
+  { code: 'ur', shortPrefix: 'Urd', label: '🇵🇰 Urdu (اردو)', langTag: 'ur-PK', gtxCode: 'ur', aliases: ['urd', 'ur', 'urdu'] },
+  { code: 'bn', shortPrefix: 'Ben', label: '🇧🇩 Bengali (বাংলা)', langTag: 'bn-IN', gtxCode: 'bn', aliases: ['ben', 'bn', 'bengali', 'bangla'] },
+  { code: 'mai', shortPrefix: 'Mai', label: '🇮🇳 Maithili (मैथिली)', langTag: 'mai-IN', gtxCode: 'mai', aliases: ['mai', 'maithili'] },
+  { code: 'bho', shortPrefix: 'Bho', label: '🇮🇳 Bhojpuri (भोजपुरी)', langTag: 'bho-IN', gtxCode: 'bho', aliases: ['bho', 'bhojpuri'] },
+  { code: 'mr', shortPrefix: 'Mar', label: '🇮🇳 Marathi (मराठी)', langTag: 'mr-IN', gtxCode: 'mr', aliases: ['mar', 'mr', 'marathi'] },
+  { code: 'ta', shortPrefix: 'Tam', label: '🇮🇳 Tamil (தமிழ்)', langTag: 'ta-IN', gtxCode: 'ta', aliases: ['tam', 'ta', 'tamil'] },
+  { code: 'te', shortPrefix: 'Tel', label: '🇮🇳 Telugu (తెలుగు)', langTag: 'te-IN', gtxCode: 'te', aliases: ['tel', 'te', 'telugu'] },
+  { code: 'gu', shortPrefix: 'Guj', label: '🇮🇳 Gujarati (ગુજરાતી)', langTag: 'gu-IN', gtxCode: 'gu', aliases: ['guj', 'gu', 'gujarati'] },
+  { code: 'pa', shortPrefix: 'Pun', label: '🇮🇳 Punjabi (ਪੰਜਾਬੀ)', langTag: 'pa-IN', gtxCode: 'pa', aliases: ['pun', 'pa', 'pan', 'punjabi'] },
+  { code: 'ne', shortPrefix: 'Nep', label: '🇳🇵 Nepali (नेपाली)', langTag: 'ne-NP', gtxCode: 'ne', aliases: ['nep', 'ne', 'nepali'] },
+  { code: 'zh', shortPrefix: 'Chi', label: '🇨🇳 Chinese', langTag: 'zh-CN', gtxCode: 'zh-CN', aliases: ['chi', 'zh', 'chinese', 'mandarin'] },
+  { code: 'ja', shortPrefix: 'Jap', label: '🇯🇵 Japanese', langTag: 'ja-JP', gtxCode: 'ja', aliases: ['jap', 'ja', 'jpn', 'japanese'] },
+];
+
+const EXTRA_SUBTITLE_LANG_META: Record<string, { code: string; label: string; langTag: string; gtxCode: string }> = {
+  ind: { code: 'id', label: '🇮🇩 Indonesian', langTag: 'id-ID', gtxCode: 'id' },
+  id: { code: 'id', label: '🇮🇩 Indonesian', langTag: 'id-ID', gtxCode: 'id' },
+  indonesian: { code: 'id', label: '🇮🇩 Indonesian', langTag: 'id-ID', gtxCode: 'id' },
+  ara: { code: 'ar', label: '🇸🇦 Arabic', langTag: 'ar-SA', gtxCode: 'ar' },
+  ar: { code: 'ar', label: '🇸🇦 Arabic', langTag: 'ar-SA', gtxCode: 'ar' },
+  arabic: { code: 'ar', label: '🇸🇦 Arabic', langTag: 'ar-SA', gtxCode: 'ar' },
+  esp: { code: 'es', label: '🇪🇸 Spanish', langTag: 'es-ES', gtxCode: 'es' },
+  es: { code: 'es', label: '🇪🇸 Spanish', langTag: 'es-ES', gtxCode: 'es' },
+  spanish: { code: 'es', label: '🇪🇸 Spanish', langTag: 'es-ES', gtxCode: 'es' },
+  tha: { code: 'th', label: '🇹🇭 Thai', langTag: 'th-TH', gtxCode: 'th' },
+  th: { code: 'th', label: '🇹🇭 Thai', langTag: 'th-TH', gtxCode: 'th' },
+  thai: { code: 'th', label: '🇹🇭 Thai', langTag: 'th-TH', gtxCode: 'th' },
+  mal: { code: 'ml', label: '🇮🇳 Malayalam', langTag: 'ml-IN', gtxCode: 'ml' },
+  ml: { code: 'ml', label: '🇮🇳 Malayalam', langTag: 'ml-IN', gtxCode: 'ml' },
+  malayalam: { code: 'ml', label: '🇮🇳 Malayalam', langTag: 'ml-IN', gtxCode: 'ml' },
+  kan: { code: 'kn', label: '🇮🇳 Kannada', langTag: 'kn-IN', gtxCode: 'kn' },
+  kn: { code: 'kn', label: '🇮🇳 Kannada', langTag: 'kn-IN', gtxCode: 'kn' },
+  kannada: { code: 'kn', label: '🇮🇳 Kannada', langTag: 'kn-IN', gtxCode: 'kn' },
+  fre: { code: 'fr', label: '🇫🇷 French', langTag: 'fr-FR', gtxCode: 'fr' },
+  fr: { code: 'fr', label: '🇫🇷 French', langTag: 'fr-FR', gtxCode: 'fr' },
+  french: { code: 'fr', label: '🇫🇷 French', langTag: 'fr-FR', gtxCode: 'fr' },
+};
+
+export function resolveSubtitleLangMeta(rawToken: string): {
+  code: string;
+  shortPrefix: string;
+  label: string;
+  langTag: string;
+  gtxCode: string;
+} {
+  const clean = (rawToken || '').trim().toLowerCase();
+  for (const entry of SUBTITLE_LANGUAGE_CATALOG) {
+    if (entry.code === clean || entry.aliases.includes(clean)) {
+      return {
+        code: entry.code,
+        shortPrefix: entry.shortPrefix,
+        label: entry.label,
+        langTag: entry.langTag,
+        gtxCode: entry.gtxCode,
+      };
+    }
+  }
+  if (EXTRA_SUBTITLE_LANG_META[clean]) {
+    const extra = EXTRA_SUBTITLE_LANG_META[clean];
+    return {
+      ...extra,
+      shortPrefix: clean.charAt(0).toUpperCase() + clean.slice(1, 3),
+    };
+  }
+  const safeCode = clean.replace(/[^a-z0-9]/g, '') || 'hi';
+  const titleLabel = safeCode.charAt(0).toUpperCase() + safeCode.slice(1);
+  return {
+    code: safeCode,
+    shortPrefix: titleLabel.slice(0, 3),
+    label: `🌐 ${titleLabel}`,
+    langTag: safeCode.length === 2 ? `${safeCode}-${safeCode.toUpperCase()}` : `${safeCode}-IN`,
+    gtxCode: safeCode,
+  };
+}
+
+export interface ParsedSheetSubtitleEntry {
+  code: string;
+  label: string;
+  langTag: string;
+  epNum: number;
+  url: string;
+}
+
+export function parseSheetSubtitleCell(
+  sourceText: string,
+  options: { isDedicatedSubtitleCol?: boolean } = {}
+): ParsedSheetSubtitleEntry[] {
+  if (!sourceText || !sourceText.trim()) return [];
+
+  const isDedicated = Boolean(options.isDedicatedSubtitleCol);
+  const results: ParsedSheetSubtitleEntry[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushEntry = (rawLang: string, epNum: number, rawUrl: string) => {
+    const cleanUrl = normalizeUniversalAssetUrl(rawUrl);
+    if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl) || Number.isNaN(epNum)) return;
+    const meta = resolveSubtitleLangMeta(rawLang);
+    const dedupeKey = `${meta.code}:${epNum}:${cleanUrl}`;
+    if (seenKeys.has(dedupeKey)) return;
+    seenKeys.add(dedupeKey);
+    results.push({
+      code: meta.code,
+      label: meta.label,
+      langTag: meta.langTag,
+      epNum,
+      url: cleanUrl,
+    });
+  };
+
+  // Reserved non-subtitle tokens so Audio/Telegram prefixes aren't misread when scanning fallback columns
+  const nonSubTokens = new Set([
+    'ep',
+    'episode',
+    'es',
+    'stream',
+    'hd',
+    'fd',
+    'os',
+    'od',
+    'http',
+    'https',
+    't1',
+    't2',
+    't3',
+    ...(isDedicated ? [] : ['hindi', 'fan', 'orig', 'original']),
+  ]);
+
+  // 1. Verbose Sub Ep prefixes ("Sub Ep 1 = ...", "Subtitle 2 = ...", "SRT Ep 3: ...")
+  const subEpRegex =
+    /\b(?:sub|subtitle|subtitles|srt)\s*[-_#\s]*(?:ep(?:isode)?)?\s*[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = subEpRegex.exec(sourceText)) !== null) {
+    pushEntry('hi', parseInt(m[1], 10), m[2]);
+  }
+
+  // 2. Language + optional "Ep" + Episode Number ("Hin1 = ...", "English 2 = ...", "Maithili Ep 1: ...")
+  const langNumRegex =
+    /\b([a-zA-Z]{2,20})\s*(?:ep(?:isode)?\s*)?[-_#]?\s*(\d+)\s*(?:[:=\-|]+\s*|\s+)(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((m = langNumRegex.exec(sourceText)) !== null) {
+    const token = m[1].toLowerCase();
+    if (token === 'sub' || token === 'subtitle' || token === 'subtitles' || token === 'srt') {
+      pushEntry('hi', parseInt(m[2], 10), m[3]);
+      continue;
+    }
+    if ((token === 'ep' || token === 'episode' || token === 'e') && isDedicated) {
+      pushEntry('hi', parseInt(m[2], 10), m[3]);
+      continue;
+    }
+    if (nonSubTokens.has(token)) continue;
+    pushEntry(token, parseInt(m[2], 10), m[3]);
+  }
+
+  // 3. Unnumbered language tags ("Hin = https://...", "Maithili = https://...", "English: https://...")
+  const strippedNumbered = sourceText
+    .replace(
+      /\b(?:sub|subtitle|subtitles|srt)\s*[-_#\s]*(?:ep(?:isode)?)?\s*[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/gi,
+      ' '
+    )
+    .replace(
+      /\b([a-zA-Z]{2,20})\s*(?:ep(?:isode)?\s*)?[-_#]?\s*\d+\s*(?:[:=\-|]+\s*|\s+)https?:\/\/[^\s,\n|"'<>]+/gi,
+      ' '
+    );
+
+  const unnumberedLangRegex = /\b([a-zA-Z]{2,20})\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((m = unnumberedLangRegex.exec(strippedNumbered)) !== null) {
+    const token = m[1].toLowerCase();
+    if (nonSubTokens.has(token)) continue;
+    pushEntry(token, 1, m[2]);
+  }
+
+  // 4. Bare URLs: in dedicated Subtitle column accept any bare http(s) URL (defaulting to Hindi);
+  // in fallback columns only match explicit .srt/.vtt/.md.srt URLs.
+  const barePattern = isDedicated
+    ? /https?:\/\/[^\s,\n|"'<>]+/gi
+    : /https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi;
+  const bareMatches = sourceText.match(barePattern) || [];
+  bareMatches.forEach((rawUrl) => {
+    const norm = normalizeUniversalAssetUrl(rawUrl);
+    if (!norm) return;
+    if (results.some((r) => r.url === norm)) return;
+    const epFromFile =
+      rawUrl.match(/S\d{1,2}E(\d{1,3})/i) ||
+      rawUrl.match(/\bep(?:isode)?[-_ ]?(\d{1,3})\b/i);
+    const epNum = epFromFile ? parseInt(epFromFile[1], 10) : 1;
+    pushEntry('hi', epNum, norm);
+  });
+
+  return results;
+}
+
+export function parseSheetAudioCell(rawAudioCell: string): {
+  hindiAudioMap: Map<number, string>;
+  fanDubAudioMap: Map<number, string>;
+  origAudioMap: Map<number, string>;
+} {
+  const hindiAudioMap = new Map<number, string>();
+  const fanDubAudioMap = new Map<number, string>();
+  const origAudioMap = new Map<number, string>();
+  if (!rawAudioCell || !rawAudioCell.trim()) {
+    return { hindiAudioMap, fanDubAudioMap, origAudioMap };
+  }
+
+  // Strip subtitle tags & .srt/.vtt links before audio extraction
+  const cellWithoutSubtitles = rawAudioCell
+    .replace(/\b(?:sub|subtitle|subtitles|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+    .replace(/\b(?!hd\b|fd\b|os\b|od\b|ep\b|es\b|hindi\b|fan\b|orig\b|original\b)([a-zA-Z]{2,15})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+    .replace(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi, ' ');
+
+  const normalizeAudioTarget = (u: string): string => {
+    const trimmed = u.trim();
+    if (!trimmed) return '';
+    if (isExtractorAudioUrl(trimmed)) return trimmed;
+    return normalizeUniversalAssetUrl(trimmed);
+  };
+
+  let am: RegExpExecArray | null;
+  const hdRegex = /\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((am = hdRegex.exec(cellWithoutSubtitles)) !== null) {
+    const epNum = parseInt(am[1], 10);
+    const aUrl = normalizeAudioTarget(am[2]);
+    if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+      hindiAudioMap.set(epNum, aUrl);
+    }
+  }
+
+  const fdRegex = /\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((am = fdRegex.exec(cellWithoutSubtitles)) !== null) {
+    const epNum = parseInt(am[1], 10);
+    const aUrl = normalizeAudioTarget(am[2]);
+    if (!Number.isNaN(epNum) && aUrl && !fanDubAudioMap.has(epNum)) {
+      fanDubAudioMap.set(epNum, aUrl);
+    }
+  }
+
+  const osRegex = /\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((am = osRegex.exec(cellWithoutSubtitles)) !== null) {
+    const epNum = parseInt(am[1], 10);
+    const aUrl = normalizeAudioTarget(am[2]);
+    if (!Number.isNaN(epNum) && aUrl && !origAudioMap.has(epNum)) {
+      origAudioMap.set(epNum, aUrl);
+    }
+  }
+
+  // Generic Ep1/Ep2 fallback inside Audio column -> Hindi Dubbed
+  const withoutTrackAudio = cellWithoutSubtitles
+    .replace(/\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+    .replace(/\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+    .replace(/\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ');
+  const epAudioRegex = /\b(?:ep|episode|e)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  while ((am = epAudioRegex.exec(withoutTrackAudio)) !== null) {
+    const epNum = parseInt(am[1], 10);
+    const aUrl = normalizeAudioTarget(am[2]);
+    if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+      hindiAudioMap.set(epNum, aUrl);
+    }
+  }
+
+  // S01E01 filename fallback
+  const allRawAudioUrls = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
+  allRawAudioUrls.forEach((rawUrl) => {
+    const seMatch = rawUrl.match(/S\d{1,2}E(\d{1,3})/i);
+    if (seMatch) {
+      const epNum = parseInt(seMatch[1], 10);
+      const aUrl = normalizeAudioTarget(rawUrl);
+      if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
+        hindiAudioMap.set(epNum, aUrl);
+      }
+    }
+  });
+
+  const hdUnnumbered = cellWithoutSubtitles.match(/\b(?:hd|hindi)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+  if (hdUnnumbered && !hindiAudioMap.has(1)) {
+    hindiAudioMap.set(1, normalizeAudioTarget(hdUnnumbered[1]));
+  }
+  const fdUnnumbered = cellWithoutSubtitles.match(/\b(?:fd|fan)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+  if (fdUnnumbered && !fanDubAudioMap.has(1)) {
+    fanDubAudioMap.set(1, normalizeAudioTarget(fdUnnumbered[1]));
+  }
+  const osUnnumbered = cellWithoutSubtitles.match(/\b(?:os|od|orig|original)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+  if (osUnnumbered && !origAudioMap.has(1)) {
+    origAudioMap.set(1, normalizeAudioTarget(osUnnumbered[1]));
+  }
+
+  if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0) {
+    const singleRawAudio = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/);
+    if (singleRawAudio) {
+      hindiAudioMap.set(1, normalizeAudioTarget(singleRawAudio[0]));
+    }
+  }
+
+  return { hindiAudioMap, fanDubAudioMap, origAudioMap };
+}
+
+const translatedCueMemCache = new Map<string, SubtitleCue[]>();
+const TRANSLATED_SUBS_SESSION_KEY = 'asiaflix_translated_subs_v1';
+
+async function translateTextChunkGtx(text: string, targetLang: string): Promise<string> {
+  const endpoint = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(
+    targetLang
+  )}&dt=t&q=${encodeURIComponent(text)}`;
+  const resp = await fetch(endpoint);
+  if (!resp.ok) throw new Error(`GTX translate error ${resp.status}`);
+  const data = (await resp.json()) as unknown[];
+  const sentences = Array.isArray(data?.[0]) ? (data[0] as unknown[][]) : [];
+  return sentences.map((s) => (typeof s?.[0] === 'string' ? s[0] : '')).join('');
+}
+
+export async function translateSubtitleCues(
+  sourceCues: SubtitleCue[],
+  targetGtxCode: string,
+  cacheKey?: string
+): Promise<SubtitleCue[]> {
+  if (!sourceCues || sourceCues.length === 0) return [];
+  const cleanTarget = (targetGtxCode || '').trim();
+  if (!cleanTarget) return sourceCues;
+
+  const fullCacheKey = cacheKey
+    ? `${cacheKey}::${cleanTarget}`
+    : `${cleanTarget}:${sourceCues.length}:${sourceCues[0]?.text.slice(0, 32)}`;
+
+  const memHit = translatedCueMemCache.get(fullCacheKey);
+  if (memHit && memHit.length === sourceCues.length) return memHit;
+
+  const sessHit = readSessionCacheEntry<SubtitleCue[]>(TRANSLATED_SUBS_SESSION_KEY, fullCacheKey);
+  if (sessHit && Array.isArray(sessHit) && sessHit.length === sourceCues.length) {
+    translatedCueMemCache.set(fullCacheKey, sessHit);
+    return sessHit;
+  }
+
+  const SEP_TOKEN = ' ||| ';
+  const resultCues: SubtitleCue[] = new Array(sourceCues.length);
+  const batches: Array<{ startIdx: number; items: SubtitleCue[] }> = [];
+
+  let i = 0;
+  while (i < sourceCues.length) {
+    const batch: SubtitleCue[] = [];
+    let charLen = 0;
+    const startIdx = i;
+    while (i < sourceCues.length && batch.length < 18) {
+      const piece = sourceCues[i].text.replace(/\n+/g, ' ');
+      if (batch.length > 0 && charLen + piece.length > 1350) break;
+      batch.push(sourceCues[i]);
+      charLen += piece.length + 10;
+      i++;
+    }
+    batches.push({ startIdx, items: batch });
+  }
+
+  // Run up to 3 translation batches concurrently for fast first paint
+  const CONCURRENCY = 3;
+  for (let b = 0; b < batches.length; b += CONCURRENCY) {
+    const group = batches.slice(b, b + CONCURRENCY);
+    await Promise.all(
+      group.map(async ({ startIdx, items }) => {
+        const joined = items
+          .map((c) => c.text.replace(/\n+/g, ' ').replace(/\|\|\|/g, '|'))
+          .join(SEP_TOKEN);
+        try {
+          const translatedJoined = await translateTextChunkGtx(joined, cleanTarget);
+          const splitParts = translatedJoined.split(/\s*\|\|\|\s*/);
+          if (splitParts.length === items.length) {
+            items.forEach((c, idx) => {
+              resultCues[startIdx + idx] = {
+                ...c,
+                text: (splitParts[idx] || c.text).trim(),
+              };
+            });
+            return;
+          }
+          // Fallback: line-by-line within small mismatched batch
+          const lineTranslated = await Promise.all(
+            items.map(async (c) => {
+              try {
+                const t = await translateTextChunkGtx(c.text.replace(/\n+/g, ' '), cleanTarget);
+                return t.trim() || c.text;
+              } catch {
+                return c.text;
+              }
+            })
+          );
+          items.forEach((c, idx) => {
+            resultCues[startIdx + idx] = { ...c, text: lineTranslated[idx] };
+          });
+        } catch {
+          items.forEach((c, idx) => {
+            resultCues[startIdx + idx] = c;
+          });
+        }
+      })
+    );
+  }
+
+  translatedCueMemCache.set(fullCacheKey, resultCues);
+  writeSessionCacheEntry(TRANSLATED_SUBS_SESSION_KEY, fullCacheKey, resultCues, 60 * 60 * 1000);
+  return resultCues;
+}
+
+

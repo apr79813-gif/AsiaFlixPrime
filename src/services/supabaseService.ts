@@ -1,6 +1,7 @@
 import { supabase, ADMIN_EMAIL, ADMIN_EMAILS } from '../lib/supabase';
-import { DramaItem, AudioType, DramaCategory, DramaStatus, ReleaseNotification, EpisodeItem, WatchlistEntry } from '../types/drama';
+import { DramaItem, AudioType, DramaCategory, DramaStatus, ReleaseNotification, EpisodeItem, WatchlistEntry, SubtitleTrackItem } from '../types/drama';
 import { formatPermanentTimestamp } from './scheduleHelper';
+import { parseSheetSubtitleCell, parseSheetAudioCell } from './vipPlayerHelper';
 
 export interface SupabaseTitleRow {
   id: string;
@@ -82,6 +83,16 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
           ? (foundAudio.audio_type === 'Original' ? 'Original / Eng Sub' : foundAudio.audio_type as AudioType)
           : availableAudios[0] || 'Hindi Dubbed';
 
+        const epNum = u.episode_number || (u.upload_format === 'complete_series' ? 1 : idx + 1);
+        const parsedSubs = u.display_label
+          ? parseSheetSubtitleCell(u.display_label, { isDedicatedSubtitleCol: false })
+          : [];
+        const epSubMap: Record<string, SubtitleTrackItem> = {};
+        parsedSubs.forEach((s) => {
+          epSubMap[s.code] = { code: s.code, label: s.label, langTag: s.langTag, url: s.url };
+        });
+        const parsedAudio = u.display_label ? parseSheetAudioCell(u.display_label) : null;
+
         return {
           id: u.id,
           episodeNumber: u.episode_number || (u.upload_format === 'complete_series' ? 'Full Pack' : idx + 1),
@@ -92,6 +103,10 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
           quality: '1080p FHD',
           isMerged: u.upload_format === 'merged_episodes' || u.upload_format === 'complete_series',
           format: (u.upload_format === 'complete_series' ? 'merged' : 'single') as any,
+          ...(Object.keys(epSubMap).length > 0 ? { subtitles: epSubMap } : {}),
+          ...(parsedAudio?.hindiAudioMap.get(epNum) ? { hindiCustomAudioLink: parsedAudio.hindiAudioMap.get(epNum) } : {}),
+          ...(parsedAudio?.fanDubAudioMap.get(epNum) ? { fanDubCustomAudioLink: parsedAudio.fanDubAudioMap.get(epNum) } : {}),
+          ...(parsedAudio?.origAudioMap.get(epNum) ? { origCustomAudioLink: parsedAudio.origAudioMap.get(epNum) } : {}),
         };
       });
 

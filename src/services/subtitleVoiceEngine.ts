@@ -80,6 +80,87 @@ const PROFILE_ROTATION: ProfileId[] = [
 const MALE_PROFILES: ProfileId[] = ['Male_Lead_1', 'Male_Char_2', 'Male_Char_3'];
 const FEMALE_PROFILES: ProfileId[] = ['Female_Lead_1', 'Female_Char_2', 'Female_Char_3'];
 
+const LANGUAGE_VOICE_BANKS: Record<
+  string,
+  { male: [string, string, string]; female: [string, string, string]; langTag: string }
+> = {
+  hi: {
+    male: ['hi-IN-MadhurNeural', 'en-IN-PrabhatNeural', 'hi-IN-MadhurNeural'],
+    female: ['hi-IN-SwaraNeural', 'en-IN-NeerjaNeural', 'hi-IN-SwaraNeural'],
+    langTag: 'hi-IN',
+  },
+  en: {
+    male: ['en-US-AndrewNeural', 'en-IN-PrabhatNeural', 'en-US-GuyNeural'],
+    female: ['en-US-AriaNeural', 'en-IN-NeerjaNeural', 'en-US-JennyNeural'],
+    langTag: 'en-US',
+  },
+  ko: {
+    male: ['ko-KR-InJoonNeural', 'ko-KR-HyunsuNeural', 'ko-KR-InJoonNeural'],
+    female: ['ko-KR-SunHiNeural', 'ko-KR-SunHiNeural', 'ko-KR-SunHiNeural'],
+    langTag: 'ko-KR',
+  },
+  ur: {
+    male: ['ur-PK-AsadNeural', 'ur-IN-SalmanNeural', 'ur-PK-AsadNeural'],
+    female: ['ur-PK-UzmaNeural', 'ur-IN-GulNeural', 'ur-PK-UzmaNeural'],
+    langTag: 'ur-PK',
+  },
+  bn: {
+    male: ['bn-IN-BashkarNeural', 'bn-BD-PradeepNeural', 'bn-IN-BashkarNeural'],
+    female: ['bn-IN-TanishaaNeural', 'bn-BD-NabanitaNeural', 'bn-IN-TanishaaNeural'],
+    langTag: 'bn-IN',
+  },
+  mai: {
+    male: ['hi-IN-MadhurNeural', 'en-IN-PrabhatNeural', 'hi-IN-MadhurNeural'],
+    female: ['hi-IN-SwaraNeural', 'en-IN-NeerjaNeural', 'hi-IN-SwaraNeural'],
+    langTag: 'hi-IN',
+  },
+  bho: {
+    male: ['hi-IN-MadhurNeural', 'en-IN-PrabhatNeural', 'hi-IN-MadhurNeural'],
+    female: ['hi-IN-SwaraNeural', 'en-IN-NeerjaNeural', 'hi-IN-SwaraNeural'],
+    langTag: 'hi-IN',
+  },
+  mr: {
+    male: ['mr-IN-ManoharNeural', 'hi-IN-MadhurNeural', 'mr-IN-ManoharNeural'],
+    female: ['mr-IN-AarohiNeural', 'hi-IN-SwaraNeural', 'mr-IN-AarohiNeural'],
+    langTag: 'mr-IN',
+  },
+  ta: {
+    male: ['ta-IN-ValluvarNeural', 'ta-IN-ValluvarNeural', 'en-IN-PrabhatNeural'],
+    female: ['ta-IN-PallaviNeural', 'ta-IN-PallaviNeural', 'en-IN-NeerjaNeural'],
+    langTag: 'ta-IN',
+  },
+  te: {
+    male: ['te-IN-MohanNeural', 'te-IN-MohanNeural', 'en-IN-PrabhatNeural'],
+    female: ['te-IN-ShrutiNeural', 'te-IN-ShrutiNeural', 'en-IN-NeerjaNeural'],
+    langTag: 'te-IN',
+  },
+  gu: {
+    male: ['gu-IN-NiranjanNeural', 'hi-IN-MadhurNeural', 'gu-IN-NiranjanNeural'],
+    female: ['gu-IN-DhwaniNeural', 'hi-IN-SwaraNeural', 'gu-IN-DhwaniNeural'],
+    langTag: 'gu-IN',
+  },
+  pa: {
+    male: ['hi-IN-MadhurNeural', 'en-IN-PrabhatNeural', 'hi-IN-MadhurNeural'],
+    female: ['hi-IN-SwaraNeural', 'en-IN-NeerjaNeural', 'hi-IN-SwaraNeural'],
+    langTag: 'pa-IN',
+  },
+  ne: {
+    male: ['ne-NP-SagarNeural', 'hi-IN-MadhurNeural', 'ne-NP-SagarNeural'],
+    female: ['ne-NP-HemkalaNeural', 'hi-IN-SwaraNeural', 'ne-NP-HemkalaNeural'],
+    langTag: 'ne-NP',
+  },
+  zh: {
+    male: ['zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'zh-CN-YunxiNeural'],
+    female: ['zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoyiNeural', 'zh-CN-XiaoxiaoNeural'],
+    langTag: 'zh-CN',
+  },
+  ja: {
+    male: ['ja-JP-KeitaNeural', 'ja-JP-KeitaNeural', 'ja-JP-KeitaNeural'],
+    female: ['ja-JP-NanamiNeural', 'ja-JP-NanamiNeural', 'ja-JP-NanamiNeural'],
+    langTag: 'ja-JP',
+  },
+};
+
 interface DialogueTurn {
   text: string;
   profileId: ProfileId;
@@ -122,26 +203,42 @@ function guessGenderFromName(name: string): 'M' | 'F' | null {
   return null;
 }
 
-// Layer 2: Hindi & English grammatical / lexical gender cue detection
+// Layer 2: Multi-language (Hindi, Maithili, Bhojpuri, Bengali, Urdu & English) grammatical / lexical gender detection
 function detectGrammarGenderFromText(text: string): 'M' | 'F' | null {
   const t = text.trim();
   const malePatterns = [
-    /रहा\s*(?:हूँ|हुँ|था|होगा)/,
+    // Hindi / Bhojpuri / Maithili
+    /रहा\s*(?:हूँ|हुँ|था|होगा|बानी|बा)/,
     /करूँगा|करूंगा|जाऊँगा|जाऊंगा|बताऊँगा|बताऊंगा|आऊँगा|आऊंगा|देखूँगा|देखूंगा|बोलूँगा|बोलूंगा/,
     /आया\s*(?:हूँ|हुँ|था)|गया\s*(?:हूँ|हुँ|था)|बैठा\s*(?:हूँ|हुँ|था)|खड़ा\s*(?:हूँ|हुँ|था)/,
-    /मेरा\s+(?:भाई|नाम|बाप|पिता)/,
+    /मेरा\s+(?:भाई|नाम|बाप|पिता)|हमर\s+(?:भाई|भाय|बाबू|पिताजी|बेटा|मरद)/,
     /मैं\s+करता|मैं\s+जानता|मैं\s+समझता|मैं\s+सोचता/,
+    /हम\s+(?:करैत\s+छी|जा\s+रहल\s+छी|जा\s+रहल\s+बानी|करतानी|कइनी\s+ह|भाइयो)/,
+    /बाबूजी|भैया|हमारी\s+पत्नी|हमर\s+कनियाँ|हमर\s+मेहरारू/,
+    // Urdu
+    /رہا\s*(?:ہوں|تھا|ہوگا)|کروں\s*گا|جاؤں\s*گا|آیا\s*ہوں|میرا\s+(?:بھائی|والد)|میں\s+کرتا/,
+    // Bengali
+    /আমার\s+(?:স্ত্রী|ভাই|বাবা|ছেলে)|আমি\s+(?:একজন\s+পুরুষ|ছেলে)|দাদা/,
+    // English & explicit markers
     /\[(?:M|Male)\b[^\]]*\]/i,
-    /\b(?:he says|my wife|i am a man|i'm a man|as a father|as your brother|husband)\b/i,
+    /\b(?:he says|my wife|i am a man|i'm a man|as a father|as your brother|husband|i'm your brother)\b/i,
   ];
   const femalePatterns = [
-    /रही\s*(?:हूँ|हुँ|थी|होगी)/,
+    // Hindi / Bhojpuri / Maithili
+    /रही\s*(?:हूँ|हुँ|थी|होगी|बानी|बा)/,
     /करूँगी|करूंगी|जाऊँगी|जाऊंगी|बताऊँगी|बताऊंगी|आऊँगी|आऊंगी|देखूँगी|देखूंगी|बोलूँगी|बोलूंगी/,
     /आई\s*(?:हूँ|हुँ|थी)|गई\s*(?:हूँ|हुँ|थी)|बैठी\s*(?:हूँ|हुँ|थी)|खड़ी\s*(?:हूँ|हुँ|थी)/,
-    /मेरी\s+(?:बहन|माँ)/,
+    /मेरी\s+(?:बहन|माँ)|हमर\s+(?:बहीन|बहिन|महतारी|बेटी|माई)/,
     /मैं\s+करती|मैं\s+जानती|मैं\s+समझती|मैं\s+सोचती/,
+    /हम\s+(?:जा\s+रहल\s+बानी|करती\s+बानी|कइली\s+ह|बनी)/,
+    /मेरे\s+पति|हमर\s+पति|हमर\s+सइयाँ|हमर\s+बलम/,
+    // Urdu
+    /رہی\s*(?:ہوں|تھی|ہوگی)|کروں\s*گی|جاؤں\s*گی|آئی\s*ہوں|میری\s+(?:بہن|ماں)|میں\s+کرتی/,
+    // Bengali
+    /আমার\s+(?:স্বামী|বোন|মা|মেয়ে)|আমি\s+(?:একজন\s+নারী|মেয়ে)|দিদি/,
+    // English & explicit markers
     /\[(?:F|Female)\b[^\]]*\]/i,
-    /\b(?:she says|my husband|i am a woman|i'm a woman|as a mother|as your sister|wife)\b/i,
+    /\b(?:she says|my husband|i am a woman|i'm a woman|as a mother|as your sister|wife|i'm your sister)\b/i,
   ];
 
   const isMale = malePatterns.some((re) => re.test(t));
@@ -268,9 +365,34 @@ export class SubtitleVoiceEngine {
   private isExternalAudioMode = false;
   private videoPlaybackRate = 1;
   private duckHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeLangCode = 'hi';
+  private activeLangTag = 'hi-IN';
 
   public isEnabled(): boolean {
     return this.enabled;
+  }
+
+  public setLanguage(langCode: string, langTag?: string): void {
+    const cleanCode = (langCode || 'hi').toLowerCase().split('-')[0];
+    const bank = LANGUAGE_VOICE_BANKS[cleanCode] || LANGUAGE_VOICE_BANKS.hi;
+    const nextTag = langTag || bank.langTag || 'hi-IN';
+    if (this.activeLangCode !== cleanCode || this.activeLangTag !== nextTag) {
+      this.activeLangCode = cleanCode;
+      this.activeLangTag = nextTag;
+      this.cache.clear();
+      this.queuedCueKeys.clear();
+      this.turnQueue = [];
+    }
+  }
+
+  private getVoiceForProfile(profileId: ProfileId): string {
+    const bank = LANGUAGE_VOICE_BANKS[this.activeLangCode] || LANGUAGE_VOICE_BANKS.hi;
+    if (profileId === 'Male_Lead_1') return bank.male[0];
+    if (profileId === 'Male_Char_2') return bank.male[1];
+    if (profileId === 'Male_Char_3') return bank.male[2];
+    if (profileId === 'Female_Lead_1') return bank.female[0];
+    if (profileId === 'Female_Char_2') return bank.female[1];
+    return bank.female[2];
   }
 
   public setExternalAudioMode(active: boolean): void {
@@ -531,8 +653,9 @@ export class SubtitleVoiceEngine {
       this.midSideCancellerGain.gain.setTargetAtTime(1.0, now, 0.05);
       this.videoGainNode.gain.setTargetAtTime(targetGain, now, 0.07);
     } else {
+      // Non-CORS fallback: mute original dialogue completely during active dub so zero foreign words bleed
       try {
-        this.attachedVideo.volume = speakingNow ? 0.09 : 0.22;
+        this.attachedVideo.volume = speakingNow ? 0.0 : 0.22;
       } catch {}
     }
   }
@@ -789,7 +912,7 @@ export class SubtitleVoiceEngine {
   }
 
   private getCacheKey(cueIndex: number, turnIdx: number, turn: DialogueTurn): string {
-    return `${cueIndex}:${turnIdx}:${turn.profileId}:${turn.text}`;
+    return `${this.activeLangCode}:${cueIndex}:${turnIdx}:${turn.profileId}:${turn.text}`;
   }
 
   // Pre-fetch & decode next 8 cues ahead smoothly so every line starts at 0ms delay
@@ -810,13 +933,15 @@ export class SubtitleVoiceEngine {
   private async fetchAndDecodeTurn(turn: DialogueTurn): Promise<CachedTurnAudio> {
     const profile = CHARACTER_PROFILES[turn.profileId];
     const effectivePitch = profile.basePitch * turn.pitchMult;
+    const selectedVoice = this.getVoiceForProfile(turn.profileId);
     try {
       const resp = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: turn.text,
-          voice: profile.voice,
+          voice: selectedVoice,
+          lang: this.activeLangTag,
           rate: profile.baseRate * turn.rateMult,
           pitch: effectivePitch,
         }),
@@ -978,19 +1103,21 @@ export class SubtitleVoiceEngine {
         const profile = CHARACTER_PROFILES[turn.profileId];
         const utter = new SpeechSynthesisUtterance(turn.text);
         const voices = window.speechSynthesis.getVoices();
+        const langPrefix = this.activeLangCode === 'mai' || this.activeLangCode === 'bho' ? 'hi' : this.activeLangCode;
         const preferred =
           voices.find(
             (v) =>
-              v.lang.toLowerCase().startsWith('hi') &&
+              v.lang.toLowerCase().startsWith(langPrefix) &&
               (profile.gender === 'F'
-                ? /swara|female|kalpana|heera|woman/i.test(v.name)
-                : /madhur|male|hemant|man/i.test(v.name))
+                ? /swara|female|kalpana|heera|woman|aria|jenny|sunhi|uzma|tanishaa|nanami|xiaoxiao/i.test(v.name)
+                : /madhur|male|hemant|man|prabhat|andrew|guy|injoon|asad|bashkar|keita|yunxi/i.test(v.name))
           ) ||
+          voices.find((v) => v.lang.toLowerCase().startsWith(langPrefix)) ||
           voices.find((v) => v.lang.toLowerCase().startsWith('hi')) ||
           voices.find((v) => v.lang.toLowerCase().startsWith('en-in')) ||
           voices[0];
         if (preferred) utter.voice = preferred;
-        utter.lang = 'hi-IN';
+        utter.lang = this.activeLangTag || 'hi-IN';
         utter.rate = Math.min(1.35, Math.max(0.95, profile.baseRate * turn.rateMult * this.videoPlaybackRate));
         utter.pitch = Math.min(1.4, Math.max(0.72, profile.basePitch * turn.pitchMult));
         utter.volume = Math.min(1, turn.volumeMult);

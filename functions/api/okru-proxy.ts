@@ -20,6 +20,16 @@ const ALLOWED_HOST_SUFFIXES = [
   'userapi.com',
   'vk.me',
   'archive.org',
+  'catbox.moe',
+  'huggingface.co',
+  'hf.co',
+  'cdn-lfs.huggingface.co',
+  'cdn-lfs-us-1.huggingface.co',
+  'raw.githubusercontent.com',
+  'github.com',
+  'objects.githubusercontent.com',
+  'drive.google.com',
+  'googleusercontent.com',
 ];
 
 function isAllowedMediaHost(hostname: string): boolean {

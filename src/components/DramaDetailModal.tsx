@@ -125,6 +125,11 @@ interface DramaDetailModalProps {
   onSubscribeDubAlert?: (dramaTitle: string, audio: string) => void;
   customLogoUrl?: string;
   onReportIssue?: () => void;
+  vipProfileDefaults?: {
+    preferredSubLang?: string;
+    autoPlayNext?: boolean;
+    dataSaverDefault?: boolean;
+  };
 }
 
 export interface VideoMirrorOption {
@@ -138,11 +143,42 @@ export function resolveVideoPlayerSource(rawUrl: string, mirrorIndex = 0): Resol
   return resolveUniversalVideoSource(rawUrl, mirrorIndex);
 }
 
-function getStreamLinkForTrack(ep: EpisodeItem, track: AudioType): string | undefined {
-  if (track === 'Hindi Dubbed') return ep.streamLink;
-  if (track === 'Hindi Fan Dubbed' || track === 'Fan Dubbed') return ep.hindiFanDubStreamLink;
-  if (track === 'Original / Eng Sub') return ep.engSubStreamLink;
-  return undefined;
+function getStreamLinkForTrack(ep: EpisodeItem, track: AudioType, dramaObj?: DramaItem): string | undefined {
+  const direct =
+    track === 'Hindi Dubbed'
+      ? ep.streamLink
+      : track === 'Hindi Fan Dubbed' || track === 'Fan Dubbed'
+      ? ep.hindiFanDubStreamLink
+      : track === 'Original / Eng Sub'
+      ? ep.engSubStreamLink
+      : undefined;
+  if (direct && /^https?:\/\//i.test(direct)) return direct;
+
+  if (!dramaObj) return direct;
+
+  const epNum = extractNumericEp(ep.episodeNumber);
+  const customField =
+    track === 'Hindi Dubbed'
+      ? 'hindiCustomAudioLink'
+      : track === 'Hindi Fan Dubbed' || track === 'Fan Dubbed'
+      ? 'fanDubCustomAudioLink'
+      : 'origCustomAudioLink';
+
+  const customAudio =
+    ep[customField] ||
+    dramaObj.episodes.find(
+      (candidate) => extractNumericEp(candidate.episodeNumber) === epNum && Boolean(candidate[customField])
+    )?.[customField];
+
+  if (customAudio && /^https?:\/\//i.test(customAudio)) {
+    const sharedVideo = dramaObj.episodes
+      .filter((candidate) => extractNumericEp(candidate.episodeNumber) === epNum)
+      .map((candidate) => candidate.engSubStreamLink || candidate.streamLink || candidate.hindiFanDubStreamLink)
+      .find((url) => Boolean(url && /^https?:\/\//i.test(url)));
+    return sharedVideo || customAudio;
+  }
+
+  return direct;
 }
 
 function extractNumericEp(episodeNumber: number | string): number {
@@ -187,7 +223,7 @@ const QUALITY_OPTIONS = [
 type AudioEqMode = 'normal' | 'dialogue' | 'bass3d' | 'night';
 type VideoFitMode = 'contain' | 'cover' | 'cinema219' | 'stretch';
 type StudioTab = 'audio' | 'screen' | 'vault' | 'party';
-type SleepTimerMode = 'off' | '30m' | '60m' | 'end_of_ep';
+type SleepTimerMode = 'off' | '15m' | '30m' | '60m' | 'end_of_ep';
 
 export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   drama,
@@ -211,6 +247,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   isTopOne = false,
   customLogoUrl,
   onReportIssue,
+  vipProfileDefaults,
 }) => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -309,7 +346,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const seenEpNums = new Set<number>();
 
     matched.forEach((ep) => {
-      const sUrl = getStreamLinkForTrack(ep, track);
+      const sUrl = getStreamLinkForTrack(ep, track, drama);
       if (sUrl && /^https?:\/\//i.test(sUrl)) {
         const epNum = extractNumericEp(ep.episodeNumber);
         if (!seenEpNums.has(epNum)) {
@@ -325,6 +362,34 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             episodeKey: ep.episodeNumber,
           });
         }
+      }
+    });
+
+    // Ensure episodes whose custom audio lives on another track row also become streamable on this track
+    const customField =
+      track === 'Hindi Dubbed'
+        ? 'hindiCustomAudioLink'
+        : track === 'Hindi Fan Dubbed' || track === 'Fan Dubbed'
+        ? 'fanDubCustomAudioLink'
+        : 'origCustomAudioLink';
+    drama.episodes.forEach((ep) => {
+      const customAudio = ep[customField];
+      if (!customAudio || !/^https?:\/\//i.test(customAudio)) return;
+      const epNum = extractNumericEp(ep.episodeNumber);
+      if (seenEpNums.has(epNum)) return;
+      const resolvedUrl = getStreamLinkForTrack(ep, track, drama) || customAudio;
+      if (resolvedUrl && /^https?:\/\//i.test(resolvedUrl)) {
+        seenEpNums.add(epNum);
+        list.push({
+          epNum,
+          label:
+            typeof ep.episodeNumber === 'number' || /^\d+/.test(String(ep.episodeNumber))
+              ? `Ep ${ep.episodeNumber}`
+              : String(ep.episodeNumber),
+          streamUrl: resolvedUrl,
+          telegramUrl: matched.find((m) => extractNumericEp(m.episodeNumber) === epNum)?.telegramUrl,
+          episodeKey: ep.episodeNumber,
+        });
       }
     });
 
@@ -511,6 +576,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     provider?: 'archive' | 'okru' | 'vk';
     errorMsg?: string;
   }>({ key: '', status: 'idle', src: '' });
+  const [currentVideoTime, setCurrentVideoTime] = useState<number>(0);
+  const [videoDuration, setVideoDuration] = useState<number>(0);
+  const [bufferedEnd, setBufferedEnd] = useState<number>(0);
+  const [activeHudPopover, setActiveHudPopover] = useState<'none' | 'audio' | 'quality' | 'speed' | 'sleep'>('none');
+  const [hoverSeekInfo, setHoverSeekInfo] = useState<{ pct: number; time: number } | null>(null);
+  const audioProxyRetriedRef = useRef<boolean>(false);
+  const autoNextCancelledForEpRef = useRef<boolean>(false);
 
   useEffect(() => {
     const checkViewport = () => {
@@ -558,6 +630,13 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setForceBuiltinAudio(false);
     setIsAudioCorsFallback(false);
     setMediaErrorState(null);
+    setCurrentVideoTime(0);
+    setVideoDuration(0);
+    setBufferedEnd(0);
+    setActiveHudPopover('none');
+    setHoverSeekInfo(null);
+    audioProxyRetriedRef.current = false;
+    autoNextCancelledForEpRef.current = false;
     setLoopPointA(null);
     setLoopPointB(null);
     setAutoNextCountdown(null);
@@ -583,6 +662,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIframeControlNotice(false);
     setForceBuiltinAudio(false);
     setIsExternalAudioConfirmedPlaying(false);
+    audioProxyRetriedRef.current = false;
   }, [activeAudio]);
 
   // Synchronize activeAudio & reset/auto-open player from deep link when drama or initialEpisode changes
@@ -591,7 +671,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsLightsOff(false);
     setIsTheaterMode(false);
     setPlaybackSpeed(1);
-    setSelectedQuality('1080p FHD (Ultra)');
+    setSelectedQuality(vipProfileDefaults?.dataSaverDefault ? '480p Saver' : '1080p FHD (Ultra)');
     setStreamReloadNonce(0);
     setHudToast(null);
     setIframeControlNotice(false);
@@ -601,6 +681,12 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setHasPlaybackStarted(false);
     setIsMidStreamBuffering(false);
     setIsCaptionMenuOpen(false);
+    setActiveHudPopover('none');
+    setCurrentVideoTime(0);
+    setVideoDuration(0);
+    setBufferedEnd(0);
+    audioProxyRetriedRef.current = false;
+    autoNextCancelledForEpRef.current = false;
     isCinematicIntroPlayingRef.current = false;
     setIsCinematicIntroPlaying(false);
     if (introAudioRef.current) {
@@ -616,7 +702,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setLoopPointB(null);
     setAutoNextCountdown(null);
     setWatchPartyRoom(initialPartyRoom || null);
-    setActiveSubLang('off');
+    setActiveSubLang(vipProfileDefaults?.preferredSubLang || 'off');
     setParsedSubCues([]);
     setActiveCue(null);
     activeCueRef.current = null;
@@ -970,7 +1056,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       drama.episodes.find(
         (ep) => extractNumericEp(ep.episodeNumber) === activeEpNumForLookup && Boolean(ep[lookupField])
       )?.[lookupField];
-    return raw ? sanitizeExternalAudioUrl(raw) : undefined;
+    const sanitized = raw ? sanitizeExternalAudioUrl(raw) : undefined;
+    if (!sanitized) return undefined;
+    const primarySanitized = currentPlayingStream?.streamUrl
+      ? sanitizeExternalAudioUrl(currentPlayingStream.streamUrl)
+      : undefined;
+    if (
+      primarySanitized &&
+      (sanitized === primarySanitized || raw?.trim() === currentPlayingStream?.streamUrl?.trim())
+    ) {
+      return undefined;
+    }
+    return sanitized;
   })();
 
   const resolvedPlayerSource =
@@ -1266,12 +1363,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsExternalAudioConfirmedPlaying(false);
   }, [activeStreamEp, activeAudio, trackCustomAudio, forceBuiltinAudio, streamReloadNonce]);
 
-  // Silent fallback timeout: if external audio hangs or fails without playing, fall back to built-in video sound silently
+  // Silent fallback timeout: allow enough time for proxy retries, then fall back to built-in video sound silently
   useEffect(() => {
     if (!isExternalAudioActive || isExternalAudioConfirmedPlaying || !isStreamUnlocked || !effectiveVideoSrc) {
       return;
     }
-    const timeoutMs = isExtractorAudioUrl(trackCustomAudio) ? 6500 : 3500;
+    const timeoutMs =
+      isExtractorAudioUrl(trackCustomAudio) || activeExternalAudioUrl.includes('/api/okru-proxy')
+        ? 7500
+        : 5500;
     const timer = window.setTimeout(() => {
       const aud = audioRef.current;
       if (!aud || aud.error || aud.paused || aud.readyState < 2) {
@@ -1344,6 +1444,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const aud = audioRef.current;
     if (!vid) return;
 
+    // Strictly hold both streams paused at 0:00 while the 8-second Cinema Intro plays
+    if (isCinematicIntroPlayingRef.current) {
+      if (!vid.paused) vid.pause();
+      if (aud && !aud.paused) aud.pause();
+      if (!pendingRestoreTimeRef.current && vid.currentTime > 0.05) {
+        try {
+          vid.currentTime = 0;
+        } catch {}
+      }
+      return;
+    }
+
     if (!isExternalAudioActive || !aud) {
       vid.muted = isAudioMuted;
       if (!isSubtitleAudioOn) {
@@ -1368,7 +1480,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
     const drift = Math.abs(aud.currentTime - targetTime);
-    if (Number.isFinite(targetTime) && (immediateSeek ? drift > 0.05 : drift > 0.25)) {
+    if (Number.isFinite(targetTime) && (immediateSeek ? drift > 0.05 : drift > 0.22)) {
       try {
         aud.currentTime = targetTime;
       } catch {
@@ -1683,11 +1795,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         }
       }
       if (aud && vid) {
+        if (isCinematicIntroPlayingRef.current) {
+          if (!vid.paused) vid.pause();
+          if (!aud.paused) aud.pause();
+          return;
+        }
         aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
         aud.muted = isAudioMuted;
         aud.playbackRate = vid.playbackRate || playbackSpeed;
         const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
-        if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.25) {
+        if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.22) {
           try {
             aud.currentTime = targetTime;
           } catch {
@@ -1796,22 +1913,8 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const syncSubtitleAndVoiceOnTime = (tNow: number, isSeekEvent: boolean, isPaused: boolean) => {
     const { matchedIdx, matchedCue, upcomingIdx } = getSubtitleIndicesAtTime(tNow);
 
-    // Subtle in-caption gap watermark whenever captions are ON and dialogue gap >= 1.5s
-    if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
-      if (!matchedCue) {
-        const prevCue = [...parsedSubCues].reverse().find((c) => c.end < tNow) || null;
-        const nextCue = upcomingIdx >= 0 ? parsedSubCues[upcomingIdx] : null;
-        const gapFromPrev = prevCue ? tNow - prevCue.end : tNow;
-        const gapToNext = nextCue ? nextCue.start - tNow : 99;
-        const totalGapWidth = (prevCue && nextCue ? nextCue.start - prevCue.end : 99);
-        const showGapBrand = totalGapWidth >= 1.5 && gapFromPrev >= 0.2 && gapToNext >= 0.2;
-        setIsInCaptionGapWatermark((prev) => (prev === showGapBrand ? prev : showGapBrand));
-      } else {
-        setIsInCaptionGapWatermark((prev) => (prev ? false : prev));
-      }
-    } else {
-      setIsInCaptionGapWatermark((prev) => (prev ? false : prev));
-    }
+    // Zero caption-gap flashing brand watermark
+    setIsInCaptionGapWatermark((prev) => (prev ? false : prev));
 
     if ((activeCueRef.current?.id ?? null) !== (matchedCue?.id ?? null)) {
       activeCueRef.current = matchedCue;
@@ -1996,10 +2099,15 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     return () => window.clearTimeout(timer);
   }, [autoNextCountdown]);
 
-  // Sleep Timer (30m / 60m) fade & pause
+  // Sleep Timer (15m / 30m / 60m) fade & pause
   useEffect(() => {
-    if (sleepTimerMode !== '30m' && sleepTimerMode !== '60m') return;
-    const ms = sleepTimerMode === '30m' ? 30 * 60 * 1000 : 60 * 60 * 1000;
+    if (sleepTimerMode !== '15m' && sleepTimerMode !== '30m' && sleepTimerMode !== '60m') return;
+    const ms =
+      sleepTimerMode === '15m'
+        ? 15 * 60 * 1000
+        : sleepTimerMode === '30m'
+        ? 30 * 60 * 1000
+        : 60 * 60 * 1000;
     const timer = window.setTimeout(() => {
       const vid = videoRef.current;
       const aud = audioRef.current;
@@ -2117,12 +2225,48 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     isCinematicIntroPlayingRef.current = false;
     setIsCinematicIntroPlaying(false);
     const vid = videoRef.current;
+    const aud = audioRef.current;
     if (vid) {
-      if (!shouldMuteVideoForExternalAudio) {
-        vid.muted = false;
-        vid.volume = 1.0;
+      const pending = pendingRestoreTimeRef.current;
+      if (pending) {
+        try {
+          vid.currentTime = pending.time;
+        } catch {}
+        pendingRestoreTimeRef.current = null;
+      } else if (vid.currentTime > 0.05) {
+        try {
+          vid.currentTime = 0;
+        } catch {}
       }
-      vid.play().catch(() => {});
+
+      if (isExternalAudioActive && aud && !aud.error && !forceBuiltinAudio) {
+        vid.muted = true;
+        vid.volume = 0;
+        const targetAudioTime = Math.max(0, vid.currentTime + audioSyncOffset);
+        try {
+          aud.currentTime = targetAudioTime;
+        } catch {}
+        aud.playbackRate = vid.playbackRate || playbackSpeed;
+        aud.muted = isAudioMuted;
+        aud.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        vid.play().catch(() => {});
+        aud
+          .play()
+          .then(() => {
+            setIsExternalAudioConfirmedPlaying(true);
+            if (videoRef.current) {
+              videoRef.current.muted = true;
+              videoRef.current.volume = 0;
+            }
+          })
+          .catch(() => {});
+      } else {
+        vid.muted = isAudioMuted;
+        if (!isSubtitleAudioOn) {
+          vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+        }
+        vid.play().catch(() => {});
+      }
     }
   };
 
@@ -2418,25 +2562,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const stampCollectorOverlay = () => {
-      const grad = ctx.createLinearGradient(0, canvas.height - 110, 0, canvas.height);
-      grad.addColorStop(0, 'rgba(0,0,0,0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.85)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, canvas.height - 110, canvas.width, 110);
-
-      ctx.fillStyle = '#e50914';
-      ctx.fillRect(28, canvas.height - 62, 130, 34);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 17px sans-serif';
-      ctx.fillText('ASIAFLIX PRIME', 38, canvas.height - 39);
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 24px sans-serif';
-      const labelText = `${drama.title} • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp ?? 1}`} [${formatTimeSeconds(t)}]`;
-      ctx.fillText(labelText.slice(0, 72), 174, canvas.height - 37);
-    };
-
     const triggerDownload = (dataUrl: string) => {
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -2447,39 +2572,88 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       showHudFeedback('📸 HD Scene Snapshot Saved!');
     };
 
+    const stampCollectorOverlayAndDownload = (drawBaseFrame: () => void) => {
+      drawBaseFrame();
+      const grad = ctx.createLinearGradient(0, canvas.height - 115, 0, canvas.height);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.88)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, canvas.height - 115, canvas.width, 115);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 24px sans-serif';
+      const labelText = `${drama.title} • ${isMovie ? 'Full Movie' : `Ep ${activeStreamEp ?? 1}`} [${formatTimeSeconds(t)}]`;
+      ctx.fillText(labelText.slice(0, 68), 32, canvas.height - 36);
+
+      // Stamp transparent AsiaFlix Prime logo cleanly in bottom-right & top-right
+      const logoImg = new Image();
+      logoImg.crossOrigin = 'anonymous';
+      logoImg.onload = () => {
+        try {
+          const targetH = 68;
+          const aspect = (logoImg.naturalWidth || 160) / Math.max(1, logoImg.naturalHeight || 80);
+          const targetW = targetH * aspect;
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,42,133,0.75)';
+          ctx.shadowBlur = 16;
+          ctx.drawImage(logoImg, canvas.width - targetW - 28, canvas.height - targetH - 18, targetW, targetH);
+          ctx.restore();
+        } catch {
+          // ignore logo stamp issues
+        }
+        try {
+          triggerDownload(canvas.toDataURL('image/png'));
+        } catch {
+          showHudFeedback('⚠️ Snapshot blocked by video CORS');
+        }
+      };
+      logoImg.onerror = () => {
+        try {
+          triggerDownload(canvas.toDataURL('image/png'));
+        } catch {
+          showHudFeedback('⚠️ Snapshot blocked by video CORS');
+        }
+      };
+      logoImg.src = transparentLogoUrl || OFFICIAL_LOGO_URL;
+    };
+
+    let drewVideo = false;
     try {
       if (vid && vid.videoWidth > 0 && resolvedPlayerSource?.type === 'video') {
         ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-        stampCollectorOverlay();
-        const url = canvas.toDataURL('image/png');
-        triggerDownload(url);
-        return;
+        // Probe taint before async logo load
+        ctx.getImageData(0, 0, 1, 1);
+        drewVideo = true;
       }
     } catch {
-      // Tainted cross-origin video canvas -> fallback cleanly to stylized Collector Card PNG
+      drewVideo = false;
     }
 
-    const bgGrad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    bgGrad.addColorStop(0, '#0a0b12');
-    bgGrad.addColorStop(0.5, '#250912');
-    bgGrad.addColorStop(1, '#08090f');
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (drewVideo) {
+      stampCollectorOverlayAndDownload(() => {});
+      return;
+    }
 
-    ctx.fillStyle = '#f59e0b';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('✨ ASIAFLIX PRIME VIP SCENE COLLECTOR CARD', 60, 120);
+    stampCollectorOverlayAndDownload(() => {
+      const bgGrad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      bgGrad.addColorStop(0, '#0a0b12');
+      bgGrad.addColorStop(0.5, '#250912');
+      bgGrad.addColorStop(1, '#08090f');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 50px sans-serif';
-    ctx.fillText(drama.title.slice(0, 38), 60, 220);
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('✨ ASIAFLIX PRIME VIP SCENE COLLECTOR CARD', 60, 120);
 
-    ctx.fillStyle = '#e4e4e7';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText(`${isMovie ? 'Full Movie' : `Episode ${activeStreamEp ?? 1}`}  •  Timestamp ${formatTimeSeconds(t)}`, 60, 290);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 50px sans-serif';
+      ctx.fillText(drama.title.slice(0, 38), 60, 220);
 
-    stampCollectorOverlay();
-    triggerDownload(canvas.toDataURL('image/png'));
+      ctx.fillStyle = '#e4e4e7';
+      ctx.font = 'bold 30px sans-serif';
+      ctx.fillText(`${isMovie ? 'Full Movie' : `Episode ${activeStreamEp ?? 1}`}  •  Timestamp ${formatTimeSeconds(t)}`, 60, 290);
+    });
   };
 
   const handleToggleABLoop = () => {
@@ -2659,7 +2833,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     episodesForActiveAudio.length > 1 ||
     episodesForActiveAudio.some(
       (ep) =>
-        Boolean(getStreamLinkForTrack(ep, activeAudio)?.startsWith('http')) || typeof ep.episodeNumber === 'number'
+        Boolean(getStreamLinkForTrack(ep, activeAudio, drama)?.startsWith('http')) || typeof ep.episodeNumber === 'number'
     );
 
   const isPlayerActive = activeStreamEp !== null && Boolean(currentPlayingStream);
@@ -2834,20 +3008,22 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 seekRipple.side === 'left' ? 'left-6 sm:left-10' : 'right-6 sm:right-10'
               }`}
             >
-              {seekRipple.side === 'left' ? '↺ 10s' : '10s ↻'}
+              {seekRipple.side === 'left' ? '⏪ -10s' : '⏩ +10s'}
             </div>
           )}
 
-          {/* Pure White Cinema Subtitles + In-Caption Silent-Gap Brand Watermark */}
-          {activeSubLang !== 'off' && !isMiniPlayer && (activeCue?.text || isInCaptionGapWatermark) ? (
+          {/* Pure White Cinema Subtitles (Zero Caption-Gap Flashing Watermark) */}
+          {activeSubLang !== 'off' && !isMiniPlayer && activeCue?.text ? (
             <div
               className={`pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center justify-center px-4 transition-all duration-200 ${
-                isPlayerControlsActive ? 'bottom-[11%]' : 'bottom-[8.5%]'
+                (isPlayerControlsActive || !isVideoPlaying) && resolvedPlayerSource?.type === 'video'
+                  ? 'bottom-[17%]'
+                  : 'bottom-[8.5%]'
               }`}
             >
               <div
                 style={
-                  activeCue?.text && shouldBlurSubArea
+                  shouldBlurSubArea
                     ? {
                         backdropFilter: 'blur(22px)',
                         WebkitBackdropFilter: 'blur(22px)',
@@ -2862,52 +3038,37 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 }
                 className="inline-flex flex-col items-center justify-center text-center max-w-[92%] sm:max-w-[84%] transition-all duration-200"
               >
-                {activeCue?.text ? (
-                  <span
-                    style={{
-                      fontSize:
-                        subFontSize === 'sm'
-                          ? 'clamp(1rem, 1.9vw, 1.65rem)'
-                          : subFontSize === 'lg'
-                          ? 'clamp(1.38rem, 2.9vw, 2.55rem)'
-                          : 'clamp(1.2rem, 2.4vw, 2.15rem)',
-                      fontWeight: 800,
-                      lineHeight: 1.38,
-                      WebkitTextStroke: '1.2px rgba(0, 0, 0, 0.98)',
-                      paintOrder: 'stroke fill',
-                      textShadow: '0 2px 6px rgba(0, 0, 0, 0.98), 0 0 12px rgba(0, 0, 0, 0.85)',
-                    }}
-                    className={`whitespace-pre-line tracking-tight ${
-                      subColor === 'yellow'
-                        ? 'text-[#FFEA3B]'
-                        : subColor === 'cyan'
-                        ? 'text-[#00F2FE]'
-                        : subColor === 'pink'
-                        ? 'text-[#FF2A85]'
-                        : 'text-[#FFFFFF]'
-                    }`}
-                  >
-                    {captionShowBrandPrefix && (
-                      <span className="text-white/75 font-bold text-[0.72em] tracking-wide mr-1.5">
-                        AsiaFlix Prime •
-                      </span>
-                    )}
-                    {activeCue.text}
-                  </span>
-                ) : (
-                  <span
-                    style={{
-                      fontSize: 'clamp(0.95rem, 1.8vw, 1.45rem)',
-                      fontWeight: 800,
-                      WebkitTextStroke: '1px rgba(0, 0, 0, 0.96)',
-                      paintOrder: 'stroke fill',
-                      textShadow: '0 2px 6px rgba(0, 0, 0, 0.98), 0 0 12px rgba(0, 0, 0, 0.85)',
-                    }}
-                    className="text-white/90 tracking-wider uppercase animate-fade-in"
-                  >
-                    ⚡ AsiaFlix Prime
-                  </span>
-                )}
+                <span
+                  style={{
+                    fontSize:
+                      subFontSize === 'sm'
+                        ? 'clamp(1rem, 1.9vw, 1.65rem)'
+                        : subFontSize === 'lg'
+                        ? 'clamp(1.38rem, 2.9vw, 2.55rem)'
+                        : 'clamp(1.2rem, 2.4vw, 2.15rem)',
+                    fontWeight: 800,
+                    lineHeight: 1.38,
+                    WebkitTextStroke: '1.2px rgba(0, 0, 0, 0.98)',
+                    paintOrder: 'stroke fill',
+                    textShadow: '0 2px 6px rgba(0, 0, 0, 0.98), 0 0 12px rgba(0, 0, 0, 0.85)',
+                  }}
+                  className={`whitespace-pre-line tracking-tight ${
+                    subColor === 'yellow'
+                      ? 'text-[#FFEA3B]'
+                      : subColor === 'cyan'
+                      ? 'text-[#00F2FE]'
+                      : subColor === 'pink'
+                      ? 'text-[#FF2A85]'
+                      : 'text-[#FFFFFF]'
+                  }`}
+                >
+                  {captionShowBrandPrefix && (
+                    <span className="text-white/75 font-bold text-[0.72em] tracking-wide mr-1.5">
+                      AsiaFlix Prime •
+                    </span>
+                  )}
+                  {activeCue.text}
+                </span>
               </div>
             </div>
           ) : null}
@@ -2934,26 +3095,36 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           )}
 
-          {/* 5-Second Auto-Next Countdown Overlay */}
+          {/* Netflix-Style Auto-Next Episode Countdown Card (Last 8 Seconds / Episode End) */}
           {autoNextCountdown !== null && nextStreamItem && (
-            <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center gap-4">
-              <div className="px-4 py-1 rounded-full bg-[#e50914]/25 border border-[#e50914]/50 text-xs font-black text-red-200 uppercase tracking-wider">
-                Up Next Automatically
+            <div className="absolute bottom-16 right-3 sm:right-5 z-[42] max-w-[300px] sm:max-w-[340px] rounded-2xl bg-[#0a0c16]/90 backdrop-blur-xl border border-[#e50914]/55 shadow-[0_12px_40px_rgba(0,0,0,0.92)] p-3.5 sm:p-4 space-y-2.5 animate-fade-in">
+              <div className="flex items-center justify-between gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-[#e50914]/25 border border-[#e50914]/50 text-[10px] font-black text-red-200 uppercase tracking-wider">
+                  Up Next Automatically
+                </span>
+                <span className="text-xs font-black text-amber-300 tabular-nums">
+                  {autoNextCountdown}s
+                </span>
               </div>
-              <h4 className="text-lg sm:text-2xl font-black text-white">
+              <h4 className="text-xs sm:text-sm font-black text-white leading-snug">
                 ⏭ Playing Episode {nextStreamItem.epNum} in {autoNextCountdown}s...
               </h4>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => setAutoNextCountdown(0)}
-                  className="px-5 py-2.5 rounded-xl bg-[#e50914] hover:bg-[#f6121d] text-white text-xs sm:text-sm font-black shadow-[0_0_20px_rgba(229,9,20,0.5)] cursor-pointer flex items-center gap-2"
+                  className="flex-1 px-3.5 py-2 rounded-xl bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-black shadow-[0_0_16px_rgba(229,9,20,0.5)] cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <Play className="w-4 h-4 fill-white" />
+                  <Play className="w-3.5 h-3.5 fill-white" />
                   <span>Play Now</span>
                 </button>
                 <button
-                  onClick={() => setAutoNextCountdown(null)}
-                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs sm:text-sm font-black border border-white/15 cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    autoNextCancelledForEpRef.current = true;
+                    setAutoNextCountdown(null);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs font-black border border-white/15 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -2992,9 +3163,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 <>
                   <div
                     onClick={() => {
+                      bumpPlayerControlsActivity();
                       const now = Date.now();
                       if (now - lastTapLeftRef.current <= 320) {
-                        handleSeek(-10, '↺ 10s');
+                        handleSeek(-10, '⏪ -10s');
                         lastTapLeftRef.current = 0;
                       } else {
                         lastTapLeftRef.current = now;
@@ -3005,9 +3177,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   />
                   <div
                     onClick={() => {
+                      bumpPlayerControlsActivity();
                       const now = Date.now();
                       if (now - lastTapRightRef.current <= 320) {
-                        handleSeek(10, '10s ↻');
+                        handleSeek(10, '⏩ +10s');
                         lastTapRightRef.current = 0;
                       } else {
                         lastTapRightRef.current = now;
@@ -3057,6 +3230,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 onLoadedMetadata={(e) => {
                   const vid = e.currentTarget;
                   vid.playbackRate = playbackSpeed;
+                  if (Number.isFinite(vid.duration) && vid.duration > 0) {
+                    setVideoDuration(vid.duration);
+                  }
                   voiceEngineRef.current?.attachVideo(vid);
                   if (shouldMuteVideoForExternalAudio) {
                     vid.muted = true;
@@ -3067,19 +3243,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     applyStudioEqGraph(vid);
                   }
                   const pending = pendingRestoreTimeRef.current;
-                  if (pending) {
+                  if (isCinematicIntroPlayingRef.current) {
+                    if (!vid.paused) vid.pause();
+                    if (audioRef.current && !audioRef.current.paused) audioRef.current.pause();
+                    if (!pending && vid.currentTime > 0.05) {
+                      try {
+                        vid.currentTime = 0;
+                      } catch {}
+                    }
+                  } else if (pending) {
                     try {
                       vid.currentTime = pending.time;
                     } catch {
                       // Ignore
                     }
-                    if (pending.shouldPlay && !isCinematicIntroPlayingRef.current) {
+                    if (pending.shouldPlay) {
                       vid.play().catch(() => {});
                     }
                     pendingRestoreTimeRef.current = null;
-                  }
-                  if (isCinematicIntroPlayingRef.current && !vid.paused) {
-                    vid.pause();
                   }
                   syncAudioToVideo(false, true);
                   syncSubtitleAndVoiceOnTime(vid.currentTime, true, vid.paused);
@@ -3264,12 +3445,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     showHudFeedback('🌙 Sleep Timer: Episode Finished');
                     return;
                   }
-                  if (nextStreamItem && !isMovie) {
+                  if (nextStreamItem && !isMovie && vipProfileDefaults?.autoPlayNext !== false) {
                     setAutoNextCountdown(5);
                   }
                 }}
                 onTimeUpdate={(e) => {
                   const vid = e.currentTarget;
+                  if (isCinematicIntroPlayingRef.current) {
+                    if (!vid.paused) vid.pause();
+                    if (audioRef.current && !audioRef.current.paused) audioRef.current.pause();
+                    if (!pendingRestoreTimeRef.current && vid.currentTime > 0.05) {
+                      try {
+                        vid.currentTime = 0;
+                      } catch {}
+                    }
+                    return;
+                  }
+                  setCurrentVideoTime(vid.currentTime || 0);
+                  if (Number.isFinite(vid.duration) && vid.duration > 0) {
+                    setVideoDuration(vid.duration);
+                    if (vid.buffered && vid.buffered.length > 0) {
+                      try {
+                        setBufferedEnd(vid.buffered.end(vid.buffered.length - 1));
+                      } catch {}
+                    }
+                  }
                   if (vid.currentTime > 0 && vid.readyState >= 3) {
                     setIsVideoFrameReady(true);
                     setIsVideoLoading(false);
@@ -3372,7 +3572,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }
                   }
 
-                  // 7. External Audio Sync (> 0.25s drift auto-resync + strict main video mute guard)
+                  // 7. External Audio Sync (> 0.22s drift auto-resync + strict main video mute guard)
                   if (isExternalAudioActive && audioRef.current) {
                     const aud = audioRef.current;
                     if (isExternalAudioConfirmedPlaying && !aud.paused) {
@@ -3381,7 +3581,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }
                     if (!vid.paused) {
                       const targetTime = Math.max(0, vid.currentTime + audioSyncOffset);
-                      if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.25) {
+                      if (Number.isFinite(targetTime) && Math.abs(aud.currentTime - targetTime) > 0.22) {
                         try {
                           aud.currentTime = targetTime;
                         } catch {
@@ -3395,8 +3595,23 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       aud.pause();
                     }
                   }
+
+                  // 8. Final 8-Second Auto-Next Episode Countdown Card
+                  if (
+                    nextStreamItem &&
+                    !isMovie &&
+                    vipProfileDefaults?.autoPlayNext !== false &&
+                    Number.isFinite(vid.duration) &&
+                    vid.duration > 30 &&
+                    vid.duration - vid.currentTime <= 8 &&
+                    vid.duration - vid.currentTime > 0.4 &&
+                    autoNextCountdown === null &&
+                    !autoNextCancelledForEpRef.current
+                  ) {
+                    setAutoNextCountdown(Math.max(1, Math.ceil(vid.duration - vid.currentTime)));
+                  }
                 }}
-                {...({ referrerpolicy: 'origin' } as Record<string, string>)}
+                {...({ referrerPolicy: 'origin' } as Record<string, string>)}
                 style={{ filter: combinedVideoFilter }}
                 className={`w-full h-full ${videoFitClass} bg-black transition-[filter] duration-300`}
               />
@@ -3410,8 +3625,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   playsInline
                   preload="auto"
                   style={{ display: 'none' }}
-                  onLoadedMetadata={() => syncAudioToVideo()}
-                  onCanPlay={() => {
+                  onLoadedMetadata={(e) => {
+                    if (isCinematicIntroPlayingRef.current) {
+                      if (!e.currentTarget.paused) e.currentTarget.pause();
+                      return;
+                    }
+                    syncAudioToVideo();
+                  }}
+                  onCanPlay={(e) => {
+                    if (isCinematicIntroPlayingRef.current) {
+                      if (!e.currentTarget.paused) e.currentTarget.pause();
+                      return;
+                    }
                     syncAudioToVideo(!videoRef.current?.paused);
                   }}
                   onPlaying={() => {
@@ -3431,6 +3656,19 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }
                   }}
                   onError={() => {
+                    if (
+                      !audioProxyRetriedRef.current &&
+                      activeExternalAudioUrl &&
+                      !activeExternalAudioUrl.includes('/api/okru-proxy') &&
+                      /^https?:\/\//i.test(activeExternalAudioUrl)
+                    ) {
+                      audioProxyRetriedRef.current = true;
+                      setResolvedExternalAudioSrc((prev) => ({
+                        ...prev,
+                        src: `/api/okru-proxy?url=${encodeURIComponent(activeExternalAudioUrl)}`,
+                      }));
+                      return;
+                    }
                     setIsExternalAudioConfirmedPlaying(false);
                     setForceBuiltinAudio(true);
                     const vid = videoRef.current;
@@ -3480,26 +3718,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     </button>
                   </div>
                 </div>
-              )}
-
-              {/* Floating Speaker Control whenever External .MP3 Audio Track is confirmed playing */}
-              {shouldMuteVideoForExternalAudio && !mediaErrorState && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsAudioMuted((m) => !m);
-                  }}
-                  className="absolute bottom-14 right-4 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black border border-white/20 text-white text-xs font-black shadow-lg backdrop-blur-md cursor-pointer"
-                  title={isAudioMuted ? 'Unmute External Audio' : 'Mute External Audio'}
-                >
-                  {isAudioMuted ? (
-                    <VolumeX className="w-4 h-4 text-red-400" />
-                  ) : (
-                    <Volume2 className="w-4 h-4 text-emerald-400" />
-                  )}
-                  <span>{isAudioMuted ? 'Muted' : `${Math.round(audioVolume * 100)}%`}</span>
-                </button>
               )}
 
               {/* Single Transparent Neon Loading Ring (Zero Dual Stacked Spinners, Zero Black Boxes) */}
@@ -4147,6 +4365,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               {(
                 [
                   { id: 'off' as SleepTimerMode, label: 'OFF' },
+                  { id: '15m' as SleepTimerMode, label: '15m' },
                   { id: '30m' as SleepTimerMode, label: '30m' },
                   { id: '60m' as SleepTimerMode, label: '60m' },
                   { id: 'end_of_ep' as SleepTimerMode, label: 'End of Ep' },
@@ -4406,7 +4625,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
             {!isTouchLocked && (
               <div className="px-2 py-1.5 bg-[#0a0b10] border-t border-b border-white/10 space-y-1.5">
-                {/* Row 1: Compact Single-Line Horizontal Controls */}
+                {/* Compact Mobile Quick Action Row (Primary playback controls now live inside the video HUD) */}
                 <div className="overflow-x-auto no-scrollbar flex items-center gap-1.5 py-0.5">
                   <button
                     onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
@@ -4414,42 +4633,59 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   >
                     ⚡ Skip Intro
                   </button>
-                  <button
-                    onClick={() => handleSeek(-10, '↺ 10s')}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-white/10 border border-white/20 text-white font-semibold shrink-0 cursor-pointer"
-                  >
-                    -10s
-                  </button>
-                  <button
-                    onClick={() => handleSeek(10, '10s ↻')}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-white/10 border border-white/20 text-white font-semibold shrink-0 cursor-pointer"
-                  >
-                    +10s
-                  </button>
-                  <button
-                    onClick={handleCycleSpeed}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#f59e0b] text-black font-bold shrink-0 cursor-pointer"
-                  >
-                    {playbackSpeed}x
-                  </button>
-                  <button
-                    onClick={handleCycleQuality}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#141622] border border-cyan-400/30 text-cyan-200 font-bold shrink-0 cursor-pointer"
-                    title={activeQualityMeta.shortBadge}
-                  >
-                    {activeQualityMeta.shortBadge}
-                  </button>
-                  <button
-                    onClick={handleFullscreen}
-                    className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#141622] border border-white/15 text-zinc-200 font-semibold shrink-0 cursor-pointer"
-                  >
-                    Fullscreen
-                  </button>
+                  {!isMovie && (
+                    <>
+                      <button
+                        onClick={(e) =>
+                          prevStreamItem &&
+                          handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
+                        }
+                        disabled={!prevStreamItem}
+                        className={`text-[11px] px-2.5 py-1 rounded-md font-bold border whitespace-nowrap shrink-0 ${
+                          prevStreamItem
+                            ? 'bg-white/[0.08] text-white border-white/15 cursor-pointer'
+                            : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                        }`}
+                      >
+                        Prev Ep
+                      </button>
+                      <button
+                        onClick={(e) =>
+                          nextStreamItem &&
+                          handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
+                        }
+                        disabled={!nextStreamItem}
+                        className={`text-[11px] px-2.5 py-1 rounded-md font-bold border whitespace-nowrap shrink-0 ${
+                          nextStreamItem
+                            ? 'bg-[#e50914] text-white border-red-400/40 cursor-pointer'
+                            : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
+                        }`}
+                      >
+                        Next Ep
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={handleReloadStream}
                     className="text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap bg-[#141622] border border-white/15 text-zinc-200 font-semibold shrink-0 cursor-pointer"
                   >
                     Reload
+                  </button>
+                  {resolvedPlayerSource?.type === 'video' && (
+                    <button
+                      onClick={handleNativePiP}
+                      className="text-[11px] px-2.5 py-1 rounded-md font-bold border bg-[#141622] text-zinc-200 border-white/15 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      📺 PiP
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsLightsOff((prev) => !prev)}
+                    className={`text-[11px] px-2.5 py-1 rounded-md font-bold border whitespace-nowrap shrink-0 cursor-pointer ${
+                      isLightsOff ? 'bg-amber-400 text-black border-amber-300' : 'bg-white/[0.06] text-zinc-200 border-white/10'
+                    }`}
+                  >
+                    {isLightsOff ? 'Lights On' : 'Lights Off'}
                   </button>
                   <button
                     onClick={() => setIsStudioToolsOpen((prev) => !prev)}
@@ -4461,104 +4697,6 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   >
                     VIP Tools
                   </button>
-                </div>
-
-                {/* Row 2: Compact Left/Right Episode, Subtitles & Cinema Toggles */}
-                <div className="flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar">
-                  <div className="flex items-center gap-1 shrink-0">
-                    {!isMovie && (
-                      <>
-                        <button
-                          onClick={(e) =>
-                            prevStreamItem &&
-                            handleOpenStream(prevStreamItem.epNum, activeAudio, prevStreamItem.episodeKey, e)
-                          }
-                          disabled={!prevStreamItem}
-                          className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap ${
-                            prevStreamItem
-                              ? 'bg-white/[0.08] text-white border-white/15 cursor-pointer'
-                              : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          Prev Ep
-                        </button>
-                        <button
-                          onClick={(e) =>
-                            nextStreamItem &&
-                            handleOpenStream(nextStreamItem.epNum, activeAudio, nextStreamItem.episodeKey, e)
-                          }
-                          disabled={!nextStreamItem}
-                          className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap ${
-                            nextStreamItem
-                              ? 'bg-[#e50914] text-white border-red-400/40 cursor-pointer'
-                              : 'bg-white/[0.02] text-zinc-600 border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          Next Ep
-                        </button>
-                      </>
-                    )}
-
-                    <button
-                      onClick={() => setIsCaptionMenuOpen((v) => !v)}
-                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                        isCaptionMenuOpen || activeSubLang !== 'off'
-                          ? 'bg-cyan-400 text-black border-cyan-200'
-                          : 'bg-[#141622] text-zinc-200 border-white/15'
-                      }`}
-                    >
-                      {activeSubtitleLabel}
-                    </button>
-
-                    <button
-                      onClick={handleToggleAutoHdr}
-                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                        isAutoHdrOn
-                          ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
-                          : 'bg-[#141622] text-zinc-200 border-white/15'
-                      }`}
-                    >
-                      ✨ HDR
-                    </button>
-
-                    {(availableSubLanguages.length > 0 || (isAdmin && activeSubLang !== 'off')) && (
-                      <button
-                        onClick={handleToggleSubtitleAudio}
-                        className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                          isSubtitleAudioOn
-                            ? 'bg-emerald-500 text-black border-emerald-300'
-                            : 'bg-[#141622] text-zinc-200 border-white/15'
-                        }`}
-                      >
-                        {isSubtitleAudioOn ? '🔊 Dub' : '🔇 Dub'}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => setIsLightsOff((prev) => !prev)}
-                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                        isLightsOff ? 'bg-amber-400 text-black border-amber-300' : 'bg-white/[0.06] text-zinc-200 border-white/10'
-                      }`}
-                    >
-                      {isLightsOff ? 'Lights On' : 'Lights Off'}
-                    </button>
-                    <button
-                      onClick={() => setIsTheaterMode((prev) => !prev)}
-                      className={`text-[10px] px-2 py-1 rounded font-bold border whitespace-nowrap cursor-pointer ${
-                        isTheaterMode ? 'bg-[#f59e0b] text-black border-amber-300' : 'bg-white/[0.06] text-zinc-200 border-white/10'
-                      }`}
-                    >
-                      Theater
-                    </button>
-                    <button
-                      onClick={handleFullscreen}
-                      className="text-[10px] px-2 py-1 rounded font-bold bg-white/[0.08] text-white border border-white/15 whitespace-nowrap cursor-pointer"
-                    >
-                      Fullscreen
-                    </button>
-                  </div>
                 </div>
 
                 {/* Track & Cloud Server Pills (when available) */}
@@ -4716,7 +4854,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               {!isMovie && showIndividualEpisodeCards ? (
                 episodesForActiveAudio.map((ep) => {
                   const isWatched = watchedEpisodes.includes(ep.episodeNumber) || watchedEpisodes.includes('all');
-                  const streamUrl = getStreamLinkForTrack(ep, activeAudio);
+                  const streamUrl = getStreamLinkForTrack(ep, activeAudio, drama);
                   const hasStreamLink = Boolean(streamUrl && /^https?:\/\//i.test(streamUrl));
                   const hasTelegramLink = Boolean(ep.telegramUrl && /^https?:\/\//i.test(ep.telegramUrl));
                   const numericEp = extractNumericEp(ep.episodeNumber);
@@ -5530,400 +5668,49 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   {/* 2. 16:9 Protected Video Viewport */}
                   {renderVideoViewport()}
 
-                {/* 3. SYSTEMATIC 2-TIER PLAYER CONTROL ARCHITECTURE (Hidden in Mini-Player or Touch-Lock) */}
+                {/* 3. CLEAN STUDIO DECK BAR (Redundant Speed/Quality/16-btn CC/Audio-Sync removed; now inside native in-player HUD) */}
                 {!isMiniPlayer && !isTouchLocked && (
                   <>
-                    <div className="bg-[#0a0b10] border-t border-b border-white/10 p-4 flex flex-col gap-3">
-                      {/* TIER 1 PRIMARY BAR */}
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="bg-[#0a0b10] border-t border-b border-white/10 px-4 py-3 flex flex-col gap-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2.5">
                         <div className="flex flex-wrap items-center gap-2">
                           <button
-                            onClick={() => handleSeek(-10, '↺ 10s')}
-                            style={{
-                              background: 'rgba(255, 255, 255, 0.1)',
-                              backdropFilter: 'blur(10px)',
-                              WebkitBackdropFilter: 'blur(10px)',
-                              border: '1px solid rgba(255, 255, 255, 0.22)',
-                              color: '#ffffff',
-                              borderRadius: '9999px',
-                            }}
-                            className="hover:bg-white/[0.18] font-bold px-3.5 py-2 transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                          >
-                            ↺ 10s
-                          </button>
-                          <button
-                            onClick={() => handleSeek(10, '10s ↻')}
-                            style={{
-                              background: 'rgba(255, 255, 255, 0.1)',
-                              backdropFilter: 'blur(10px)',
-                              WebkitBackdropFilter: 'blur(10px)',
-                              border: '1px solid rgba(255, 255, 255, 0.22)',
-                              color: '#ffffff',
-                              borderRadius: '9999px',
-                            }}
-                            className="hover:bg-white/[0.18] font-bold px-3.5 py-2 transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
-                          >
-                            10s ↻
-                          </button>
-                          <button
                             onClick={() => handleSeek(85, '⚡ +85s Intro Skipped!')}
-                            className="bg-[#e50914] hover:bg-[#f6121d] text-white border border-red-400/40 shadow-[0_0_16px_rgba(229,9,20,0.4)] font-black px-4 py-2 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
+                            className="bg-[#e50914] hover:bg-[#f6121d] text-white border border-red-400/40 shadow-[0_0_16px_rgba(229,9,20,0.4)] font-black px-3.5 py-1.5 rounded-xl transition-all active:scale-95 text-xs cursor-pointer whitespace-nowrap"
                           >
                             ⚡ Skip Intro (+85s)
                           </button>
                           <button
                             onClick={handleReloadStream}
-                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3.5 py-2 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                            className="bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-100 font-black px-3 py-1.5 rounded-xl transition-all active:scale-95 text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                             title="Reload current video stream"
                           >
                             <RotateCw className="w-3.5 h-3.5" />
                             <span>🔄 Reload</span>
                           </button>
-
                           <button
                             onClick={() => setIsStudioToolsOpen((prev) => !prev)}
-                            className={`px-3.5 py-2 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                               isStudioToolsOpen || hasActiveStudioEffects
                                 ? 'bg-gradient-to-r from-amber-500/25 to-red-500/25 border-amber-400/60 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
                                 : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
                             }`}
                           >
                             <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                            <span>✨ VIP Studio Tools {isStudioToolsOpen ? '▴' : '▾'}</span>
+                            <span>✨ VIP Studio Deck {isStudioToolsOpen ? '▴' : '▾'}</span>
                             {hasActiveStudioEffects && (
                               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                             )}
                           </button>
-
-                          <button
-                            onClick={() => setIsCaptionMenuOpen((v) => !v)}
-                            className={`px-3.5 py-2 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                              isCaptionMenuOpen || activeSubLang !== 'off'
-                                ? 'bg-cyan-400 text-black border-cyan-200 shadow-[0_0_14px_rgba(0,242,254,0.45)]'
-                                : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
-                            }`}
-                          >
-                            <Captions className="w-3.5 h-3.5" />
-                            <span>{activeSubtitleLabel}</span>
-                          </button>
-
-                          {(availableSubLanguages.length > 0 || activeSubLang !== 'off') && (
-                            <button
-                              onClick={handleToggleSubtitleAudio}
-                              className={`px-3.5 py-2 rounded-xl text-xs font-black border transition-all cursor-pointer whitespace-nowrap ${
-                                isSubtitleAudioOn
-                                  ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_16px_rgba(16,185,129,0.45)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
-                              }`}
-                            >
-                              {isSubtitleAudioOn ? '🔊 Subtitle Audio: ON' : '🔇 Subtitle Audio: OFF'}
-                            </button>
-                          )}
                         </div>
 
-                        {/* SPEED Pod (0.5x – 2x) */}
-                        <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
-                          <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-wider flex items-center gap-1 mr-1">
-                            <Gauge className="w-3.5 h-3.5 text-[#f59e0b]" />
-                            <span>⚡ SPEED</span>
-                          </span>
-                          {SPEED_OPTIONS.map((spd) => {
-                            const active = playbackSpeed === spd;
-                            return (
-                              <button
-                                key={`spd-${spd}`}
-                                onClick={() => handleSpeedChange(spd)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
-                                  active
-                                    ? 'bg-[#f59e0b] text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]'
-                                    : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                                }`}
-                              >
-                                {spd}x
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* QUALITY & Instant Auto HDR Pod */}
-                        <div className="flex flex-wrap items-center gap-1.5 bg-[#11131d] border border-white/10 rounded-xl px-3 py-1.5">
-                          <span className="text-[10px] font-black text-red-400 uppercase tracking-wider flex items-center gap-1 mr-1">
-                            <Gem className="w-3.5 h-3.5 text-[#e50914]" />
-                            <span>💎 QUALITY</span>
-                          </span>
-                          {QUALITY_OPTIONS.map((q) => {
-                            const active = selectedQuality === q.id;
-                            return (
-                              <button
-                                key={q.id}
-                                onClick={() => handleQualityChange(q.id)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
-                                  active
-                                    ? 'bg-[#e50914] text-white shadow-[0_0_15px_rgba(229,9,20,0.45)]'
-                                    : 'text-zinc-300 hover:text-white hover:bg-white/[0.08]'
-                                }`}
-                              >
-                                {q.label}
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={handleToggleAutoHdr}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap border ${
-                              isAutoHdrOn
-                                ? 'bg-cyan-400 text-black border-cyan-200 shadow-[0_0_14px_rgba(0,242,254,0.45)]'
-                                : 'bg-white/[0.04] text-zinc-300 border-white/10 hover:text-white'
-                            }`}
-                          >
-                            ✨ Auto HDR
-                          </button>
-                          <span className="ml-1 px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-400/30 text-[10px] font-bold text-cyan-200 whitespace-nowrap">
-                            {activeQualityMeta.shortBadge}
-                          </span>
-                        </div>
+                        <span className="text-[11px] font-semibold text-zinc-400">
+                          {activeQualityMeta.shortBadge} • Speed {playbackSpeed}x
+                        </span>
                       </div>
 
-                      {/* 💬 SUBTITLES BAR (Hidden completely when episode has no subtitles configured) */}
-                      {availableSubLanguages.length > 0 && (
-                        <div className="rounded-xl bg-[#0e1019] border border-sky-400/25 px-3.5 py-2.5 flex flex-col gap-2.5">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] font-black text-sky-300 uppercase tracking-wider flex items-center gap-1.5 mr-1">
-                              <Captions className="w-3.5 h-3.5 text-sky-400" />
-                              <span>SUBTITLES</span>
-                              {isSubLoading && (
-                                <span className="text-[10px] text-amber-300 animate-pulse normal-case font-bold">
-                                  (Loading...)
-                                </span>
-                              )}
-                            </span>
-
-                            <button
-                              onClick={() => handleSelectSubLang('off')}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                                activeSubLang === 'off'
-                                  ? 'bg-[#e50914] text-white border-red-400/60 shadow-[0_0_12px_rgba(229,9,20,0.4)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-300 border-white/10'
-                              }`}
-                            >
-                              🚫 Off
-                            </button>
-
-                            {availableSubLanguages.map((sub) => (
-                              <button
-                                key={`cc-pill-${sub.code}`}
-                                onClick={() => handleSelectSubLang(sub.code)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                                  activeSubLang === sub.code
-                                    ? 'bg-sky-400 text-black border-sky-200 shadow-[0_0_14px_rgba(56,189,248,0.45)]'
-                                    : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
-                                }`}
-                              >
-                                {sub.displayLabel}
-                              </button>
-                            ))}
-
-                            <button
-                              onClick={handleToggleSubtitleAudio}
-                              className={`ml-auto px-3 py-1 rounded-lg text-[11px] font-black border transition-all cursor-pointer ${
-                                isSubtitleAudioOn
-                                  ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_14px_rgba(16,185,129,0.45)]'
-                                  : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
-                              }`}
-                            >
-                              {isSubtitleAudioOn ? '🔊 Subtitle Audio: ON' : '🔇 Subtitle Audio: OFF'}
-                            </button>
-                          </div>
-
-                          {activeSubLang !== 'off' && (
-                            <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/10 text-[11px]">
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="font-black text-amber-300">🪄 Sub Backdrop:</span>
-                                {(
-                                  [
-                                    { id: 'auto', label: 'Auto-Detect' },
-                                    { id: 'blur', label: 'Blur Hard-Subs' },
-                                    { id: 'transparent', label: 'Pure Transparent' },
-                                  ] as const
-                                ).map((mode) => (
-                                  <button
-                                    key={`sub-mode-${mode.id}`}
-                                    onClick={() => setSubBackdropMode(mode.id)}
-                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      subBackdropMode === mode.id
-                                        ? 'bg-amber-400 text-black border-amber-200'
-                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    {mode.label}
-                                  </button>
-                                ))}
-                                {subBackdropMode === 'auto' && hardSubCorsBlockedRef.current && (
-                                  <button
-                                    onClick={() => setHasHardcodedSubtitles((v) => !v)}
-                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      hasHardcodedSubtitles
-                                        ? 'bg-sky-400 text-black border-sky-200'
-                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    {hasHardcodedSubtitles ? 'Burned-In Blur: ON' : 'Burned-In Blur: OFF'}
-                                  </button>
-                                )}
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="font-black text-zinc-400">🎨 Text Style:</span>
-                                {(
-                                  [
-                                    { id: 'white', label: 'White', cls: 'text-white' },
-                                    { id: 'yellow', label: 'Gold', cls: 'text-[#FFEA3B]' },
-                                    { id: 'cyan', label: 'Cyan', cls: 'text-[#00F2FE]' },
-                                    { id: 'pink', label: 'Pink', cls: 'text-[#FF2A85]' },
-                                  ] as const
-                                ).map((col) => (
-                                  <button
-                                    key={`col-${col.id}`}
-                                    onClick={() => setSubColor(col.id)}
-                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${col.cls} ${
-                                      subColor === col.id
-                                        ? 'bg-white/20 border-white'
-                                        : 'bg-[#141622] border-white/10 opacity-75 hover:opacity-100'
-                                    }`}
-                                  >
-                                    {col.label}
-                                  </button>
-                                ))}
-                                <span className="text-zinc-600 mx-0.5">|</span>
-                                {(
-                                  [
-                                    { id: 'sm', label: 'S' },
-                                    { id: 'md', label: 'M' },
-                                    { id: 'lg', label: 'L' },
-                                  ] as const
-                                ).map((sz) => (
-                                  <button
-                                    key={`sz-${sz.id}`}
-                                    onClick={() => setSubFontSize(sz.id)}
-                                    className={`px-2 py-0.5 rounded-md font-black border cursor-pointer transition-all ${
-                                      subFontSize === sz.id
-                                        ? 'bg-white text-black border-white'
-                                        : 'bg-[#141622] text-zinc-300 border-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    {sz.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* TIER 2 EXPANDABLE 4-TAB VIP STUDIO DECK */}
+                      {/* EXPANDABLE 4-TAB VIP STUDIO DECK (EQ / Loop / Vault / Watch Party) */}
                       {isStudioToolsOpen && renderStudioToolsDeck()}
-
-                      {/* Admin-Only Master Audio Sync & Lip-Sync Calibration Bar (Hidden from regular visitors) */}
-                      {isAdmin && (resolvedPlayerSource?.type === 'video' || Boolean(trackCustomAudio)) && (
-                        <div className="px-3.5 py-2.5 rounded-xl bg-[#11131d] border border-white/10 flex flex-wrap items-center justify-between gap-3">
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <span
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                                isExternalAudioActive
-                                  ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300'
-                                  : 'bg-white/[0.05] border-white/10 text-zinc-300'
-                              }`}
-                            >
-                              <Headphones className="w-3.5 h-3.5" />
-                              <span>
-                                {isExternalAudioActive
-                                  ? `Custom ${activeAudio} Synced`
-                                  : 'Built-in Stream Audio'}
-                              </span>
-                            </span>
-
-                            <button
-                              onClick={() => setIsAudioMuted((m) => !m)}
-                              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                isAudioMuted
-                                  ? 'bg-red-500/20 border-red-400/40 text-red-300'
-                                  : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/10 text-white'
-                              }`}
-                              title={isAudioMuted ? 'Unmute Audio' : 'Mute Audio'}
-                            >
-                              {isAudioMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                            </button>
-
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="range"
-                                min={0}
-                                max={1}
-                                step={0.05}
-                                value={isAudioMuted ? 0 : audioVolume}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  setAudioVolume(val);
-                                  if (val > 0 && isAudioMuted) setIsAudioMuted(false);
-                                }}
-                                aria-label="Master Audio Volume"
-                                className="w-24 sm:w-28 accent-[#e50914] cursor-pointer h-1.5"
-                              />
-                              <span className="text-[11px] font-black text-zinc-300 w-9 tabular-nums">
-                                {Math.round((isAudioMuted ? 0 : audioVolume) * 100)}%
-                              </span>
-                            </div>
-                          </div>
-
-                          {Boolean(trackCustomAudio) && resolvedPlayerSource?.type === 'video' && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider mr-1">
-                                Lip-Sync:
-                              </span>
-                              <button
-                                onClick={() => {
-                                  setAudioSyncOffset((prev) => Number((prev - 0.2).toFixed(1)));
-                                  showHudFeedback('🎧 Audio Sync -0.2s');
-                                }}
-                                className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
-                              >
-                                -0.2s
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setAudioSyncOffset(0);
-                                  showHudFeedback('🎧 Audio Sync Reset (0.0s)');
-                                }}
-                                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-amber-300 text-[11px] font-black tabular-nums cursor-pointer"
-                                title="Reset Lip-Sync Offset to 0.0s"
-                              >
-                                {audioSyncOffset > 0 ? `+${audioSyncOffset.toFixed(1)}s` : `${audioSyncOffset.toFixed(1)}s`}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setAudioSyncOffset((prev) => Number((prev + 0.2).toFixed(1)));
-                                  showHudFeedback('🎧 Audio Sync +0.2s');
-                                }}
-                                className="px-2 py-1 rounded-lg bg-[#141622] hover:bg-[#1e2235] border border-white/15 text-zinc-200 text-[11px] font-black cursor-pointer"
-                              >
-                                +0.2s
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setForceBuiltinAudio((prev) => !prev);
-                                  showHudFeedback(forceBuiltinAudio ? '🎧 External Dub Active' : '🔊 Built-in Audio Active');
-                                }}
-                                className={`ml-1 px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
-                                  forceBuiltinAudio
-                                    ? 'bg-amber-500/20 border-amber-400/45 text-amber-200'
-                                    : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/15 text-zinc-300'
-                                }`}
-                              >
-                                {forceBuiltinAudio ? 'Use External Dub' : 'Use Built-in Audio'}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       {/* Honest 1-line Cloud Embed Mode helper whenever stream is a third-party iframe */}
                       {resolvedPlayerSource?.type === 'iframe' && (
@@ -6064,6 +5851,16 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             )}
                             <span>Theater</span>
                           </button>
+
+                          {resolvedPlayerSource?.type === 'video' && (
+                            <button
+                              onClick={handleNativePiP}
+                              className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/10 text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap"
+                            >
+                              <PictureInPicture2 className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>PiP</span>
+                            </button>
+                          )}
 
                           <button
                             onClick={handleFullscreen}
@@ -6610,7 +6407,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 {showIndividualEpisodeCards ? (
                   episodesForActiveAudio.map((ep) => {
                     const isWatched = watchedEpisodes.includes(ep.episodeNumber) || watchedEpisodes.includes('all');
-                    const streamUrl = getStreamLinkForTrack(ep, activeAudio);
+                    const streamUrl = getStreamLinkForTrack(ep, activeAudio, drama);
                     const hasStreamLink = Boolean(streamUrl && /^https?:\/\//i.test(streamUrl));
                     const hasTelegramLink = Boolean(ep.telegramUrl && /^https?:\/\//i.test(ep.telegramUrl));
                     const numericEp = extractNumericEp(ep.episodeNumber);

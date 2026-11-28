@@ -96,8 +96,12 @@ export const AppNavigationDrawer: React.FC<AppNavigationDrawerProps> = ({
               src={transparentLogoSrc}
               alt="AsiaFlix Prime"
               referrerPolicy="no-referrer"
-              style={{ background: 'transparent', mixBlendMode: 'screen' }}
-              className="w-10 h-10 object-contain shrink-0 drop-shadow-[0_0_8px_rgba(229,9,20,0.45)]"
+              style={{
+                filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
+                mixBlendMode: 'screen',
+                background: 'transparent',
+              }}
+              className="w-10 h-10 object-contain shrink-0"
             />
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">

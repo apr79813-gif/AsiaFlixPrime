@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Flame, Bookmark, Menu } from 'lucide-react';
+import { Home, Search, Clapperboard, Bookmark, User } from 'lucide-react';
 
 interface MobileBottomNavProps {
   onGoHome: () => void;
@@ -9,9 +9,10 @@ interface MobileBottomNavProps {
   onOpenSupport?: () => void;
   watchlistCount?: number;
   isInstalledApp?: boolean;
-  activeAppTab?: 'home' | 'hot' | 'search' | 'watchlist' | 'menu';
-  onOpenHot?: () => void;
-  onOpenAppMenu?: () => void;
+  activeAppTab?: 'home' | 'clips' | 'search' | 'watchlist' | 'profile';
+  onOpenClips?: () => void;
+  onOpenProfile?: () => void;
+  vipAvatar?: string;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
@@ -21,8 +22,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   watchlistCount = 0,
   isInstalledApp = false,
   activeAppTab = 'home',
-  onOpenHot,
-  onOpenAppMenu,
+  onOpenClips,
+  onOpenProfile,
+  vipAvatar,
 }) => {
   if (isInstalledApp) {
     return (
@@ -43,13 +45,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
         <button
           type="button"
-          onClick={onOpenHot || onGoHome}
+          onClick={onOpenClips || onGoHome}
           className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
-            activeAppTab === 'hot' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+            activeAppTab === 'clips' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Flame className={`w-5 h-5 ${activeAppTab === 'hot' ? 'text-amber-400' : ''}`} />
-          <span className="text-[10px] font-bold tracking-tight">New &amp; Hot</span>
+          <Clapperboard className={`w-5 h-5 ${activeAppTab === 'clips' ? 'text-[#ff2a85]' : ''}`} />
+          <span className="text-[10px] font-bold tracking-tight">Clips</span>
         </button>
 
         <button
@@ -83,13 +85,21 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
         <button
           type="button"
-          onClick={onOpenAppMenu || onGoHome}
+          onClick={onOpenProfile || onGoHome}
           className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
-            activeAppTab === 'menu' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+            activeAppTab === 'profile' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Menu className="w-5 h-5" />
-          <span className="text-[10px] font-bold tracking-tight">Menu</span>
+          {vipAvatar ? (
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs border ${
+              activeAppTab === 'profile' ? 'border-[#e50914] bg-[#e50914]/20' : 'border-white/25 bg-white/10'
+            }`}>
+              {vipAvatar}
+            </span>
+          ) : (
+            <User className={`w-5 h-5 ${activeAppTab === 'profile' ? 'text-[#e50914]' : ''}`} />
+          )}
+          <span className="text-[10px] font-bold tracking-tight">Profile</span>
         </button>
       </nav>
     );
@@ -102,21 +112,44 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     >
       <button
         onClick={onGoHome}
-        className="px-4 py-2.5 rounded-2xl bg-white/[0.08] hover:bg-[#e50914] text-white text-[14px] font-black flex items-center gap-2 transition-all hover:scale-105 active:scale-95 shadow-md cursor-pointer group"
+        className="px-3.5 py-2.5 rounded-2xl bg-white/[0.08] hover:bg-[#e50914] text-white text-[13px] font-black flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 shadow-md cursor-pointer group"
         title="Return to Home & Reset All Filters"
       >
         <Home className="w-4 h-4 text-zinc-200 group-hover:text-white" />
         <span>Home</span>
       </button>
 
+      {onOpenClips && (
+        <button
+          onClick={onOpenClips}
+          className="px-3.5 py-2.5 rounded-2xl bg-pink-500/20 hover:bg-[#ff2a85] border border-pink-400/40 text-pink-200 hover:text-white text-[13px] font-black flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          title="Watch Short Drama Clips Feed"
+        >
+          <Clapperboard className="w-4 h-4" />
+          <span>Clips</span>
+        </button>
+      )}
+
       <button
         onClick={onFocusSearch}
-        className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-[14px] font-black flex items-center gap-2 shadow-[0_0_20px_rgba(229,9,20,0.45)] transition-all hover:scale-105 active:scale-95 cursor-pointer"
+        className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 text-white text-[13px] font-black flex items-center gap-1.5 shadow-[0_0_20px_rgba(229,9,20,0.45)] transition-all hover:scale-105 active:scale-95 cursor-pointer"
         title="Instant Search Dramas, Movies, and Cast"
       >
         <Search className="w-4 h-4" />
         <span>Search</span>
       </button>
+
+      {onOpenProfile && (
+        <button
+          onClick={onOpenProfile}
+          className="px-3 py-2.5 rounded-2xl bg-white/[0.08] hover:bg-white/[0.16] text-white text-[13px] font-black flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          title="Open VIP Profile"
+        >
+          <User className="w-4 h-4 text-amber-300" />
+          <span className="hidden sm:inline">Profile</span>
+        </button>
+      )}
     </aside>
   );
 };
+

@@ -15,8 +15,11 @@ import {
   Download,
   Menu,
   MoreVertical,
+  Clapperboard,
+  Dices,
 } from 'lucide-react';
 import { ParticleMode } from './SakuraCanvas';
+import { VipProfile } from '../types/drama';
 import { VipStats, getVipRankMeta } from '../services/vipPlayerHelper';
 import { useTransparentLogo } from './AnimatedChannelLogo';
 
@@ -41,6 +44,10 @@ interface NavbarProps {
   onGoHome?: () => void;
   onOpenSearchModal?: () => void;
   vipStats?: VipStats;
+  vipProfile?: VipProfile | null;
+  onOpenProfile?: () => void;
+  onOpenClips?: () => void;
+  onSurpriseMe?: () => void;
   onInstallApp?: () => void;
   onOpenAppDownloadModal?: () => void;
   isAppInstalled?: boolean;
@@ -71,6 +78,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onGoHome,
   onOpenSearchModal,
   vipStats,
+  vipProfile,
+  onOpenProfile,
+  onOpenClips,
+  onSurpriseMe,
   onInstallApp,
   onOpenAppDownloadModal,
   isAppInstalled = false,
@@ -165,8 +176,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               src={transparentLogoSrc}
               alt="AsiaFlix Prime"
               referrerPolicy="no-referrer"
-              style={{ background: 'transparent', mixBlendMode: 'screen' }}
-              className="w-9 h-9 object-contain shrink-0 drop-shadow-[0_0_8px_rgba(229,9,20,0.45)]"
+              style={{
+                filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
+                mixBlendMode: 'screen',
+                background: 'transparent',
+              }}
+              className="w-9 h-9 object-contain shrink-0"
             />
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-base sm:text-lg font-black tracking-tight text-white truncate group-hover:text-red-400 transition-colors">
@@ -178,17 +193,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </button>
 
-          {/* Right: Quick Search, Notifications Bell, and 3-Lines / 3-Dots App Menu Button */}
+          {/* Right: Mini Avatar Chip (VIP Profile), Notifications Bell, and 3-Lines Category Drawer */}
           <div className="flex items-center gap-2 shrink-0">
-            {handleOpenSearchAction && (
+            {onOpenProfile && (
               <button
                 type="button"
-                onClick={handleOpenSearchAction}
-                className="w-10 h-10 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white flex items-center justify-center transition-colors cursor-pointer"
-                aria-label="Search Dramas and Movies"
-                title="Search"
+                onClick={onOpenProfile}
+                className="h-9 pl-1.5 pr-2.5 rounded-full bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                aria-label="Open VIP Profile"
+                title={vipProfile ? `${vipProfile.name} • VIP Profile` : 'Create VIP Profile'}
               >
-                <Search className="w-4 h-4" />
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-[#e50914] to-amber-500 flex items-center justify-center text-xs shadow">
+                  {vipProfile?.avatar || '👑'}
+                </span>
+                <span className="text-[11px] font-extrabold max-w-[68px] truncate">
+                  {vipProfile?.name || 'VIP'}
+                </span>
               </button>
             )}
 
@@ -222,7 +242,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Single-Line Horizontally Scrollable Quick App Category Pills */}
+        {/* Single-Line Horizontally Scrollable Quick App Category Pills + Surprise Me */}
         {onSelectAppQuickChip && (
           <div className="max-w-[1440px] mx-auto px-4 pb-2.5 pt-0.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
             {appQuickChips.map((chip) => {
@@ -242,6 +262,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               );
             })}
+            {onSurpriseMe && (
+              <button
+                type="button"
+                onClick={onSurpriseMe}
+                className="px-3.5 py-1.5 rounded-full text-xs font-black whitespace-nowrap shrink-0 border border-amber-400/45 bg-gradient-to-r from-amber-500/20 to-[#e50914]/25 hover:from-amber-500/35 hover:to-[#e50914]/40 text-amber-200 flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_12px_rgba(245,158,11,0.25)]"
+                title="Spin VIP Drama Roulette"
+              >
+                <Dices className="w-3.5 h-3.5 text-amber-300" />
+                <span>Surprise Me</span>
+              </button>
+            )}
           </div>
         )}
       </header>
@@ -259,8 +290,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 src={transparentLogoSrc} 
                 alt="AsiaFlix Prime" 
                 referrerPolicy="no-referrer"
-                style={{ background: 'transparent', mixBlendMode: 'screen' }}
-                className="w-full h-full shrink-0 object-contain group-hover:scale-105 transition-transform drop-shadow-[0_0_12px_rgba(229,9,20,0.55)]"
+                style={{
+                  filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
+                  mixBlendMode: 'screen',
+                  background: 'transparent',
+                }}
+                className="w-full h-full shrink-0 object-contain group-hover:scale-105 transition-transform"
               />
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 md:w-3 md:h-3 bg-emerald-500 rounded-full border-2 border-[#08080c]" title="Network Active" />
             </div>
@@ -377,15 +412,41 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* ALWAYS-VISIBLE PROMINENT SEARCH BUTTON (PHONE, TABLET, LAPTOP) */}
+          {/* ALWAYS-VISIBLE PROMINENT CLIPS BUTTON */}
+          {onOpenClips && (
+            <button
+              onClick={onOpenClips}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-gradient-to-r from-[#ff2a85]/20 to-[#e50914]/25 hover:from-[#ff2a85]/40 hover:to-[#e50914]/45 border border-pink-400/40 text-xs md:text-[13px] font-extrabold text-pink-200 hover:text-white transition-all shadow-sm cursor-pointer whitespace-nowrap shrink-0"
+              title="Watch Vertical VIP Drama Clips"
+            >
+              <Clapperboard className="w-3.5 h-3.5 text-pink-400" />
+              <span>Clips</span>
+            </button>
+          )}
+
+          {/* ALWAYS-VISIBLE PROMINENT SEARCH BUTTON (Desktop Web) */}
           {handleOpenSearchAction && (
             <button
               onClick={handleOpenSearchAction}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 border border-red-500/40 text-xs md:text-[13px] font-extrabold text-white transition-all shadow-[0_0_15px_rgba(229,9,20,0.35)] cursor-pointer whitespace-nowrap shrink-0 hover:scale-105 active:scale-95"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2b54] hover:from-red-600 hover:to-pink-600 border border-red-500/40 text-xs md:text-[13px] font-extrabold text-white transition-all shadow-[0_0_15px_rgba(229,9,20,0.35)] cursor-pointer whitespace-nowrap shrink-0 hover:scale-105 active:scale-95"
               title="Quick Search Dramas, Movies, and Cast"
             >
               <Search className="w-3.5 h-3.5 text-white" />
               <span>Search</span>
+            </button>
+          )}
+
+          {/* VIP Profile Avatar Button (Website Mode) */}
+          {onOpenProfile && (
+            <button
+              onClick={onOpenProfile}
+              className="flex items-center gap-1.5 px-2.5 py-1 md:py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-xs md:text-[13px] font-extrabold text-white transition-all cursor-pointer whitespace-nowrap shrink-0"
+              title="My VIP Profile, Liked Clips & History"
+            >
+              <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#e50914] to-amber-500 flex items-center justify-center text-[11px]">
+                {vipProfile?.avatar || '👑'}
+              </span>
+              <span className="max-w-[78px] truncate">{vipProfile?.name || 'Profile'}</span>
             </button>
           )}
 

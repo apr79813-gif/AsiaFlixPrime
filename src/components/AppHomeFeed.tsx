@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { WeekendMegaLineupSection } from './WeekendMegaLineupSection';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
+import { getWatchTimestampForDrama } from '../services/vipPlayerHelper';
 import { AdultsOnlyBadge } from './AdultsOnlyBadge';
 
 interface AppPosterCardProps {
@@ -21,6 +22,7 @@ interface AppPosterCardProps {
   isWatchlisted: boolean;
   rankNumber?: number;
   inGrid?: boolean;
+  showProgressBar?: boolean;
 }
 
 const AppPosterCard: React.FC<AppPosterCardProps> = ({
@@ -30,8 +32,17 @@ const AppPosterCard: React.FC<AppPosterCardProps> = ({
   isWatchlisted,
   rankNumber,
   inGrid = false,
+  showProgressBar = false,
 }) => {
   const ageInfo = getAgeRatingMeta(drama.ageRating);
+  const watchTs = showProgressBar ? getWatchTimestampForDrama(drama.id) : null;
+  const progressPct = showProgressBar
+    ? watchTs && watchTs.duration > 0
+      ? Math.min(100, Math.max(8, Math.round((watchTs.currentTime / watchTs.duration) * 100)))
+      : watchTs && watchTs.currentTime > 0
+      ? 35
+      : 22
+    : 0;
 
   const audioBadge =
     drama.defaultAudio === 'Hindi Dubbed'
@@ -111,13 +122,34 @@ const AppPosterCard: React.FC<AppPosterCardProps> = ({
         </button>
 
         {/* Bottom overlay rating & 18+ indicator */}
-        <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between gap-1 pointer-events-none">
-          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/75 text-amber-300 text-[10px] font-bold">
-            <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
-            <span>{drama.rating}</span>
-          </span>
+        <div
+          className={`absolute left-1.5 right-1.5 flex items-center justify-between gap-1 pointer-events-none ${
+            showProgressBar ? 'bottom-3' : 'bottom-1.5'
+          }`}
+        >
+          {showProgressBar && watchTs ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#e50914] text-white text-[9px] font-black shadow">
+              <Play className="w-2.5 h-2.5 fill-white" />
+              <span>Ep {watchTs.ep}</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/75 text-amber-300 text-[10px] font-bold">
+              <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+              <span>{drama.rating}</span>
+            </span>
+          )}
           {ageInfo.is18Plus && <AdultsOnlyBadge size="xs" />}
         </div>
+
+        {/* Continue Watching Bottom Progress Bar */}
+        {showProgressBar && (
+          <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/20 overflow-hidden pointer-events-none">
+            <div
+              style={{ width: `${progressPct}%` }}
+              className="h-full bg-gradient-to-r from-[#e50914] to-[#ff2a5f] shadow-[0_0_8px_rgba(229,9,20,0.85)] transition-all"
+            />
+          </div>
+        )}
       </div>
 
       <div className="p-2 flex flex-col gap-0.5 min-w-0">
@@ -140,6 +172,7 @@ interface AppCatalogRowProps {
   onSelectDrama: (drama: DramaItem) => void;
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (id: string) => boolean;
+  showProgressBar?: boolean;
 }
 
 const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
@@ -150,6 +183,7 @@ const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
   onSelectDrama,
   onToggleWatchlist,
   isWatchlisted,
+  showProgressBar = false,
 }) => {
   const uniqueList = useMemo(() => {
     const seen = new Set<string>();
@@ -186,6 +220,7 @@ const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
             onSelectDrama={onSelectDrama}
             onToggleWatchlist={onToggleWatchlist}
             isWatchlisted={isWatchlisted(drama.id)}
+            showProgressBar={showProgressBar}
           />
         ))}
       </div>
@@ -401,65 +436,65 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
             const heroAgeInfo = getAgeRatingMeta(heroDrama.ageRating);
             return (
               <section className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3">
-                <div className="aspect-[16/10] sm:aspect-[21/9] w-full relative rounded-2xl overflow-hidden border border-white/10 bg-[#07070c] flex items-end shadow-2xl">
+                <div className="min-h-[235px] sm:min-h-[340px] sm:aspect-[21/9] w-full relative rounded-2xl overflow-hidden border border-white/10 bg-[#07070c] flex items-end shadow-2xl">
                   <img
                     src={activeSlide.backdropUrl || heroDrama.backdrop || heroDrama.poster}
                     alt={activeSlide.title}
                     referrerPolicy="no-referrer"
-                    className="absolute inset-0 w-full h-full object-cover object-center"
+                    className="absolute inset-0 w-full h-full object-cover object-top sm:object-center"
                   />
-                  {/* Edge-Only Cinema Gradients (keep main artwork faces & upper/right 65% uncovered) */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#07070c] via-[#07070c]/40 to-transparent" />
-                  <div className="absolute inset-0 bg-gradient-to-r from-[#07070c]/80 via-[#07070c]/25 to-transparent" />
+                  {/* Bottom 42% Gradient Only (keeps upper 60% artwork & faces completely uncovered) */}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-[#07070c] via-[#07070c]/80 to-transparent" />
+                  <div className="pointer-events-none absolute inset-y-0 left-0 w-[62%] bg-gradient-to-r from-[#07070c]/70 via-[#07070c]/20 to-transparent" />
 
                   <div className="relative z-10 p-3 sm:p-6 max-w-2xl w-full flex flex-col justify-end">
-                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] sm:text-xs font-bold text-zinc-100">
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white font-black uppercase tracking-wider shadow">
+                    <div className="flex flex-wrap items-center gap-1 text-[9px] sm:text-xs font-bold text-zinc-100">
+                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white font-black uppercase tracking-wider shadow">
                         {activeSlide.badge && !activeSlide.badge.includes(',') && activeSlide.badge.length < 24
                           ? activeSlide.badge
                           : '🔥 VIP PICK'}
                       </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-white/15 backdrop-blur-sm text-white font-bold">
+                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-white/15 backdrop-blur-sm text-white font-bold">
                         {heroDrama.category}
                       </span>
                       {heroDrama.ageRating &&
                         (heroAgeInfo.is18Plus ? (
                           <AdultsOnlyBadge size="xs" />
                         ) : (
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${heroAgeInfo.pillClass}`}>
+                          <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-bold ${heroAgeInfo.pillClass}`}>
                             {heroAgeInfo.label}
                           </span>
                         ))}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-zinc-200 font-bold">
+                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-zinc-200 font-bold">
                         {heroDrama.releaseYear}
                       </span>
-                      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-black">
+                      <span className="inline-flex items-center gap-0.5 text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-black">
                         <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
                         {heroDrama.rating}
                       </span>
                       {heroDrama.defaultAudio && (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-extrabold">
+                        <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-extrabold">
                           {heroDrama.defaultAudio}
                         </span>
                       )}
                     </div>
 
-                    <h1 className="text-lg sm:text-2xl font-black text-white leading-tight mt-1 line-clamp-1 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
+                    <h1 className="text-base sm:text-2xl font-black text-white leading-tight mt-1 line-clamp-1 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
                       {heroDrama.title}
                     </h1>
 
-                    <p className="text-[11px] sm:text-xs text-gray-200 line-clamp-2 max-w-[90%] mt-0.5 leading-snug drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]">
+                    <p className="text-[10px] sm:text-xs text-gray-200 line-clamp-2 max-w-[92%] mt-0.5 leading-snug drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]">
                       {heroDrama.synopsis || activeSlide.synopsis}
                     </p>
 
-                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2">
                       <button
                         type="button"
                         onClick={() => onSelectDrama(heroDrama)}
-                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-xs font-extrabold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-red-600/35 cursor-pointer transition-transform active:scale-95"
+                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-[11px] sm:text-xs font-extrabold px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-red-600/35 cursor-pointer transition-transform active:scale-95"
                       >
                         <Play className="w-3.5 h-3.5 fill-white" />
-                        <span>▶ Watch Now</span>
+                        <span>Watch Now</span>
                       </button>
 
                       {heroTelegramUrl && (
@@ -467,17 +502,17 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
                           href={heroTelegramUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="bg-white/15 hover:bg-[#0088cc]/45 backdrop-blur-md border border-white/20 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-colors"
+                          className="bg-white/15 hover:bg-[#0088cc]/45 backdrop-blur-md border border-white/20 text-white text-[11px] sm:text-xs font-bold px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl flex items-center gap-1.5 transition-colors"
                         >
                           <Send className="w-3.5 h-3.5 text-[#38bdf8]" />
-                          <span>✈️ Open in Telegram</span>
+                          <span>Open in Telegram</span>
                         </a>
                       )}
 
                       <button
                         type="button"
                         onClick={() => onToggleWatchlist(heroDrama)}
-                        className={`px-2.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1 cursor-pointer backdrop-blur-md transition-colors ${
+                        className={`px-2.5 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold border flex items-center gap-1 cursor-pointer backdrop-blur-md transition-colors ${
                           isWatchlisted(heroDrama.id)
                             ? 'bg-amber-500/25 border-amber-400/55 text-amber-200'
                             : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
@@ -576,6 +611,7 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
               onSelectDrama={onSelectDrama}
               onToggleWatchlist={onToggleWatchlist}
               isWatchlisted={isWatchlisted}
+              showProgressBar={true}
             />
           )}
 

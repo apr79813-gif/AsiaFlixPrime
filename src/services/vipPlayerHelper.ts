@@ -886,12 +886,37 @@ export function normalizeUniversalAssetUrl(rawUrl: string): string {
 }
 
 export function isDeadExternalAudioUrl(rawUrl?: string): boolean {
-  if (!rawUrl) return false;
-  const lower = rawUrl.trim().toLowerCase();
-  return (
-    lower.includes('huggingface.co/datasets/asiaflixprime/') &&
-    /\.mp3(\?|$)/i.test(lower)
-  );
+  if (!rawUrl) return true;
+  return !/^https?:\/\//i.test(rawUrl.trim());
+}
+
+export function buildProxiedMediaUrl(rawUrl: string): string {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('/api/okru-proxy')) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    const proxyHosts = [
+      'catbox.moe',
+      'huggingface.co',
+      'hf.co',
+      'cdn-lfs.huggingface.co',
+      'cdn-lfs-us-1.huggingface.co',
+      'raw.githubusercontent.com',
+      'github.com',
+      'objects.githubusercontent.com',
+      'drive.google.com',
+      'googleusercontent.com',
+      'archive.org',
+    ];
+    if (proxyHosts.some((h) => host === h || host.endsWith(`.${h}`))) {
+      return `/api/okru-proxy?url=${encodeURIComponent(trimmed)}&ref=${encodeURIComponent(`${parsed.origin}/`)}`;
+    }
+  } catch {
+    // ignore malformed URL
+  }
+  return trimmed;
 }
 
 export function isExtractorAudioUrl(rawUrl?: string): boolean {
@@ -988,11 +1013,14 @@ export async function resolveExternalAudioStream(
     };
   }
 
-  // 3. Direct .mp3 / .m4a / .wav / .mp4 / .m3u8 URL
+  // 3. Direct .mp3 / .m4a / .wav / .mp4 / .m3u8 URL (Google Drive always routed through /api/okru-proxy for redirect/CORP safety)
   const normalized = normalizeUniversalAssetUrl(trimmed);
+  const finalSrc = /drive\.google\.com|googleusercontent\.com/i.test(normalized)
+    ? buildProxiedMediaUrl(normalized)
+    : normalized;
   return {
-    ok: Boolean(normalized),
-    src: normalized,
+    ok: Boolean(finalSrc),
+    src: finalSrc,
     isHls: /\.m3u8(\?|$)/i.test(normalized),
   };
 }
@@ -1556,18 +1584,24 @@ export function parseSheetAudioCell(rawAudioCell: string): {
   hindiAudioMap: Map<number, string>;
   fanDubAudioMap: Map<number, string>;
   origAudioMap: Map<number, string>;
+  defaultAudioMap: Map<number, string>;
 } {
   const hindiAudioMap = new Map<number, string>();
   const fanDubAudioMap = new Map<number, string>();
   const origAudioMap = new Map<number, string>();
+  const defaultAudioMap = new Map<number, string>();
   if (!rawAudioCell || !rawAudioCell.trim()) {
-    return { hindiAudioMap, fanDubAudioMap, origAudioMap };
+    return { hindiAudioMap, fanDubAudioMap, origAudioMap, defaultAudioMap };
   }
 
-  // Strip subtitle tags & .srt/.vtt links before audio extraction
-  const cellWithoutSubtitles = rawAudioCell
+  // Normalize wrapped lines where URL appears on the line after = or :
+  const normalizedAudio = rawAudioCell.replace(/([=:])\s*[\r\n]+\s*(https?:\/\/)/gi, '$1 $2');
+
+  // Strip subtitle tags & .srt/.vtt links before audio extraction (preserve Hin/FD/ED/HD/H/D/F/O/OD/OS/Ep/Es/A/Audio audio links)
+  const cellWithoutSubtitles = normalizedAudio
     .replace(/\b(?:sub|subtitle|subtitles|srt)\s*[-_#\s]*ep(?:isode)?\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-    .replace(/\b(?!hd\b|fd\b|os\b|od\b|ep\b|es\b|hindi\b|fan\b|orig\b|original\b)([a-zA-Z]{2,15})\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
+    .replace(/\b(?:[a-zA-Z0-9\s_-]{1,24})\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi, ' ')
+    .replace(/\b(?:eng|en|english|kor|ko|korean|urd|urdu|ben|bengali|mai|maithili|bho|bhojpuri|tam|tamil|tel|telugu|mar|marathi|guj|gujarati|pan|punjabi|chi|chinese|jpn|japanese|tha|thai|ind|ara|spa|fre|ger|ita|por|rus|vie|tur)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
     .replace(/https?:\/\/[^\s,\n|"'<>]+\.(?:md\.srt|srt|vtt)(?:[?#][^\s,\n|"'<>]*)?/gi, ' ');
 
   const normalizeAudioTarget = (u: string): string => {
@@ -1577,9 +1611,12 @@ export function parseSheetAudioCell(rawAudioCell: string): {
     return normalizeUniversalAssetUrl(trimmed);
   };
 
+  const hdPattern = /\b(?:hd|hindi\s*(?:ep(?:isode)?)?|hin(?:\s*ep(?:isode)?)?|h|d)\s*[-_#]?\s*(\d+)\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  const fdPattern = /\b(?:fd|ed|fan\s*(?:dub(?:bed)?)?(?:\s*ep(?:isode)?)?|f)\s*[-_#]?\s*(\d+)\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  const osPattern = /\b(?:os|od|orig(?:inal)?(?:\s*ep(?:isode)?)?|o)\s*[-_#]?\s*(\d+)\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+
   let am: RegExpExecArray | null;
-  const hdRegex = /\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-  while ((am = hdRegex.exec(cellWithoutSubtitles)) !== null) {
+  while ((am = hdPattern.exec(cellWithoutSubtitles)) !== null) {
     const epNum = parseInt(am[1], 10);
     const aUrl = normalizeAudioTarget(am[2]);
     if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
@@ -1587,8 +1624,7 @@ export function parseSheetAudioCell(rawAudioCell: string): {
     }
   }
 
-  const fdRegex = /\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-  while ((am = fdRegex.exec(cellWithoutSubtitles)) !== null) {
+  while ((am = fdPattern.exec(cellWithoutSubtitles)) !== null) {
     const epNum = parseInt(am[1], 10);
     const aUrl = normalizeAudioTarget(am[2]);
     if (!Number.isNaN(epNum) && aUrl && !fanDubAudioMap.has(epNum)) {
@@ -1596,8 +1632,7 @@ export function parseSheetAudioCell(rawAudioCell: string): {
     }
   }
 
-  const osRegex = /\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
-  while ((am = osRegex.exec(cellWithoutSubtitles)) !== null) {
+  while ((am = osPattern.exec(cellWithoutSubtitles)) !== null) {
     const epNum = parseInt(am[1], 10);
     const aUrl = normalizeAudioTarget(am[2]);
     if (!Number.isNaN(epNum) && aUrl && !origAudioMap.has(epNum)) {
@@ -1605,38 +1640,38 @@ export function parseSheetAudioCell(rawAudioCell: string): {
     }
   }
 
-  // Generic Ep1/Ep2 fallback inside Audio column -> Hindi Dubbed
+  // Default / All Tracks fallback: Ep{N}, Es{N}, A{N}, Audio{N}
   const withoutTrackAudio = cellWithoutSubtitles
-    .replace(/\b(?:hd|hindi\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-    .replace(/\b(?:fd|fan\s*(?:dub)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ')
-    .replace(/\b(?:os|od|orig(?:inal)?\s*(?:ep(?:isode)?)?)\s*[-_#]?\s*\d*\s*[:=\-|]*\s*https?:\/\/[^\s,\n|"'<>]+/gi, ' ');
-  const epAudioRegex = /\b(?:ep|episode|e)\s*[-_#]?\s*(\d+)\s*[:=\-|]?\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+    .replace(hdPattern, ' ')
+    .replace(fdPattern, ' ')
+    .replace(osPattern, ' ');
+  const epAudioRegex = /\b(?:ep(?:isode)?|es|audio|a)\s*[-_#]?\s*(\d+)\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
   while ((am = epAudioRegex.exec(withoutTrackAudio)) !== null) {
     const epNum = parseInt(am[1], 10);
     const aUrl = normalizeAudioTarget(am[2]);
-    if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
-      hindiAudioMap.set(epNum, aUrl);
+    if (!Number.isNaN(epNum) && aUrl && !defaultAudioMap.has(epNum)) {
+      defaultAudioMap.set(epNum, aUrl);
     }
   }
 
   // S01E01 filename fallback
-  const allRawAudioUrls = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
+  const allRawAudioUrls = withoutTrackAudio.match(/https?:\/\/[^\s,\n|"'<>]+/g) || [];
   allRawAudioUrls.forEach((rawUrl) => {
     const seMatch = rawUrl.match(/S\d{1,2}E(\d{1,3})/i);
     if (seMatch) {
       const epNum = parseInt(seMatch[1], 10);
       const aUrl = normalizeAudioTarget(rawUrl);
-      if (!Number.isNaN(epNum) && aUrl && !hindiAudioMap.has(epNum)) {
-        hindiAudioMap.set(epNum, aUrl);
+      if (!Number.isNaN(epNum) && aUrl && !defaultAudioMap.has(epNum)) {
+        defaultAudioMap.set(epNum, aUrl);
       }
     }
   });
 
-  const hdUnnumbered = cellWithoutSubtitles.match(/\b(?:hd|hindi)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+  const hdUnnumbered = cellWithoutSubtitles.match(/\b(?:hd|hindi|hin)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
   if (hdUnnumbered && !hindiAudioMap.has(1)) {
     hindiAudioMap.set(1, normalizeAudioTarget(hdUnnumbered[1]));
   }
-  const fdUnnumbered = cellWithoutSubtitles.match(/\b(?:fd|fan)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
+  const fdUnnumbered = cellWithoutSubtitles.match(/\b(?:fd|ed|fan(?:\s*dub)?)\b\s*[:=\-|]+\s*(https?:\/\/[^\s,\n|"'<>]+)/i);
   if (fdUnnumbered && !fanDubAudioMap.has(1)) {
     fanDubAudioMap.set(1, normalizeAudioTarget(fdUnnumbered[1]));
   }
@@ -1645,14 +1680,14 @@ export function parseSheetAudioCell(rawAudioCell: string): {
     origAudioMap.set(1, normalizeAudioTarget(osUnnumbered[1]));
   }
 
-  if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0) {
+  if (hindiAudioMap.size === 0 && fanDubAudioMap.size === 0 && origAudioMap.size === 0 && defaultAudioMap.size === 0) {
     const singleRawAudio = cellWithoutSubtitles.match(/https?:\/\/[^\s,\n|"'<>]+/);
     if (singleRawAudio) {
-      hindiAudioMap.set(1, normalizeAudioTarget(singleRawAudio[0]));
+      defaultAudioMap.set(1, normalizeAudioTarget(singleRawAudio[0]));
     }
   }
 
-  return { hindiAudioMap, fanDubAudioMap, origAudioMap };
+  return { hindiAudioMap, fanDubAudioMap, origAudioMap, defaultAudioMap };
 }
 
 const translatedCueMemCache = new Map<string, SubtitleCue[]>();
@@ -1758,5 +1793,48 @@ export async function translateSubtitleCues(
   writeSessionCacheEntry(TRANSLATED_SUBS_SESSION_KEY, fullCacheKey, resultCues, 60 * 60 * 1000);
   return resultCues;
 }
+
+export interface ParsedSheetClipEntry {
+  index: number;
+  label: string;
+  url: string;
+}
+
+export function parseSheetClipsCell(rawClipsCell: string): ParsedSheetClipEntry[] {
+  if (!rawClipsCell || !rawClipsCell.trim()) return [];
+  const normalized = rawClipsCell.replace(/([=:])\s*[\r\n]+\s*(https?:\/\/)/gi, '$1 $2');
+  const results: ParsedSheetClipEntry[] = [];
+  const seenUrls = new Set<string>();
+
+  const pushClip = (index: number, label: string, rawUrl: string) => {
+    const cleanUrl = normalizeUniversalAssetUrl(rawUrl);
+    if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl) || seenUrls.has(cleanUrl)) return;
+    seenUrls.add(cleanUrl);
+    results.push({ index, label, url: cleanUrl });
+  };
+
+  // Match Cs1 = ..., Clip 1 = ..., C1 = ...
+  const taggedRegex = /\b(?:cs|clip\s*s?|c)\s*[-_#]?\s*(\d+)\s*[:=\-|]*\s*(https?:\/\/[^\s,\n|"'<>]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = taggedRegex.exec(normalized)) !== null) {
+    const num = parseInt(m[1], 10);
+    pushClip(num, `VIP Clip #${num}`, m[2]);
+  }
+
+  // Also capture any bare direct video/extractor URLs in the Clips column
+  const bareUrls = normalized.match(/https?:\/\/[^\s,\n|"'<>]+/gi) || [];
+  let autoIdx = results.length + 1;
+  bareUrls.forEach((raw) => {
+    const norm = normalizeUniversalAssetUrl(raw);
+    if (!norm || seenUrls.has(norm)) return;
+    if (/\.(mp4|m4v|webm|mov|m3u8)(\?|$)/i.test(norm) || /(?:ok\.ru|odnoklassniki\.ru|vk\.com|vkvideo\.ru|archive\.org|catbox\.moe|huggingface\.co|hf\.co)/i.test(norm)) {
+      pushClip(autoIdx, `VIP Clip #${autoIdx}`, raw);
+      autoIdx++;
+    }
+  });
+
+  return results.sort((a, b) => a.index - b.index);
+}
+
 
 

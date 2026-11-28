@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -551,12 +552,15 @@ async function startServer(): Promise<void> {
       const pitch = clampPitchHz(body.pitch, '+0Hz');
 
       let audioBuffer: Buffer | null = null;
+      let ttsProvider: 'edge' | 'gtx' = 'edge';
       try {
         audioBuffer = await synthesizeEdgeNeuralTts(cleanText, requestedVoice, rate, pitch);
+        ttsProvider = 'edge';
       } catch {
         // Fallback to Google GTX TTS
         try {
           audioBuffer = await synthesizeGoogleGtxTts(cleanText, requestedLang);
+          ttsProvider = 'gtx';
         } catch {
           audioBuffer = null;
         }
@@ -568,6 +572,67 @@ async function startServer(): Promise<void> {
       }
 
       res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('X-TTS-Provider', ttsProvider);
+      res.setHeader('Access-Control-Expose-Headers', 'X-TTS-Provider');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.send(audioBuffer);
+    } catch {
+      res.status(500).json({ error: 'Internal TTS error' });
+    }
+  });
+
+  // 1B. Direct GET Neural TTS Endpoint (hi-IN-MadhurNeural / hi-IN-SwaraNeural + X-TTS-Provider header)
+  app.get('/api/neural-tts', async (req: Request, res: Response) => {
+    try {
+      const rawText = typeof req.query.text === 'string' ? req.query.text.trim() : '';
+      if (!rawText) {
+        res.status(400).json({ error: 'Missing text' });
+        return;
+      }
+      const cleanText = rawText
+        .replace(/[\u0000-\u001F\u007F]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500);
+      const gender = typeof req.query.gender === 'string' && req.query.gender.toLowerCase() === 'male' ? 'male' : 'female';
+      const lang = typeof req.query.lang === 'string' && req.query.lang.trim() ? req.query.lang.trim() : 'hi';
+      const baseLang = lang.split('-')[0].toLowerCase();
+
+      let voice = gender === 'male' ? 'hi-IN-MadhurNeural' : 'hi-IN-SwaraNeural';
+      if (baseLang === 'en') voice = gender === 'male' ? 'en-IN-PrabhatNeural' : 'en-IN-NeerjaNeural';
+      else if (baseLang === 'ko') voice = gender === 'male' ? 'ko-KR-InJoonNeural' : 'ko-KR-SunHiNeural';
+      else if (baseLang === 'ur') voice = gender === 'male' ? 'ur-PK-AsadNeural' : 'ur-PK-UzmaNeural';
+      else if (baseLang === 'bn') voice = gender === 'male' ? 'bn-IN-BashkarNeural' : 'bn-IN-TanishaaNeural';
+      else if (baseLang === 'ta') voice = gender === 'male' ? 'ta-IN-ValluvarNeural' : 'ta-IN-PallaviNeural';
+      else if (baseLang === 'te') voice = gender === 'male' ? 'te-IN-MohanNeural' : 'te-IN-ShrutiNeural';
+      else if (baseLang === 'ja') voice = gender === 'male' ? 'ja-JP-KeitaNeural' : 'ja-JP-NanamiNeural';
+      else if (baseLang === 'zh') voice = gender === 'male' ? 'zh-CN-YunxiNeural' : 'zh-CN-XiaoxiaoNeural';
+
+      const rate = clampPercentDelta(req.query.rate, '+0%');
+      const pitch = clampPitchHz(req.query.pitch, gender === 'male' ? '-8Hz' : '+6Hz');
+
+      let audioBuffer: Buffer | null = null;
+      let ttsProvider: 'edge' | 'gtx' = 'edge';
+      try {
+        audioBuffer = await synthesizeEdgeNeuralTts(cleanText, voice, rate, pitch);
+        ttsProvider = 'edge';
+      } catch {
+        try {
+          audioBuffer = await synthesizeGoogleGtxTts(cleanText, lang);
+          ttsProvider = 'gtx';
+        } catch {
+          audioBuffer = null;
+        }
+      }
+
+      if (!audioBuffer || audioBuffer.length === 0) {
+        res.status(502).json({ error: 'TTS providers unavailable' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('X-TTS-Provider', ttsProvider);
+      res.setHeader('Access-Control-Expose-Headers', 'X-TTS-Provider');
       res.setHeader('Cache-Control', 'public, max-age=3600');
       res.send(audioBuffer);
     } catch {
@@ -635,6 +700,16 @@ async function startServer(): Promise<void> {
     'userapi.com',
     'vk.me',
     'archive.org',
+    'catbox.moe',
+    'huggingface.co',
+    'hf.co',
+    'cdn-lfs.huggingface.co',
+    'cdn-lfs-us-1.huggingface.co',
+    'raw.githubusercontent.com',
+    'github.com',
+    'objects.githubusercontent.com',
+    'drive.google.com',
+    'googleusercontent.com',
   ];
 
   const isAllowedMediaProxyHost = (hostname: string): boolean => {

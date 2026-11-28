@@ -120,7 +120,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   onUpdateTelegramBotSettings,
   adConfig,
   onUpdateAdConfig,
-  customApkUrl = '/AsiaFlix-Prime.apk',
+  customApkUrl = '',
   onUpdateCustomApkUrl,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(isAuthenticatedParent);
@@ -3471,7 +3471,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
                   <div className="space-y-1.5 pt-1">
                     <label className="block text-[11px] font-bold text-zinc-300">
-                      Custom Android .APK Direct Download URL (optional, defaults to /AsiaFlix-Prime.apk)
+                      Custom Verified HTTPS Android .APK URL (optional — leave blank for WebAPK Instant Install)
                     </label>
                     <div className="flex flex-wrap items-center gap-2">
                       <input

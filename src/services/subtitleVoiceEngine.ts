@@ -173,6 +173,7 @@ interface DialogueTurn {
 interface CachedTurnAudio {
   buffer: AudioBuffer | null;
   failed: boolean;
+  usedGtxFallback?: boolean;
 }
 
 function stripSrtMarkup(raw: string): string {
@@ -209,9 +210,9 @@ function detectGrammarGenderFromText(text: string): 'M' | 'F' | null {
   const malePatterns = [
     // Hindi / Bhojpuri / Maithili
     /रहा\s*(?:हूँ|हुँ|था|होगा|बानी|बा)/,
-    /करूँगा|करूंगा|जाऊँगा|जाऊंगा|बताऊँगा|बताऊंगा|आऊँगा|आऊंगा|देखूँगा|देखूंगा|बोलूँगा|बोलूंगा/,
-    /आया\s*(?:हूँ|हुँ|था)|गया\s*(?:हूँ|हुँ|था)|बैठा\s*(?:हूँ|हुँ|था)|खड़ा\s*(?:हूँ|हुँ|था)/,
-    /मेरा\s+(?:भाई|नाम|बाप|पिता)|हमर\s+(?:भाई|भाय|बाबू|पिताजी|बेटा|मरद)/,
+    /करूँगा|करूंगा|लाऊँगा|लाऊंगा|जाऊँगा|जाऊंगा|बताऊँगा|बताऊंगा|आऊँगा|आऊंगा|दूंगा|दूँगा|लूंगा|लूँगा|देखूँगा|देखूंगा|बोलूँगा|बोलूंगा/,
+    /आया(?:\s*(?:हूँ|हुँ|था))?|गया(?:\s*(?:हूँ|हुँ|था))?|किया(?:\s*(?:हूँ|हुँ|था))?|बैठा\s*(?:हूँ|हुँ|था)|खड़ा\s*(?:हूँ|हुँ|था)/,
+    /मेरा(?:\s+(?:भाई|नाम|बाप|पिता))?|भाई|सर|साहब|हमर\s+(?:भाई|भाय|बाबू|पिताजी|बेटा|मरद)/,
     /मैं\s+करता|मैं\s+जानता|मैं\s+समझता|मैं\s+सोचता/,
     /हम\s+(?:करैत\s+छी|जा\s+रहल\s+छी|जा\s+रहल\s+बानी|करतानी|कइनी\s+ह|भाइयो)/,
     /बाबूजी|भैया|हमारी\s+पत्नी|हमर\s+कनियाँ|हमर\s+मेहरारू/,
@@ -226,8 +227,8 @@ function detectGrammarGenderFromText(text: string): 'M' | 'F' | null {
   const femalePatterns = [
     // Hindi / Bhojpuri / Maithili
     /रही\s*(?:हूँ|हुँ|थी|होगी|बानी|बा)/,
-    /करूँगी|करूंगी|जाऊँगी|जाऊंगी|बताऊँगी|बताऊंगी|आऊँगी|आऊंगी|देखूँगी|देखूंगी|बोलूँगी|बोलूंगी/,
-    /आई\s*(?:हूँ|हुँ|थी)|गई\s*(?:हूँ|हुँ|थी)|बैठी\s*(?:हूँ|हुँ|थी)|खड़ी\s*(?:हूँ|हुँ|थी)/,
+    /करूँगी|करूंगी|लाऊँगी|लाऊंगी|जाऊँगी|जाऊंगी|बताऊँगी|बताऊंगी|आऊँगी|आऊंगी|दूंगी|दूँगी|लूंगी|लूँगी|देखूँगी|देखूंगी|बोलूँगी|बोलूंगी/,
+    /आई(?:\s*(?:हूँ|हुँ|थी))?|गई(?:\s*(?:हूँ|हुँ|थी))?|बैठी\s*(?:हूँ|हुँ|थी)|खड़ी\s*(?:हूँ|हुँ|थी)/,
     /मेरी\s+(?:बहन|माँ)|हमर\s+(?:बहीन|बहिन|महतारी|बेटी|माई)/,
     /मैं\s+करती|मैं\s+जानती|मैं\s+समझती|मैं\s+सोचती/,
     /हम\s+(?:जा\s+रहल\s+बानी|करती\s+बानी|कइली\s+ह|बनी)/,
@@ -623,8 +624,8 @@ export class SubtitleVoiceEngine {
       this.vocalAnalyser.getFloatTimeDomainData(sampleBuf);
       const f0 = estimateF0FromSamples(sampleBuf, this.audioCtx.sampleRate);
       if (f0 === null) return null;
-      if (f0 >= 82 && f0 <= 168) return 'M';
-      if (f0 >= 172 && f0 <= 315) return 'F';
+      if (f0 >= 82 && f0 < 168) return 'M';
+      if (f0 > 175 && f0 <= 315) return 'F';
       return null;
     } catch {
       return null;
@@ -638,7 +639,7 @@ export class SubtitleVoiceEngine {
       this.duckHoldTimer = null;
     }
 
-    const targetGain = speakingNow ? 0.18 : 0.34;
+    const targetGain = speakingNow ? 0.16 : 0.32;
     const hasGraph = this.ensureVideoBgmGraph();
 
     if (
@@ -653,9 +654,9 @@ export class SubtitleVoiceEngine {
       this.midSideCancellerGain.gain.setTargetAtTime(1.0, now, 0.05);
       this.videoGainNode.gain.setTargetAtTime(targetGain, now, 0.07);
     } else {
-      // Non-CORS fallback: mute original dialogue completely during active dub so zero foreign words bleed
+      // Non-CORS fallback: smooth volume ducking (0.06 during dub speech, 0.20 between cues)
       try {
-        this.attachedVideo.volume = speakingNow ? 0.0 : 0.22;
+        this.attachedVideo.volume = speakingNow ? 0.06 : 0.20;
       } catch {}
     }
   }
@@ -934,8 +935,9 @@ export class SubtitleVoiceEngine {
     const profile = CHARACTER_PROFILES[turn.profileId];
     const effectivePitch = profile.basePitch * turn.pitchMult;
     const selectedVoice = this.getVoiceForProfile(turn.profileId);
+    const genderParam = profile.gender === 'M' ? 'male' : 'female';
     try {
-      const resp = await fetch('/api/tts', {
+      let resp = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -947,17 +949,29 @@ export class SubtitleVoiceEngine {
         }),
       });
       if (!resp.ok) {
-        return { buffer: null, failed: true };
+        const qs = new URLSearchParams({
+          text: turn.text,
+          gender: genderParam,
+          lang: this.activeLangCode || 'hi',
+          rate: String(profile.baseRate * turn.rateMult),
+          pitch: String(effectivePitch),
+        });
+        resp = await fetch(`/api/neural-tts?${qs.toString()}`);
       }
+      if (!resp.ok) {
+        return { buffer: null, failed: true, usedGtxFallback: false };
+      }
+      const providerHeader = (resp.headers.get('X-TTS-Provider') || '').toLowerCase();
+      const usedGtxFallback = providerHeader === 'gtx';
       const arr = await resp.arrayBuffer();
       const ctx = this.ensureAudioContext();
       if (!ctx || arr.byteLength === 0) {
-        return { buffer: null, failed: true };
+        return { buffer: null, failed: true, usedGtxFallback };
       }
       const decoded = await ctx.decodeAudioData(arr.slice(0));
-      return { buffer: decoded, failed: false };
+      return { buffer: decoded, failed: false, usedGtxFallback };
     } catch {
-      return { buffer: null, failed: true };
+      return { buffer: null, failed: true, usedGtxFallback: false };
     }
   }
 
@@ -972,6 +986,15 @@ export class SubtitleVoiceEngine {
   private enqueueCue(cueIndex: number): void {
     const cue = this.cues[cueIndex];
     if (!cue) return;
+    const currentVideoTime = this.attachedVideo?.currentTime;
+    if (
+      typeof currentVideoTime === 'number' &&
+      Number.isFinite(currentVideoTime) &&
+      cue.end > 0 &&
+      cue.end <= currentVideoTime - 0.1
+    ) {
+      return;
+    }
     const cueDuration = this.getCueWindowSeconds(cueIndex);
 
     // Sample acoustic pitch before vocal muting if no grammatical/speaker gender locked
@@ -996,7 +1019,26 @@ export class SubtitleVoiceEngine {
 
   private async drainQueue(): Promise<void> {
     if (this.isSpeaking || !this.enabled) return;
-    const nextItem = this.turnQueue.shift();
+
+    // Zero-lag sync: discard any queued dialogue turns whose subtitle cue has already passed
+    let nextItem = this.turnQueue.shift();
+    const currentVideoTime = this.attachedVideo?.currentTime;
+    while (nextItem) {
+      const cue = this.cues[nextItem.cueIndex];
+      if (
+        cue &&
+        typeof currentVideoTime === 'number' &&
+        Number.isFinite(currentVideoTime) &&
+        cue.end > 0 &&
+        cue.end <= currentVideoTime - 0.12 &&
+        this.turnQueue.length > 0
+      ) {
+        nextItem = this.turnQueue.shift();
+        continue;
+      }
+      break;
+    }
+
     if (!nextItem) {
       this.applyBgmDucking(false);
       return;
@@ -1015,7 +1057,13 @@ export class SubtitleVoiceEngine {
     }
 
     if (cacheEntry.buffer && this.audioCtx && this.ttsGainNode) {
-      await this.playDecodedBuffer(cacheEntry.buffer, nextItem.cueDuration, nextItem.turn, gen);
+      await this.playDecodedBuffer(
+        cacheEntry.buffer,
+        nextItem.cueDuration,
+        nextItem.turn,
+        gen,
+        Boolean(cacheEntry.usedGtxFallback)
+      );
     } else {
       await this.playWebSpeechFallback(nextItem.turn, gen);
     }
@@ -1038,7 +1086,8 @@ export class SubtitleVoiceEngine {
     buffer: AudioBuffer,
     cueDuration: number,
     turn: DialogueTurn,
-    gen: number
+    gen: number,
+    usedGtxFallback = false
   ): Promise<void> {
     return new Promise((resolve) => {
       const ctx = this.audioCtx;
@@ -1053,21 +1102,39 @@ export class SubtitleVoiceEngine {
         source.buffer = buffer;
 
         const profile = CHARACTER_PROFILES[turn.profileId];
-        // Fit speech cleanly inside exact cue window [0.96x .. 1.28x] * video.playbackRate
+        // Fit speech cleanly inside exact cue window [0.96x .. 1.24x] * video.playbackRate
         const naturalFit = buffer.duration / Math.max(0.85, cueDuration - 0.08);
-        const syncedRate = Math.min(1.28, Math.max(0.96, naturalFit)) * this.videoPlaybackRate;
-        source.playbackRate.value = Math.min(1.8, Math.max(0.75, syncedRate));
+        const targetRate = Math.min(1.24, Math.max(0.96, naturalFit)) * this.videoPlaybackRate;
+
+        const isGtxMaleShift = usedGtxFallback && profile.gender === 'M';
+        if (isGtxMaleShift) {
+          source.playbackRate.value = Math.min(1.75, Math.max(0.85, targetRate * 1.18));
+        } else {
+          source.playbackRate.value = Math.min(1.8, Math.max(0.75, targetRate));
+        }
 
         if (typeof source.detune !== 'undefined') {
           const emotionCents = Math.round((turn.pitchMult - 1) * 180);
-          source.detune.value = profile.detuneCents + emotionCents;
+          source.detune.value = isGtxMaleShift
+            ? -320 + emotionCents
+            : profile.detuneCents + emotionCents;
         }
 
         const itemGain = ctx.createGain();
         itemGain.gain.value = Math.min(1.35, turn.volumeMult);
 
-        source.connect(itemGain);
-        itemGain.connect(gain);
+        if (isGtxMaleShift) {
+          const maleFormantShelf = ctx.createBiquadFilter();
+          maleFormantShelf.type = 'lowshelf';
+          maleFormantShelf.frequency.value = 150;
+          maleFormantShelf.gain.value = 5;
+          source.connect(maleFormantShelf);
+          maleFormantShelf.connect(itemGain);
+          itemGain.connect(gain);
+        } else {
+          source.connect(itemGain);
+          itemGain.connect(gain);
+        }
         this.activeSource = source;
 
         source.onended = () => {

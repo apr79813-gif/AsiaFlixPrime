@@ -114,24 +114,44 @@ export async function fetchDramasFromSupabase(): Promise<DramaItem[] | null> {
           isMerged: u.upload_format === 'merged_episodes' || u.upload_format === 'complete_series',
           format: (u.upload_format === 'complete_series' ? 'merged' : 'single') as any,
           ...(Object.keys(epSubMap).length > 0 ? { subtitles: epSubMap } : {}),
-          ...(parsedAudio?.hindiAudioMap.get(epNum) ? { hindiCustomAudioLink: parsedAudio.hindiAudioMap.get(epNum) } : {}),
-          ...(parsedAudio?.fanDubAudioMap.get(epNum) ? { fanDubCustomAudioLink: parsedAudio.fanDubAudioMap.get(epNum) } : {}),
-          ...(parsedAudio?.origAudioMap.get(epNum) ? { origCustomAudioLink: parsedAudio.origAudioMap.get(epNum) } : {}),
+          ...(parsedAudio?.hindiAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum)
+            ? { hindiCustomAudioLink: parsedAudio?.hindiAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum) }
+            : {}),
+          ...(parsedAudio?.fanDubAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum)
+            ? { fanDubCustomAudioLink: parsedAudio?.fanDubAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum) }
+            : {}),
+          ...(parsedAudio?.origAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum)
+            ? { origCustomAudioLink: parsedAudio?.origAudioMap.get(epNum) || parsedAudio?.defaultAudioMap.get(epNum) }
+            : {}),
         };
       });
 
-      // Share single video URL across Hindi/Fan/Original tracks for matching episodes with custom external audio
+      // Share single video URL across Hindi/Fan/Original tracks for matching episodes, or play external audio URL itself when no video exists
       episodes.forEach((ep) => {
         const epNum = typeof ep.episodeNumber === 'number' ? ep.episodeNumber : 1;
+        const otherWithVideo = episodes.find(
+          (other) =>
+            (typeof other.episodeNumber === 'number' ? other.episodeNumber : 1) === epNum &&
+            (other.engSubStreamLink || other.streamLink || other.hindiFanDubStreamLink)
+        );
         const sharedVideo =
           ep.engSubStreamLink ||
           ep.streamLink ||
           ep.hindiFanDubStreamLink ||
-          episodes.find((other) => (typeof other.episodeNumber === 'number' ? other.episodeNumber : 1) === epNum && (other.engSubStreamLink || other.streamLink || other.hindiFanDubStreamLink))?.engSubStreamLink;
-        if (sharedVideo) {
-          if (ep.hindiCustomAudioLink && !ep.streamLink) ep.streamLink = sharedVideo;
-          if (ep.fanDubCustomAudioLink && !ep.hindiFanDubStreamLink) ep.hindiFanDubStreamLink = sharedVideo;
-          if (ep.origCustomAudioLink && !ep.engSubStreamLink) ep.engSubStreamLink = sharedVideo;
+          otherWithVideo?.engSubStreamLink ||
+          otherWithVideo?.streamLink ||
+          otherWithVideo?.hindiFanDubStreamLink;
+        if (ep.hindiCustomAudioLink && !ep.streamLink) {
+          ep.streamLink = sharedVideo || ep.hindiCustomAudioLink;
+          if (!availableAudios.includes('Hindi Dubbed')) availableAudios.push('Hindi Dubbed');
+        }
+        if (ep.fanDubCustomAudioLink && !ep.hindiFanDubStreamLink) {
+          ep.hindiFanDubStreamLink = sharedVideo || ep.fanDubCustomAudioLink;
+          if (!availableAudios.includes('Hindi Fan Dubbed')) availableAudios.push('Hindi Fan Dubbed');
+        }
+        if (ep.origCustomAudioLink && !ep.engSubStreamLink) {
+          ep.engSubStreamLink = sharedVideo || ep.origCustomAudioLink;
+          if (!availableAudios.includes('Original / Eng Sub')) availableAudios.push('Original / Eng Sub');
         }
       });
 

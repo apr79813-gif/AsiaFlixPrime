@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DramaItem, EpisodeItem, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings, MoodFilterType, SubtitleTrack, SubtitleTrackItem } from './types/drama';
+import { DramaItem, EpisodeItem, ClipItem, VipProfile, WatchlistEntry, WatchlistStatus, ReleaseNotification, SupportTicket, AudioType, DramaCategory, DramaStatus, WeekendSettings, HeroBannerSlide, TelegramBotSettings, MoodFilterType, SubtitleTrack, SubtitleTrackItem } from './types/drama';
 import { INITIAL_DRAMAS, INITIAL_NOTIFICATIONS, INITIAL_TICKETS, INITIAL_HERO_BANNERS } from './data/initialCatalog';
 import { SakuraCanvas, ParticleMode } from './components/SakuraCanvas';
 import { MarqueeNotice } from './components/MarqueeNotice';
@@ -21,6 +21,8 @@ import { RequestDramaModal } from './components/RequestDramaModal';
 import { SupportDeskModal } from './components/SupportDeskModal';
 import { ArcadeHubModal } from './components/ArcadeHubModal';
 import { AdminStudioModal } from './components/AdminStudioModal';
+import { ClipsFeedModal } from './components/ClipsFeedModal';
+import { UserProfileModal, VIP_PROFILE_UPDATED_EVENT, loadVipProfile } from './components/UserProfileModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
@@ -28,7 +30,7 @@ import { AdBannerSlot } from './components/AdBannerSlot';
 import { FloatingPopupAd } from './components/FloatingPopupAd';
 import { AppNavigationDrawer } from './components/AppNavigationDrawer';
 import { AppHomeFeed } from './components/AppHomeFeed';
-import { AppLaunchSplash, useTransparentLogo } from './components/AnimatedChannelLogo';
+import { AppLaunchSplash, getTransparentLogoUrl, useTransparentLogo } from './components/AnimatedChannelLogo';
 import {
   sendNativeBrowserNotification,
   registerServiceWorker,
@@ -46,6 +48,7 @@ import {
   TIMESTAMPS_UPDATED_EVENT,
   parseSheetSubtitleCell,
   parseSheetAudioCell,
+  parseSheetClipsCell,
   resolveSubtitleLangMeta,
 } from './services/vipPlayerHelper';
 import { 
@@ -146,6 +149,7 @@ export default function App() {
     if (customLogoUrl) {
       localStorage.setItem('asiaflix_custom_logo_url', customLogoUrl);
     }
+    void getTransparentLogoUrl(customLogoUrl || '/logo-watermark.png');
   }, [customLogoUrl]);
 
   // --- TELEGRAM BOT BROADCAST CONFIG STATE ---
@@ -572,7 +576,12 @@ export default function App() {
   const isAppInstalled = isInstalledApp;
   const [installGuideToast, setInstallGuideToast] = useState<string | null>(null);
   const [isAppDrawerOpen, setIsAppDrawerOpen] = useState<boolean>(false);
-  const [activeAppTab, setActiveAppTab] = useState<'home' | 'hot' | 'search' | 'watchlist' | 'menu'>('home');
+  const [activeAppTab, setActiveAppTab] = useState<'home' | 'clips' | 'search' | 'watchlist' | 'profile'>('home');
+  const [vipProfile, setVipProfile] = useState<VipProfile | null>(() => loadVipProfile());
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  const [isFirstTimeProfileGateOpen, setIsFirstTimeProfileGateOpen] = useState<boolean>(false);
+  const [isClipsOpen, setIsClipsOpen] = useState<boolean>(false);
+  const [initialClipId, setInitialClipId] = useState<string | null>(null);
   const [isResumeBarDismissed, setIsResumeBarDismissed] = useState<boolean>(false);
   const [watchTimestampsVersion, setWatchTimestampsVersion] = useState<number>(0);
   const [isAppDownloadModalOpen, setIsAppDownloadModalOpen] = useState<boolean>(() => {
@@ -584,25 +593,63 @@ export default function App() {
   });
   const [directAppLinkCopied, setDirectAppLinkCopied] = useState<boolean>(false);
   const [customApkUrl, setCustomApkUrl] = useState<string>(() => {
-    if (typeof window === 'undefined') return '/AsiaFlix-Prime.apk';
-    return localStorage.getItem('asiaflix_custom_apk_url') || '/AsiaFlix-Prime.apk';
+    if (typeof window === 'undefined') return '';
+    const saved = (localStorage.getItem('asiaflix_custom_apk_url') || '').trim();
+    if (!saved || saved === '/AsiaFlix-Prime.apk' || !/^https?:\/\//i.test(saved)) {
+      return '';
+    }
+    return saved;
   });
   const handleUpdateCustomApkUrl = (nextUrl: string) => {
-    const trimmed = (nextUrl || '').trim() || '/AsiaFlix-Prime.apk';
-    setCustomApkUrl(trimmed);
+    const rawTrimmed = (nextUrl || '').trim();
+    const cleaned =
+      !rawTrimmed || rawTrimmed === '/AsiaFlix-Prime.apk' || !/^https?:\/\//i.test(rawTrimmed)
+        ? ''
+        : rawTrimmed;
+    setCustomApkUrl(cleaned);
     try {
-      localStorage.setItem('asiaflix_custom_apk_url', trimmed);
+      if (cleaned) {
+        localStorage.setItem('asiaflix_custom_apk_url', cleaned);
+      } else {
+        localStorage.removeItem('asiaflix_custom_apk_url');
+      }
     } catch {
       // ignore storage quota errors
     }
   };
 
   useEffect(() => {
-    // Preload Official Channel Logo so first-click 8s Cinema Intro & Watermark render at 0ms
+    // First-time VIP profile onboarding gate (never overlap launch splash)
+    if (showAppSplash || vipProfile) return;
+    try {
+      if (sessionStorage.getItem('asiaflix_profile_gate_dismissed') === '1') return;
+    } catch {
+      // ignore sessionStorage restrictions
+    }
+    const gateTimer = window.setTimeout(() => {
+      if (!loadVipProfile()) {
+        setIsFirstTimeProfileGateOpen(true);
+      }
+    }, 450);
+    return () => window.clearTimeout(gateTimer);
+  }, [showAppSplash, vipProfile]);
+
+  useEffect(() => {
+    // Preload & pre-key Official Channel Logo so first-click 8s Cinema Intro & Watermark render at 0ms
     const preloadWatermark = new Image();
     preloadWatermark.src = '/logo-watermark.png';
+    void getTransparentLogoUrl('/logo-watermark.png');
+
+    // Hydrate any beforeinstallprompt captured early by index.html
+    const winWithPrompt = window as unknown as {
+      __deferredInstallPrompt?: { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null;
+    };
+    if (winWithPrompt.__deferredInstallPrompt) {
+      deferredInstallPromptRef.current = winWithPrompt.__deferredInstallPrompt;
+    }
 
     const syncStats = () => setVipStats(getVipStats());
+    const syncProfile = () => setVipProfile(loadVipProfile());
     const syncTimestamps = () => setWatchTimestampsVersion((v) => v + 1);
     const syncDisplayMode = () => setIsInstalledApp(detectInstalledAppMode());
     const handleHashInstall = () => {
@@ -615,8 +662,10 @@ export default function App() {
     };
 
     window.addEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+    window.addEventListener(VIP_PROFILE_UPDATED_EVENT, syncProfile);
     window.addEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
     window.addEventListener('storage', syncStats);
+    window.addEventListener('storage', syncProfile);
     window.addEventListener('storage', syncTimestamps);
     window.addEventListener('hashchange', handleHashInstall);
 
@@ -627,13 +676,16 @@ export default function App() {
 
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
-      deferredInstallPromptRef.current = e as unknown as {
+      const typed = e as unknown as {
         prompt: () => Promise<void>;
         userChoice: Promise<{ outcome: string }>;
       };
+      deferredInstallPromptRef.current = typed;
+      winWithPrompt.__deferredInstallPrompt = typed;
     };
     const handleAppInstalled = () => {
       deferredInstallPromptRef.current = null;
+      winWithPrompt.__deferredInstallPrompt = null;
       setIsInstalledApp(true);
       setIsAppDownloadModalOpen(false);
       setInstallGuideToast('✅ AsiaFlix Prime App installed successfully!');
@@ -644,8 +696,10 @@ export default function App() {
     window.addEventListener('appinstalled', handleAppInstalled);
     return () => {
       window.removeEventListener(VIP_STATS_UPDATED_EVENT, syncStats);
+      window.removeEventListener(VIP_PROFILE_UPDATED_EVENT, syncProfile);
       window.removeEventListener(TIMESTAMPS_UPDATED_EVENT, syncTimestamps);
       window.removeEventListener('storage', syncStats);
+      window.removeEventListener('storage', syncProfile);
       window.removeEventListener('storage', syncTimestamps);
       window.removeEventListener('hashchange', handleHashInstall);
       standaloneMq?.removeEventListener?.('change', syncDisplayMode);
@@ -656,13 +710,17 @@ export default function App() {
   }, []);
 
   const handleInstallApp = async () => {
-    const promptEvt = deferredInstallPromptRef.current;
+    const winWithPrompt = window as unknown as {
+      __deferredInstallPrompt?: { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> } | null;
+    };
+    const promptEvt = deferredInstallPromptRef.current || winWithPrompt.__deferredInstallPrompt;
     if (promptEvt) {
       try {
         await promptEvt.prompt();
         const choice = await promptEvt.userChoice;
         if (choice?.outcome === 'accepted') {
           deferredInstallPromptRef.current = null;
+          winWithPrompt.__deferredInstallPrompt = null;
           setIsInstalledApp(true);
           return;
         }
@@ -670,10 +728,15 @@ export default function App() {
         // fallback to toast guide below
       }
     }
-    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const ua = navigator.userAgent || '';
+    const isIos = /iPhone|iPad|iPod/i.test(ua);
+    const isAndroid = /Android/i.test(ua);
+    const isInAppBrowser = /Telegram|FBAN|FBAV|Instagram|Line|MicroMessenger/i.test(ua);
     setInstallGuideToast(
       isIos
         ? '📲 Tap Share ⬆️ at bottom of Safari → "Add to Home Screen"'
+        : isAndroid && isInAppBrowser
+        ? '🌐 Tap "Open in Chrome" below, then tap Chrome Menu (⋮) → "Install app"'
         : '📲 Tap your browser menu (⋮) → "Install App" or "Add to Home Screen"'
     );
     window.setTimeout(() => setInstallGuideToast(null), 5000);
@@ -1601,6 +1664,10 @@ export default function App() {
         ],
         header[16] && (header[16].includes('sub') || !header[16]) ? 16 : -1
       );
+      const clipsIdx = findHeaderCol([
+        (h) => h === 'clips' || h === 'clip' || h === 'reels' || h === 'reel' || h === 'shorts' || h === 'short clips',
+        (h) => h.includes('clip') || h.includes('reel'),
+      ]);
       const subCategoryIdx = findHeaderCol([
         (h) => h.includes('sub-category') || h.includes('sub category') || h.includes('sub-genre') || h.includes('content type'),
       ]);
@@ -1716,10 +1783,14 @@ export default function App() {
         const isFanDubComingSoon = !hasFanDubHttp && isComingSoonPattern.test(tFanDub);
         const isOrigComingSoon = !hasOrigHttp && isComingSoonPattern.test(tOrig);
 
-        const hasAnyHttp = hasHindiHttp || hasFanDubHttp || hasOrigHttp;
+        const rawAudioCell = audioIdx >= 0 ? row[audioIdx]?.trim() || '' : '';
+        const rawClipsCell = clipsIdx >= 0 ? row[clipsIdx]?.trim() || '' : '';
+        const hasAudioCellHttp = Boolean(rawAudioCell && rawAudioCell.toLowerCase().includes('http'));
+        const hasClipsCellHttp = Boolean(rawClipsCell && rawClipsCell.toLowerCase().includes('http'));
+        const hasAnyHttp = hasHindiHttp || hasFanDubHttp || hasOrigHttp || hasAudioCellHttp || hasClipsCellHttp;
         const hasAnyComingSoon = isHindiComingSoon || isFanDubComingSoon || isOrigComingSoon;
 
-        // Skip row if ALL THREE have neither http nor coming soon
+        // Skip row if NO track/audio column has http or coming soon
         if (!hasAnyHttp && !hasAnyComingSoon) {
           continue;
         }
@@ -1734,7 +1805,6 @@ export default function App() {
         const countryVal = countryIdx >= 0 ? row[countryIdx]?.trim() || '' : '';
         const ageRating = ageRatingIdx >= 0 ? row[ageRatingIdx]?.trim() || '' : '';
         const poster = posterIdx >= 0 ? row[posterIdx]?.trim() || '' : '';
-        const rawAudioCell = audioIdx >= 0 ? row[audioIdx]?.trim() || '' : '';
         const rawThumbnailCell = thumbnailIdx >= 0 ? row[thumbnailIdx]?.trim() || '' : '';
         const rawSubtitleCell = subtitleIdx >= 0 ? row[subtitleIdx]?.trim() || '' : '';
 
@@ -1775,8 +1845,8 @@ export default function App() {
         registerParsedSubEntries(parseSheetSubtitleCell(rawSubtitleCell, { isDedicatedSubtitleCol: true }));
         registerParsedSubEntries(parseSheetSubtitleCell(rawAudioCell, { isDedicatedSubtitleCol: false }));
 
-        // Parse Column N (Audio) -> HD/Hindi Ep (Hindi Dub), FD/Fan Ep (Fan Dub), OS/OD/Orig Ep (Original)
-        const { hindiAudioMap, fanDubAudioMap, origAudioMap } = parseSheetAudioCell(rawAudioCell);
+        // Parse Column N (Audio) -> HD/Hin (Hindi Dub), FD/ED/Fan (Fan Dub), OS/OD/Orig (Original), Ep/Es/A (Default)
+        const { hindiAudioMap, fanDubAudioMap, origAudioMap, defaultAudioMap } = parseSheetAudioCell(rawAudioCell);
 
         let parsedDefaultThumbnail: string | undefined;
         let parsedEpisodeThumbnails: Record<number, string> | undefined;
@@ -1940,6 +2010,7 @@ export default function App() {
         hindiAudioMap.forEach((_, n) => allPairableEpNums.add(n));
         fanDubAudioMap.forEach((_, n) => allPairableEpNums.add(n));
         origAudioMap.forEach((_, n) => allPairableEpNums.add(n));
+        defaultAudioMap.forEach((_, n) => allPairableEpNums.add(n));
 
         const createBorrowedEpisode = (audio: AudioType, epNum: number): EpisodeItem => {
           const audioLabel = audio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : audio;
@@ -1971,40 +2042,49 @@ export default function App() {
                 ? origParsed.movieStreamUrl || hindiParsed.movieStreamUrl || fanParsed.movieStreamUrl
                 : undefined);
 
-            const hdAudioUrl = hindiAudioMap.get(epNum);
+            const defaultAudioUrl = defaultAudioMap.get(epNum);
+
+            const hdAudioUrl = hindiAudioMap.get(epNum) || (hEp && !hEp.hindiCustomAudioLink ? defaultAudioUrl : undefined);
             if (hdAudioUrl) {
               if (!hEp) {
                 hEp = createBorrowedEpisode('Hindi Dubbed', epNum);
                 hindiEpisodes.push(hEp);
               }
               hEp.hindiCustomAudioLink = hdAudioUrl;
-              if (!hEp.streamLink && fallbackVideoForEp) {
-                hEp.streamLink = fallbackVideoForEp;
+              if (!hEp.streamLink) {
+                hEp.streamLink = fallbackVideoForEp || hdAudioUrl;
               }
             }
 
-            const fdAudioUrl = fanDubAudioMap.get(epNum);
+            const fdAudioUrl = fanDubAudioMap.get(epNum) || (fEp && !fEp.fanDubCustomAudioLink ? defaultAudioUrl : undefined);
             if (fdAudioUrl) {
               if (!fEp) {
                 fEp = createBorrowedEpisode('Hindi Fan Dubbed', epNum);
                 fanEpisodes.push(fEp);
               }
               fEp.fanDubCustomAudioLink = fdAudioUrl;
-              if (!fEp.hindiFanDubStreamLink && fallbackVideoForEp) {
-                fEp.hindiFanDubStreamLink = fallbackVideoForEp;
+              if (!fEp.hindiFanDubStreamLink) {
+                fEp.hindiFanDubStreamLink = fallbackVideoForEp || fdAudioUrl;
               }
             }
 
-            const osAudioUrl = origAudioMap.get(epNum);
+            const osAudioUrl = origAudioMap.get(epNum) || (oEp && !oEp.origCustomAudioLink ? defaultAudioUrl : undefined);
             if (osAudioUrl) {
               if (!oEp) {
                 oEp = createBorrowedEpisode('Original / Eng Sub', epNum);
                 origEpisodes.push(oEp);
               }
               oEp.origCustomAudioLink = osAudioUrl;
-              if (!oEp.engSubStreamLink && fallbackVideoForEp) {
-                oEp.engSubStreamLink = fallbackVideoForEp;
+              if (!oEp.engSubStreamLink) {
+                oEp.engSubStreamLink = fallbackVideoForEp || osAudioUrl;
               }
+            }
+
+            if (defaultAudioUrl && !hEp && !fEp && !oEp) {
+              hEp = createBorrowedEpisode('Hindi Dubbed', epNum);
+              hEp.hindiCustomAudioLink = defaultAudioUrl;
+              hEp.streamLink = fallbackVideoForEp || defaultAudioUrl;
+              hindiEpisodes.push(hEp);
             }
           });
 
@@ -2265,6 +2345,24 @@ export default function App() {
 
         let totalEpCount = plannedTotal > 0 ? plannedTotal : parsedEpisodes.length > 0 ? parsedEpisodes.length : (isFilm ? 1 : 16);
 
+        const parsedSheetClips: ClipItem[] = parseSheetClipsCell(rawClipsCell).map((entry) => ({
+          id: `sheet-clip-${dramaId}-${entry.index}`,
+          dramaId,
+          title: cleanTitle,
+          label: entry.label,
+          episodeNumber: 1,
+          streamUrl: entry.url,
+          poster: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700',
+          backdrop: (poster && poster.startsWith('http')) ? poster : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200',
+          thumbnailUrl: parsedDefaultThumbnail,
+          audio: defaultAudio,
+          sourceType: 'sheet',
+          category: dramaCategory,
+          tags: parsedTags.length > 0 ? Array.from(new Set(parsedTags)) : [dramaCategory, defaultAudio],
+          synopsis: synopsisVal || `Watch ${cleanTitle} highlight clip on AsiaFlix Prime.`,
+          telegramUrl: primaryLink,
+        }));
+
         // If title already seen in another row
         if (parsedDramasMap.has(dramaId)) {
           const prev = parsedDramasMap.get(dramaId)!;
@@ -2356,17 +2454,16 @@ export default function App() {
                 ? 1
                 : parseInt(String(ep.episodeNumber).match(/(\d+)/)?.[1] || '0', 10);
             const sharedVid = epNum > 0 ? sharedVideoByEp.get(epNum) : undefined;
-            if (!sharedVid) return;
             if (ep.audio === 'Hindi Dubbed' && ep.hindiCustomAudioLink && !ep.streamLink) {
-              ep.streamLink = sharedVid;
+              ep.streamLink = sharedVid || ep.hindiCustomAudioLink;
               if (!prev.availableAudios.includes('Hindi Dubbed')) prev.availableAudios.push('Hindi Dubbed');
             }
             if ((ep.audio === 'Hindi Fan Dubbed' || ep.audio === 'Fan Dubbed') && ep.fanDubCustomAudioLink && !ep.hindiFanDubStreamLink) {
-              ep.hindiFanDubStreamLink = sharedVid;
+              ep.hindiFanDubStreamLink = sharedVid || ep.fanDubCustomAudioLink;
               if (!prev.availableAudios.includes('Hindi Fan Dubbed')) prev.availableAudios.push('Hindi Fan Dubbed');
             }
             if (ep.audio === 'Original / Eng Sub' && ep.origCustomAudioLink && !ep.engSubStreamLink) {
-              ep.engSubStreamLink = sharedVid;
+              ep.engSubStreamLink = sharedVid || ep.origCustomAudioLink;
               if (!prev.availableAudios.includes('Original / Eng Sub')) prev.availableAudios.push('Original / Eng Sub');
             }
           });
@@ -2396,6 +2493,16 @@ export default function App() {
               if (!mergedSubs.some((x) => x.url === s.url)) mergedSubs.push(s);
             });
             prev.subtitleTracks = mergedSubs;
+          }
+          if (parsedSheetClips.length > 0) {
+            const existingClips = prev.clips || [];
+            const mergedClips = [...existingClips];
+            parsedSheetClips.forEach((c) => {
+              if (!mergedClips.some((x) => x.streamUrl === c.streamUrl)) {
+                mergedClips.push(c);
+              }
+            });
+            prev.clips = mergedClips;
           }
           if (prev.episodes.length > (prev.totalEpisodes || 0)) {
             prev.totalEpisodes = prev.episodes.length;
@@ -2496,6 +2603,7 @@ export default function App() {
           subtitleLink: Object.values(dramaSubtitles)[0]?.url,
           subtitleTracks: parsedSubtitleTracks.length > 0 ? parsedSubtitleTracks : undefined,
           episodes: dramaEpisodes,
+          clips: parsedSheetClips.length > 0 ? parsedSheetClips : undefined,
           
           // Google Sheet Fields
           telegramHindi: hasHindiHttp ? tHindi : undefined,
@@ -3335,13 +3443,19 @@ export default function App() {
     });
   }, [dramas]);
 
-  // Continue Watching dramas
+  // Continue Watching dramas (combines watchlist progress and saved playback timestamps)
   const continueWatchingDramas = useMemo(() => {
-    const watchingIds = watchlist
-      .filter((w) => w.status === 'watching' || w.watchedEpisodes.length > 0)
-      .map((w) => w.dramaId);
-    return dramas.filter((d) => watchingIds.includes(d.id));
-  }, [dramas, watchlist]);
+    const timestampsMap = getWatchTimestamps();
+    const watchingIds = new Set(
+      watchlist
+        .filter((w) => w.status === 'watching' || w.watchedEpisodes.length > 0)
+        .map((w) => w.dramaId)
+    );
+    Object.keys(timestampsMap).forEach((id) => watchingIds.add(id));
+    return dramas
+      .filter((d) => watchingIds.has(d.id))
+      .sort((a, b) => (timestampsMap[b.id]?.updatedAt || 0) - (timestampsMap[a.id]?.updatedAt || 0));
+  }, [dramas, watchlist, watchTimestampsVersion]);
 
   // Recommended for You
   const recommendedDramas = useMemo(() => {
@@ -3402,6 +3516,7 @@ export default function App() {
   };
 
   const handleSurpriseMe = () => {
+    const preferredAudio = vipProfile?.defaultAudio;
     const streamPool = dramas.filter((d) =>
       Boolean(
         d.movieStreamLink ||
@@ -3410,8 +3525,23 @@ export default function App() {
           d.episodes?.some((e) => e.streamLink || e.hindiFanDubStreamLink || e.engSubStreamLink)
       )
     );
-    const topPool = (streamPool.length > 0 ? streamPool : dramas).filter((d) => d.rating >= 8.8);
-    const pool = topPool.length > 0 ? topPool : streamPool.length > 0 ? streamPool : dramas;
+    const audioMatchedPool = preferredAudio
+      ? (streamPool.length > 0 ? streamPool : dramas).filter((d) => {
+          if (d.defaultAudio === preferredAudio || d.availableAudios.includes(preferredAudio)) {
+            return true;
+          }
+          if (preferredAudio === 'Hindi Dubbed') {
+            return Boolean(d.telegramHindi || d.movieStreamLink || d.episodes?.some((e) => e.streamLink));
+          }
+          if (preferredAudio === 'Hindi Fan Dubbed' || preferredAudio === 'Fan Dubbed') {
+            return Boolean(d.telegramFanDub || d.movieFanDubStreamLink || d.episodes?.some((e) => e.hindiFanDubStreamLink));
+          }
+          return Boolean(d.telegramOrig || d.movieEngSubStreamLink || d.episodes?.some((e) => e.engSubStreamLink));
+        })
+      : [];
+    const basePool = audioMatchedPool.length > 0 ? audioMatchedPool : streamPool.length > 0 ? streamPool : dramas;
+    const topPool = basePool.filter((d) => d.rating >= 8.8);
+    const pool = topPool.length > 0 ? topPool : basePool;
     if (pool.length === 0) return;
 
     const chosen = pool[Math.floor(Math.random() * pool.length)];
@@ -3437,6 +3567,7 @@ export default function App() {
         window.setTimeout(() => {
           setRouletteState({ isOpen: false, displayTitle: '', chosenTitle: null });
           handleOpenDrama(chosen);
+          if (preferredAudio) setDeepLinkTrack(preferredAudio);
         }, 280);
       } else {
         setRouletteState({
@@ -3476,6 +3607,8 @@ export default function App() {
     setIsAdminOpen(false);
     setIsInstantSearchOpen(false);
     setIsAppDrawerOpen(false);
+    setIsClipsOpen(false);
+    setIsProfileModalOpen(false);
     setActiveAppTab('home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -3556,6 +3689,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#08080c] text-white flex flex-col relative selection:bg-[#e50914] selection:text-white w-full">
+      {/* Global 0ms GPU Alpha-Key SVG Filter for Black-Background Logos */}
+      <svg width="0" height="0" className="absolute pointer-events-none opacity-0" aria-hidden="true">
+        <defs>
+          <filter id="asiaflix-remove-black" colorInterpolationFilters="sRGB">
+            <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  3.3 3.3 3.3 0 -0.42" />
+          </filter>
+        </defs>
+      </svg>
+
       {/* 1.8s Native OTT App Launch Splash Screen (Installed App Mode Only) */}
       {isInstalledApp && showAppSplash && (
         <AppLaunchSplash
@@ -3595,6 +3737,15 @@ export default function App() {
               handleCloseDrama();
               setIsSupportOpen(true);
             }}
+            vipProfileDefaults={
+              vipProfile
+                ? {
+                    preferredSubLang: vipProfile.preferredSubLang,
+                    autoPlayNext: vipProfile.autoPlayNext,
+                    dataSaverDefault: vipProfile.dataSaverDefault,
+                  }
+                : undefined
+            }
           />
         </div>
       )}
@@ -3636,14 +3787,18 @@ export default function App() {
             onOpenSearchModal={() => setIsInstantSearchOpen(true)}
             onGoHome={handleGoHome}
             vipStats={vipStats}
+            vipProfile={vipProfile}
+            onOpenProfile={() => setIsProfileModalOpen(true)}
+            onOpenClips={() => {
+              setInitialClipId(null);
+              setIsClipsOpen(true);
+            }}
+            onSurpriseMe={handleSurpriseMe}
             onInstallApp={handleInstallApp}
             onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
             isAppInstalled={isAppInstalled}
             isInstalledApp={isInstalledApp}
-            onOpenAppMenu={() => {
-              setActiveAppTab('menu');
-              setIsAppDrawerOpen(true);
-            }}
+            onOpenAppMenu={() => setIsAppDrawerOpen(true)}
             activeAppQuickChip={activeAppQuickChip}
             onSelectAppQuickChip={handleSelectAppQuickChip}
           />
@@ -3739,16 +3894,12 @@ export default function App() {
                 isInstalledApp={true}
                 activeAppTab={activeAppTab}
                 watchlistCount={watchlist.length}
+                vipAvatar={vipProfile?.avatar}
                 onGoHome={handleGoHome}
-                onOpenHot={() => {
-                  setActiveAppTab('hot');
-                  setSearchQuery('');
-                  setSelectedCategory('all');
-                  setSelectedAudio('all');
-                  setSelectedStatus('all');
-                  window.setTimeout(() => {
-                    document.getElementById('app-sec-trending')?.scrollIntoView({ behavior: 'smooth' });
-                  }, 60);
+                onOpenClips={() => {
+                  setActiveAppTab('clips');
+                  setInitialClipId(null);
+                  setIsClipsOpen(true);
                 }}
                 onFocusSearch={() => {
                   setActiveAppTab('search');
@@ -3758,9 +3909,9 @@ export default function App() {
                   setActiveAppTab('watchlist');
                   setIsWatchlistOpen(true);
                 }}
-                onOpenAppMenu={() => {
-                  setActiveAppTab('menu');
-                  setIsAppDrawerOpen(true);
+                onOpenProfile={() => {
+                  setActiveAppTab('profile');
+                  setIsProfileModalOpen(true);
                 }}
               />
 
@@ -4237,6 +4388,12 @@ export default function App() {
       <MobileBottomNav
         onGoHome={handleGoHome}
         onFocusSearch={() => setIsInstantSearchOpen(true)}
+        onOpenClips={() => {
+          setInitialClipId(null);
+          setIsClipsOpen(true);
+        }}
+        onOpenProfile={() => setIsProfileModalOpen(true)}
+        vipAvatar={vipProfile?.avatar}
       />
             </>
           )}
@@ -4591,7 +4748,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 14. OFFICIAL ASIAFLIX PRIME APP INSTALL & .APK DOWNLOAD MODAL */}
+      {/* 14. OFFICIAL ASIAFLIX PRIME APP INSTALL & ANDROID CHROME INSTALL MODAL */}
       {isAppDownloadModalOpen && (
         <div
           onClick={() => setIsAppDownloadModalOpen(false)}
@@ -4618,12 +4775,16 @@ export default function App() {
                 src={transparentAppLogo}
                 alt="AsiaFlix Prime"
                 referrerPolicy="no-referrer"
-                style={{ background: 'transparent', mixBlendMode: 'screen' }}
-                className="w-12 h-12 object-contain shrink-0 drop-shadow-[0_0_10px_rgba(229,9,20,0.55)]"
+                style={{
+                  filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
+                  mixBlendMode: 'screen',
+                  background: 'transparent',
+                }}
+                className="w-12 h-12 object-contain shrink-0"
               />
               <div>
                 <h2 className="text-lg font-black text-white tracking-tight">
-                  📲 Download Official AsiaFlix Prime App
+                  📲 Install Official AsiaFlix Prime App
                 </h2>
                 <p className="text-xs text-zinc-400 font-medium mt-0.5">
                   True full-screen native OTT experience with offline cache &amp; zero browser bars.
@@ -4632,7 +4793,7 @@ export default function App() {
             </div>
 
             <div className="space-y-2.5">
-              {/* Option 1: 1-Click Instant App Install */}
+              {/* Option 1: 1-Click Instant WebAPK Install */}
               <button
                 type="button"
                 onClick={handleInstallApp}
@@ -4641,35 +4802,29 @@ export default function App() {
                 <span>⚡ 1-Click Instant App Install (Android / Windows / iOS)</span>
               </button>
 
-              {/* Option 2: Download Official Android .APK File */}
-              <a
-                href={customApkUrl || '/AsiaFlix-Prime.apk'}
-                download={customApkUrl && customApkUrl.startsWith('http') ? undefined : 'AsiaFlix-Prime.apk'}
-                target={customApkUrl && customApkUrl.startsWith('http') ? '_blank' : undefined}
-                rel={customApkUrl && customApkUrl.startsWith('http') ? 'noopener noreferrer' : undefined}
-                onClick={async (e) => {
-                  const targetApk = customApkUrl || '/AsiaFlix-Prime.apk';
-                  if (targetApk.startsWith('http')) {
-                    return;
-                  }
-                  try {
-                    const head = await fetch(targetApk, { method: 'HEAD' });
-                    const ct = head.headers.get('content-type') || '';
-                    if (!head.ok || ct.includes('text/html')) {
-                      e.preventDefault();
-                      setInstallGuideToast('⚡ Tap "1-Click Instant App Install" above for direct WebAPK install on Android!');
-                      window.setTimeout(() => setInstallGuideToast(null), 4500);
-                    }
-                  } catch {
-                    // allow default download attempt
-                  }
-                }}
-                className="w-full py-3 px-4 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 hover:text-white text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer"
-              >
-                <span>📦 Download Official Android .APK File</span>
-              </a>
+              {/* Option 2: Android Chrome Intent Deep Link (Escapes Telegram In-App Browser cleanly) */}
+              {typeof window !== 'undefined' && (
+                <a
+                  href={`intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=${window.location.protocol.replace(':', '') || 'https'};package=com.android.chrome;end`}
+                  className="w-full py-3 px-4 rounded-2xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-200 hover:text-white text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <span>🌐 Open in Chrome for 1-Tap Android App Install</span>
+                </a>
+              )}
 
-              {/* Option 3: Copy Direct App Download Link */}
+              {/* Option 3: Verified External HTTPS .APK (Only if configured in Admin Studio) */}
+              {customApkUrl && /^https:\/\//i.test(customApkUrl) && !customApkUrl.includes('/AsiaFlix-Prime.apk') && (
+                <a
+                  href={customApkUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 px-4 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 hover:text-white text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <span>📦 Download Official Android .APK File</span>
+                </a>
+              )}
+
+              {/* Option 4: Copy Direct App Download Link */}
               <button
                 type="button"
                 onClick={() => {
@@ -4694,6 +4849,67 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 15. NETFLIX-STYLE VERTICAL SHORT CLIPS FEED */}
+      <ClipsFeedModal
+        isOpen={isClipsOpen}
+        onClose={() => {
+          setIsClipsOpen(false);
+          setInitialClipId(null);
+          if (activeAppTab === 'clips') setActiveAppTab('home');
+        }}
+        dramas={dramas}
+        onOpenDramaEpisode={(drama, epNum, track, startTime) => {
+          handleOpenDrama(drama, epNum);
+          setDeepLinkTrack(track);
+          setDeepLinkTime(startTime && startTime > 0 ? startTime : null);
+        }}
+        onToggleWatchlist={handleToggleWatchlist}
+        isWatchlisted={(dramaId) => isDramaWatchlisted(dramaId)}
+        preferredAudio={vipProfile?.defaultAudio}
+        initialClipId={initialClipId}
+        customLogoUrl={customLogoUrl}
+      />
+
+      {/* 16. VIP USER PROFILE HUB & FIRST-TIME PROFILE GATE */}
+      <UserProfileModal
+        isOpen={isProfileModalOpen || isFirstTimeProfileGateOpen}
+        onClose={() => {
+          setIsProfileModalOpen(false);
+          if (isFirstTimeProfileGateOpen) {
+            setIsFirstTimeProfileGateOpen(false);
+            try {
+              sessionStorage.setItem('asiaflix_profile_gate_dismissed', '1');
+            } catch {
+              // ignore sessionStorage errors
+            }
+          }
+          if (activeAppTab === 'profile') setActiveAppTab('home');
+        }}
+        forceGate={isFirstTimeProfileGateOpen && !vipProfile}
+        profile={vipProfile}
+        onSaveProfile={(next) => {
+          setVipProfile(next);
+          setIsFirstTimeProfileGateOpen(false);
+        }}
+        dramas={dramas}
+        watchlistCount={watchlist.length}
+        onOpenWatchlist={() => setIsWatchlistOpen(true)}
+        onOpenDrama={(drama, epNum, track) => {
+          handleOpenDrama(drama, epNum ?? null);
+          if (track) setDeepLinkTrack(track);
+        }}
+        onOpenClipById={(clipId) => {
+          setInitialClipId(clipId);
+          setIsClipsOpen(true);
+        }}
+        onInstallApp={handleInstallApp}
+        onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
+        isAppInstalled={isAppInstalled}
+        onOpenAdmin={() => setIsAdminOpen(true)}
+        isAdminAuthenticated={isAdminAuthenticated}
+        customLogoUrl={customLogoUrl}
+      />
     </div>
   );
 }

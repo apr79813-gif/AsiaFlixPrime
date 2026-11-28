@@ -53,6 +53,9 @@ export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
           ctx.putImageData(imageData, 0, 0);
           const pngUrl = canvas.toDataURL('image/png');
           transparentLogoCache.set(candidate, pngUrl);
+          if (candidate === OFFICIAL_WATERMARK_LOGO_URL || !rawUrl) {
+            (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__ = pngUrl;
+          }
           resolve(pngUrl);
         } catch {
           if (allowProxy) {
@@ -87,7 +90,19 @@ export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
 
 export function useTransparentLogo(rawUrl?: string): string {
   const target = (rawUrl || '').trim() || OFFICIAL_WATERMARK_LOGO_URL;
-  const [resolved, setResolved] = useState<string>(() => transparentLogoCache.get(target) || target);
+  const getInitial = () => {
+    const cached = transparentLogoCache.get(target);
+    if (cached) return cached;
+    if (
+      (target === OFFICIAL_WATERMARK_LOGO_URL || !rawUrl) &&
+      typeof window !== 'undefined'
+    ) {
+      const globalCached = (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__;
+      if (globalCached) return globalCached;
+    }
+    return target;
+  };
+  const [resolved, setResolved] = useState<string>(getInitial);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +111,7 @@ export function useTransparentLogo(rawUrl?: string): string {
       setResolved(cached);
       return;
     }
-    setResolved(target);
+    setResolved(getInitial());
     void getTransparentLogoUrl(target).then((png) => {
       if (!cancelled) setResolved(png);
     });
@@ -181,7 +196,7 @@ export const AnimatedChannelLogo: React.FC<AnimatedChannelLogoProps> = ({
             backdropFilter: 'none',
             opacity: 0.95,
             filter:
-              'drop-shadow(0 2px 5px rgba(0,0,0,0.95)) drop-shadow(0 0 14px rgba(255,42,133,0.75))',
+              'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
           }}
           className="h-[46px] md:h-[68px] lg:h-[74px] w-auto object-contain block"
         />
@@ -580,7 +595,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             const fade1 = t > 1.8 ? Math.max(0, 1 - (t - 1.8) / 0.75) : 1;
             const flareSweepX = cx + (p1 - 0.45) * w * 0.65;
 
-            const coreR = minDim * (0.08 + Math.sin(p1 * Math.PI * 0.65) * 0.36);
+            const coreR = Math.max(2, minDim * (0.08 + Math.sin(p1 * Math.PI * 0.65) * 0.36));
             const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
             coreGrad.addColorStop(
               0,
@@ -633,7 +648,9 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             const alpha2 = enter2 * exit2;
             const pulse = 0.84 + 0.16 * Math.sin(t * 2.2);
 
-            const auraGrad = ctx.createRadialGradient(cx, cy, minDim * 0.02, cx, cy, minDim * 0.6);
+            const innerAuraR = Math.max(0, minDim * 0.02);
+            const outerAuraR = Math.max(innerAuraR + 2, minDim * 0.6);
+            const auraGrad = ctx.createRadialGradient(cx, cy, innerAuraR, cx, cy, outerAuraR);
             auraGrad.addColorStop(0, `rgba(255, 42, 133, ${0.38 * alpha2 * pulse})`);
             auraGrad.addColorStop(0.38, `rgba(229, 9, 20, ${0.28 * alpha2 * pulse})`);
             auraGrad.addColorStop(0.7, `rgba(121, 40, 202, ${0.14 * alpha2})`);
@@ -701,10 +718,10 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
   let overlayOpacity = 1;
 
   if (elapsedSec < 2.0) {
-    // Phase 1 (0.0s - 2.0s): Lens flare ignition -> logo begins smooth fade-in around 1.15s
-    const emerge = Math.max(0, Math.min(1, (elapsedSec - 1.1) / 0.9));
+    // Phase 1 (0.0s - 2.0s): Lens flare ignition -> logo begins visible emergence immediately from 0.12s
+    const emerge = Math.max(0, Math.min(1, (elapsedSec - 0.12) / 1.1));
     const eased = 1 - Math.pow(1 - emerge, 3);
-    logoOpacity = eased;
+    logoOpacity = 0.18 + eased * 0.82;
     logoScale = 0.84 + eased * 0.08;
     logoTiltY = (1 - eased) * -9;
   } else if (elapsedSec < 6.2) {
@@ -760,32 +777,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             opacity: 0;
           }
         }
-        @keyframes afpCssFlarePulse {
-          0%, 100% {
-            opacity: 0.55;
-            transform: scale(0.95);
-          }
-          50% {
-            opacity: 0.95;
-            transform: scale(1.06);
-          }
-        }
       `}</style>
-
-      {/* Instant GPU CSS Volumetric Crimson/Cyan Backdrop Layer (guarantees visibility on frame 0 even before canvas ticks) */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          pointerEvents: 'none',
-          background:
-            elapsedSec < 2.0
-              ? 'radial-gradient(ellipse 75% 18% at 50% 50%, rgba(0,242,254,0.28) 0%, rgba(229,9,20,0.34) 42%, rgba(2,2,5,0) 78%)'
-              : 'radial-gradient(circle at 50% 50%, rgba(255,42,133,0.34) 0%, rgba(229,9,20,0.24) 36%, rgba(121,40,202,0.12) 60%, rgba(2,2,5,0) 80%)',
-          animation: 'afpCssFlarePulse 3.2s ease-in-out infinite',
-        }}
-      />
 
       {/* Canvas 60fps Volumetric Light Engine */}
       <canvas
@@ -794,7 +786,15 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
         className="pointer-events-none absolute inset-0 w-full h-full block"
       />
 
-      {/* Single Official Transparent Logo (ZERO duplicate HTML PRIME text, ZERO vertical color stripes) */}
+      {/* Single Official Transparent Logo (ZERO duplicate HTML PRIME text, ZERO vertical color stripes, 0ms GPU mixBlendMode screen fallback) */}
+      {(() => {
+        const safeLogoSrc =
+          (logoSrc || '').trim() ||
+          (typeof window !== 'undefined'
+            ? (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__
+            : '') ||
+          OFFICIAL_WATERMARK_LOGO_URL;
+        return (
       <div
         style={{
           position: 'relative',
@@ -809,9 +809,17 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
       >
         <div className="relative flex items-center justify-center">
           <img
-            src={logoSrc}
+            src={safeLogoSrc}
             alt="AsiaFlix Prime"
             referrerPolicy="no-referrer"
+            onError={(e) => {
+              const imgEl = e.currentTarget;
+              if (imgEl.src !== FALLBACK_RAW_LOGO_URL && !imgEl.src.endsWith(OFFICIAL_WATERMARK_LOGO_URL)) {
+                imgEl.src = OFFICIAL_WATERMARK_LOGO_URL;
+              } else if (imgEl.src !== FALLBACK_RAW_LOGO_URL) {
+                imgEl.src = FALLBACK_RAW_LOGO_URL;
+              }
+            }}
             style={{
               height: 'clamp(115px, 19vw, 190px)',
               width: 'auto',
@@ -820,7 +828,7 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
               border: 'none',
               boxShadow: 'none',
               filter:
-                'drop-shadow(0 0 26px rgba(255,42,133,0.72)) drop-shadow(0 4px 18px rgba(0,0,0,0.96))',
+                'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
             }}
             className="object-contain block"
           />
@@ -828,8 +836,8 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
             <div
               aria-hidden="true"
               style={{
-                WebkitMaskImage: `url("${logoSrc}")`,
-                maskImage: `url("${logoSrc}")`,
+                WebkitMaskImage: `url("${safeLogoSrc}")`,
+                maskImage: `url("${safeLogoSrc}")`,
                 WebkitMaskSize: 'contain',
                 maskSize: 'contain',
                 WebkitMaskRepeat: 'no-repeat',
@@ -851,6 +859,8 @@ export const AsiaFlixCinematicIntro: React.FC<AsiaFlixCinematicIntroProps> = ({
           )}
         </div>
       </div>
+        );
+      })()}
 
       {/* Sleek Glass Skip Intro Pill after 1.5s */}
       {elapsedSec >= 1.5 && (
@@ -932,6 +942,12 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
           60% { opacity: 1; transform: perspective(900px) scale(1.04) rotateY(3deg); }
           100% { opacity: 1; transform: perspective(900px) scale(1) rotateY(0deg); }
         }
+        @keyframes afpAppSplashLightSweep {
+          0% { transform: translateX(-160%) skewX(-24deg); opacity: 0; }
+          30% { opacity: 0.95; }
+          75% { transform: translateX(220%) skewX(-24deg); opacity: 0; }
+          100% { transform: translateX(220%) skewX(-24deg); opacity: 0; }
+        }
       `}</style>
 
       {/* Deep ambient crimson-magenta radial aura (seamless on #000000, zero square box) */}
@@ -944,7 +960,7 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
         }}
       />
 
-      {/* Single Centered 100% Transparent Animated Emblem + Neon-Crimson Aura Ring (Zero Duplicate Bottom Text) */}
+      {/* Single Centered 100% Transparent Animated Emblem + Neon-Crimson Aura Ring + Light Sweep */}
       <div
         style={{ animation: 'afpAppSplashLogoPop 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards' }}
         className="relative flex items-center justify-center"
@@ -963,7 +979,7 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
             className="absolute inset-0 rounded-full opacity-95 drop-shadow-[0_0_20px_rgba(229,9,20,0.78)]"
           />
 
-          {/* 100% Transparent Chroma-Keyed + Mix-Blend Screen Official Emblem */}
+          {/* 100% Transparent Chroma-Keyed + GPU Alpha-Keyed Official Emblem */}
           <img
             src={transparentLogo}
             alt="AsiaFlix Prime"
@@ -972,10 +988,35 @@ export const AppLaunchSplash: React.FC<AppLaunchSplashProps> = ({
               background: 'transparent',
               mixBlendMode: 'screen',
               filter:
-                'drop-shadow(0 0 22px rgba(229,9,20,0.72)) drop-shadow(0 6px 18px rgba(0,0,0,0.95))',
+                'url(#asiaflix-remove-black) drop-shadow(0 0 14px rgba(255,42,133,0.7))',
             }}
             className="w-36 h-36 sm:w-44 sm:h-44 object-contain relative z-10"
           />
+
+          {/* Light Sweep across Logo Contours */}
+          <div
+            aria-hidden="true"
+            style={{
+              WebkitMaskImage: `url("${transparentLogo}")`,
+              maskImage: `url("${transparentLogo}")`,
+              WebkitMaskSize: 'contain',
+              maskSize: 'contain',
+              WebkitMaskRepeat: 'no-repeat',
+              maskRepeat: 'no-repeat',
+              WebkitMaskPosition: 'center',
+              maskPosition: 'center',
+            }}
+            className="pointer-events-none absolute inset-4 z-20 overflow-hidden"
+          >
+            <div
+              style={{
+                background:
+                  'linear-gradient(105deg, transparent 15%, rgba(255,255,255,0.85) 48%, rgba(255,184,0,0.45) 56%, transparent 85%)',
+                animation: 'afpAppSplashLightSweep 1.5s ease-in-out infinite',
+              }}
+              className="absolute inset-y-0 -left-1/3 w-[65%]"
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -22,6 +22,11 @@
             }
             document.documentElement.classList.add('installed-app-mode');
           }
+          window.__deferredInstallPrompt = null;
+          window.addEventListener('beforeinstallprompt', function (e) {
+            e.preventDefault();
+            window.__deferredInstallPrompt = e;
+          });
         } catch (e) {}
       })();
     </script>

@@ -47,6 +47,40 @@ export interface EpisodeItem {
   format?: 'single' | 'batch' | 'merged' | 'movie';
 }
 
+export interface ClipItem {
+  id: string;
+  dramaId: string;
+  title: string;
+  label?: string;
+  episodeNumber?: number;
+  streamUrl: string;
+  externalAudioUrl?: string;
+  poster: string;
+  backdrop: string;
+  thumbnailUrl?: string;
+  startTime?: number;
+  endTime?: number;
+  audio?: AudioType;
+  sourceType: 'sheet' | 'auto';
+  category: DramaCategory;
+  tags: string[];
+  synopsis: string;
+  telegramUrl?: string;
+}
+
+export interface VipProfile {
+  id: string;
+  name: string;
+  contact: string;
+  avatar: string;
+  defaultAudio: AudioType;
+  preferredSubLang?: string;
+  autoPlayNext?: boolean;
+  dataSaverDefault?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface DramaItem {
   id: string;
   title: string;
@@ -78,6 +112,7 @@ export interface DramaItem {
   spotlightTag?: string;
   totalEpisodes?: number;
   episodes: EpisodeItem[];
+  clips?: ClipItem[];
   telegramUrl: string; // Direct Telegram post URL (primary)
   movieStreamLink?: string;
   movieFanDubStreamLink?: string;

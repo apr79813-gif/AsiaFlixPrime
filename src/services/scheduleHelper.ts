@@ -215,3 +215,126 @@ export function formatPermanentTimestamp(dateInput: Date | number | string = new
   const hoursStr = String(hours).padStart(2, '0');
   return `${day}/${month}/${year} • ${hoursStr}:${minutes} ${ampm}`;
 }
+
+export const EPISODE_REMINDERS_STORAGE_KEY = 'asiaflix_episode_reminders_v1';
+export const EPISODE_REMINDERS_UPDATED_EVENT = 'asiaflix-episode-reminders-updated';
+
+export interface EpisodeReminderItem {
+  dramaId: string;
+  title: string;
+  poster: string;
+  schedule: string;
+  addedAt: number;
+}
+
+export function getEpisodeReminders(): EpisodeReminderItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(EPISODE_REMINDERS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((r) => r && typeof r.dramaId === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isDramaReminded(dramaId: string): boolean {
+  return getEpisodeReminders().some((r) => r.dramaId === dramaId);
+}
+
+export function toggleEpisodeReminder(drama: {
+  id: string;
+  title: string;
+  poster: string;
+  schedule?: string;
+}): { reminded: boolean; list: EpisodeReminderItem[] } {
+  const current = getEpisodeReminders();
+  const exists = current.some((r) => r.dramaId === drama.id);
+  const next = exists
+    ? current.filter((r) => r.dramaId !== drama.id)
+    : [
+        {
+          dramaId: drama.id,
+          title: drama.title,
+          poster: drama.poster,
+          schedule: drama.schedule || 'Weekly Drop 7:00 PM IST',
+          addedAt: Date.now(),
+        },
+        ...current,
+      ];
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(EPISODE_REMINDERS_STORAGE_KEY, JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent(EPISODE_REMINDERS_UPDATED_EVENT, { detail: next }));
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return { reminded: !exists, list: next };
+}
+
+function parseDropHourMinute(scheduleStr: string): { hour: number; minute: number } {
+  const timeMatch = scheduleStr.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (!timeMatch) {
+    return { hour: 19, minute: 0 }; // Default 7:00 PM
+  }
+  let hour = parseInt(timeMatch[1], 10);
+  const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+  const ampm = timeMatch[3].toLowerCase();
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  return { hour, minute };
+}
+
+export function getNextEpisodeDropDate(scheduleStr: string | undefined, nowDate: Date = new Date()): Date | null {
+  if (!scheduleStr || !scheduleStr.trim()) return null;
+  const { hour, minute } = parseDropHourMinute(scheduleStr);
+
+  // Check up to next 8 days (0 = today .. 7 = next week)
+  for (let offset = 0; offset <= 7; offset++) {
+    const candidate = new Date(nowDate.getTime());
+    candidate.setDate(nowDate.getDate() + offset);
+    candidate.setHours(hour, minute, 0, 0);
+
+    const shortDay = DAYS_ORDER[candidate.getDay()];
+    if (isDramaAiringOnDay(scheduleStr, shortDay) && candidate.getTime() > nowDate.getTime()) {
+      return candidate;
+    }
+  }
+
+  // Fallback for generic ongoing strings like "New Episode Weekly"
+  if (/ongoing|weekly|every\s*week|new\s*ep/i.test(scheduleStr)) {
+    const nextSat = new Date(nowDate.getTime());
+    const daysUntilSat = (6 - nowDate.getDay() + 7) % 7 || 7;
+    nextSat.setDate(nowDate.getDate() + daysUntilSat);
+    nextSat.setHours(hour, minute, 0, 0);
+    return nextSat;
+  }
+
+  return null;
+}
+
+export function formatDropCountdown(
+  targetDate: Date | null,
+  nowMs: number = Date.now()
+): { days: number; hours: number; minutes: number; seconds: number; formatted: string } | null {
+  if (!targetDate) return null;
+  const diff = Math.max(0, targetDate.getTime() - nowMs);
+  const totalSec = Math.floor(diff / 1000);
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return {
+    days,
+    hours,
+    minutes,
+    seconds,
+    formatted: `${pad(days)}d : ${pad(hours)}h : ${pad(minutes)}m : ${pad(seconds)}s`,
+  };
+}
+

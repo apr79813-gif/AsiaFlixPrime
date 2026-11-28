@@ -203,11 +203,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                 aria-label="Open VIP Profile"
                 title={vipProfile ? `${vipProfile.name} • VIP Profile` : 'Create VIP Profile'}
               >
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-[#e50914] to-amber-500 flex items-center justify-center text-xs shadow">
-                  {vipProfile?.avatar || '👑'}
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-[#e50914] to-rose-700 flex items-center justify-center text-[11px] font-black text-white overflow-hidden shadow">
+                  {vipProfile?.avatar && (vipProfile.avatar.startsWith('data:image') || vipProfile.avatar.startsWith('http')) ? (
+                    <img src={vipProfile.avatar} alt={vipProfile.name} className="w-full h-full object-cover" />
+                  ) : (
+                    (vipProfile?.name?.trim()?.[0] || 'A').toUpperCase()
+                  )}
                 </span>
                 <span className="text-[11px] font-extrabold max-w-[68px] truncate">
-                  {vipProfile?.name || 'VIP'}
+                  {vipProfile?.name || 'Account'}
                 </span>
               </button>
             )}
@@ -443,10 +447,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="flex items-center gap-1.5 px-2.5 py-1 md:py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-xs md:text-[13px] font-extrabold text-white transition-all cursor-pointer whitespace-nowrap shrink-0"
               title="My VIP Profile, Liked Clips & History"
             >
-              <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#e50914] to-amber-500 flex items-center justify-center text-[11px]">
-                {vipProfile?.avatar || '👑'}
+              <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#e50914] to-rose-700 flex items-center justify-center text-[10px] font-black text-white overflow-hidden">
+                {vipProfile?.avatar && (vipProfile.avatar.startsWith('data:image') || vipProfile.avatar.startsWith('http')) ? (
+                  <img src={vipProfile.avatar} alt={vipProfile.name} className="w-full h-full object-cover" />
+                ) : (
+                  (vipProfile?.name?.trim()?.[0] || 'A').toUpperCase()
+                )}
               </span>
-              <span className="max-w-[78px] truncate">{vipProfile?.name || 'Profile'}</span>
+              <span className="max-w-[78px] truncate">{vipProfile?.name || 'Account'}</span>
             </button>
           )}
 

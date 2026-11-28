@@ -1691,9 +1691,51 @@ export function parseSheetAudioCell(rawAudioCell: string): {
 }
 
 const translatedCueMemCache = new Map<string, SubtitleCue[]>();
-const TRANSLATED_SUBS_SESSION_KEY = 'asiaflix_translated_subs_v1';
+const TRANSLATED_SUBS_SESSION_KEY = 'asiaflix_translated_subs_v2';
+
+export async function fetchSubtitleTextWithFallback(rawUrl: string): Promise<string> {
+  const cleanUrl = normalizeSubtitleUrl(rawUrl);
+  if (!cleanUrl) throw new Error('Empty subtitle URL');
+  try {
+    const directResp = await fetch(cleanUrl);
+    if (directResp.ok) {
+      const txt = await directResp.text();
+      if (txt && txt.trim().length > 0) return txt;
+    }
+  } catch {
+    // Direct CORS fetch failed, fall back to proxy
+  }
+  if (/^https?:\/\//i.test(cleanUrl)) {
+    const proxyUrl = `/api/okru-proxy?url=${encodeURIComponent(cleanUrl)}`;
+    const proxyResp = await fetch(proxyUrl);
+    if (proxyResp.ok) {
+      return await proxyResp.text();
+    }
+  }
+  throw new Error('Subtitle fetch failed');
+}
 
 async function translateTextChunkGtx(text: string, targetLang: string): Promise<string> {
+  // 1. Try server-side proxy first (zero CORS issues)
+  if (typeof window !== 'undefined' && !window.location.hostname.includes('pages.dev')) {
+    try {
+      const proxyResp = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, targetLang }),
+      });
+      if (proxyResp.ok) {
+        const json = (await proxyResp.json()) as { ok?: boolean; translatedText?: string };
+        if (json?.ok && typeof json.translatedText === 'string' && json.translatedText.length > 0) {
+          return json.translatedText;
+        }
+      }
+    } catch {
+      // Fall through to direct Google GTX endpoint
+    }
+  }
+
+  // 2. Direct browser Google GTX endpoint
   const endpoint = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(
     targetLang
   )}&dt=t&q=${encodeURIComponent(text)}`;
@@ -1726,7 +1768,7 @@ export async function translateSubtitleCues(
     return sessHit;
   }
 
-  const SEP_TOKEN = ' ||| ';
+  const SEP_TOKEN = '\n@@AFP@@\n';
   const resultCues: SubtitleCue[] = new Array(sourceCues.length);
   const batches: Array<{ startIdx: number; items: SubtitleCue[] }> = [];
 
@@ -1735,29 +1777,32 @@ export async function translateSubtitleCues(
     const batch: SubtitleCue[] = [];
     let charLen = 0;
     const startIdx = i;
-    while (i < sourceCues.length && batch.length < 18) {
-      const piece = sourceCues[i].text.replace(/\n+/g, ' ');
-      if (batch.length > 0 && charLen + piece.length > 1350) break;
+    while (i < sourceCues.length && batch.length < 16) {
+      const piece = sourceCues[i].text.replace(/\n+/g, ' ').trim();
+      if (batch.length > 0 && charLen + piece.length > 1250) break;
       batch.push(sourceCues[i]);
-      charLen += piece.length + 10;
+      charLen += piece.length + 12;
       i++;
     }
     batches.push({ startIdx, items: batch });
   }
 
-  // Run up to 3 translation batches concurrently for fast first paint
+  // Run up to 3 translation batches concurrently for snappy response
   const CONCURRENCY = 3;
+  let anyBatchSucceeded = false;
+
   for (let b = 0; b < batches.length; b += CONCURRENCY) {
     const group = batches.slice(b, b + CONCURRENCY);
     await Promise.all(
       group.map(async ({ startIdx, items }) => {
         const joined = items
-          .map((c) => c.text.replace(/\n+/g, ' ').replace(/\|\|\|/g, '|'))
+          .map((c) => c.text.replace(/\n+/g, ' ').replace(/@@AFP@@/g, ' '))
           .join(SEP_TOKEN);
         try {
           const translatedJoined = await translateTextChunkGtx(joined, cleanTarget);
-          const splitParts = translatedJoined.split(/\s*\|\|\|\s*/);
+          const splitParts = translatedJoined.split(/\s*@@\s*AFP\s*@@\s*/i);
           if (splitParts.length === items.length) {
+            anyBatchSucceeded = true;
             items.forEach((c, idx) => {
               resultCues[startIdx + idx] = {
                 ...c,
@@ -1771,6 +1816,7 @@ export async function translateSubtitleCues(
             items.map(async (c) => {
               try {
                 const t = await translateTextChunkGtx(c.text.replace(/\n+/g, ' '), cleanTarget);
+                if (t && t.trim()) anyBatchSucceeded = true;
                 return t.trim() || c.text;
               } catch {
                 return c.text;
@@ -1789,8 +1835,10 @@ export async function translateSubtitleCues(
     );
   }
 
-  translatedCueMemCache.set(fullCacheKey, resultCues);
-  writeSessionCacheEntry(TRANSLATED_SUBS_SESSION_KEY, fullCacheKey, resultCues, 60 * 60 * 1000);
+  if (anyBatchSucceeded) {
+    translatedCueMemCache.set(fullCacheKey, resultCues);
+    writeSessionCacheEntry(TRANSLATED_SUBS_SESSION_KEY, fullCacheKey, resultCues, 60 * 60 * 1000);
+  }
   return resultCues;
 }
 
@@ -1835,6 +1883,431 @@ export function parseSheetClipsCell(rawClipsCell: string): ParsedSheetClipEntry[
 
   return results.sort((a, b) => a.index - b.index);
 }
+
+// ============================================================
+// 1. SMART OFFLINE DOWNLOAD VAULT (CacheStorage + IndexedDB)
+// ============================================================
+export const ASIAFLIX_OFFLINE_CACHE = 'asiaflix_offline_vault';
+export const OFFLINE_VAULT_DB_NAME = 'asiaflix_offline_vault_db';
+export const OFFLINE_VAULT_META_KEY = 'asiaflix_offline_vault_meta_v1';
+export const OFFLINE_VAULT_UPDATED_EVENT = 'asiaflix-offline-vault-updated';
+
+export interface OfflineVaultItem {
+  key: string; // `${dramaId}::ep${epNum}::${track}`
+  dramaId: string;
+  dramaTitle: string;
+  poster: string;
+  epNum: number;
+  track: string;
+  quality: string;
+  cachedVideoUrl: string;
+  cachedAudioUrl?: string;
+  cachedSubUrl?: string;
+  sizeBytes: number;
+  downloadedAt: number;
+}
+
+function readOfflineMetaSync(): OfflineVaultItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(OFFLINE_VAULT_META_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => x && typeof x.key === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOfflineMetaSync(items: OfflineVaultItem[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(OFFLINE_VAULT_META_KEY, JSON.stringify(items));
+    window.dispatchEvent(new CustomEvent(OFFLINE_VAULT_UPDATED_EVENT, { detail: items }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function openOfflineIdb(): Promise<IDBDatabase | null> {
+  if (typeof window === 'undefined' || !('indexedDB' in window)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(OFFLINE_VAULT_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('downloads')) {
+          db.createObjectStore('downloads', { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+export function getOfflineDownloadsSync(): OfflineVaultItem[] {
+  return readOfflineMetaSync().sort((a, b) => b.downloadedAt - a.downloadedAt);
+}
+
+export async function getOfflineDownloads(): Promise<OfflineVaultItem[]> {
+  const local = readOfflineMetaSync();
+  const db = await openOfflineIdb();
+  if (!db) return local.sort((a, b) => b.downloadedAt - a.downloadedAt);
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction('downloads', 'readonly');
+      const store = tx.objectStore('downloads');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const rows = Array.isArray(req.result) ? (req.result as OfflineVaultItem[]) : [];
+        if (rows.length > 0) {
+          writeOfflineMetaSync(rows);
+          resolve(rows.sort((a, b) => b.downloadedAt - a.downloadedAt));
+        } else {
+          resolve(local.sort((a, b) => b.downloadedAt - a.downloadedAt));
+        }
+      };
+      req.onerror = () => resolve(local.sort((a, b) => b.downloadedAt - a.downloadedAt));
+    } catch {
+      resolve(local.sort((a, b) => b.downloadedAt - a.downloadedAt));
+    }
+  });
+}
+
+async function saveOfflineItemMeta(item: OfflineVaultItem): Promise<void> {
+  const existing = readOfflineMetaSync().filter((x) => x.key !== item.key);
+  const next = [item, ...existing];
+  writeOfflineMetaSync(next);
+
+  const db = await openOfflineIdb();
+  if (!db) return;
+  try {
+    const tx = db.transaction('downloads', 'readwrite');
+    tx.objectStore('downloads').put(item);
+  } catch {
+    // ignore idb errors
+  }
+}
+
+export async function deleteOfflineDownload(key: string): Promise<OfflineVaultItem[]> {
+  const current = readOfflineMetaSync();
+  const target = current.find((x) => x.key === key);
+  const next = current.filter((x) => x.key !== key);
+  writeOfflineMetaSync(next);
+
+  if (target && typeof caches !== 'undefined') {
+    try {
+      const cache = await caches.open(ASIAFLIX_OFFLINE_CACHE);
+      await cache.delete(target.cachedVideoUrl);
+      if (target.cachedAudioUrl) await cache.delete(target.cachedAudioUrl);
+      if (target.cachedSubUrl) await cache.delete(target.cachedSubUrl);
+    } catch {
+      // ignore cache errors
+    }
+  }
+
+  const db = await openOfflineIdb();
+  if (db) {
+    try {
+      const tx = db.transaction('downloads', 'readwrite');
+      tx.objectStore('downloads').delete(key);
+    } catch {
+      // ignore idb errors
+    }
+  }
+
+  return next;
+}
+
+export function makeOfflineVaultKey(dramaId: string, epNum: number, track: string): string {
+  return `${dramaId}::ep${epNum}::${track}`;
+}
+
+export async function resolveOfflineCachedStream(cacheUrl: string): Promise<string | null> {
+  if (typeof caches === 'undefined' || !cacheUrl) return null;
+  try {
+    const cache = await caches.open(ASIAFLIX_OFFLINE_CACHE);
+    const match = await cache.match(cacheUrl);
+    if (!match) return null;
+    const blob = await match.blob();
+    if (!blob || blob.size === 0) return null;
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+export function formatBytesReadable(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+export async function downloadEpisodeToOfflineVault(params: {
+  dramaId: string;
+  dramaTitle: string;
+  poster: string;
+  epNum: number;
+  track: string;
+  quality: string;
+  rawVideoUrl: string;
+  rawAudioUrl?: string;
+  rawSubUrl?: string;
+  onProgress?: (pct: number) => void;
+}): Promise<{ ok: boolean; item?: OfflineVaultItem; error?: string }> {
+  const { dramaId, dramaTitle, poster, epNum, track, quality, rawVideoUrl, rawAudioUrl, rawSubUrl, onProgress } = params;
+  if (typeof caches === 'undefined') {
+    return { ok: false, error: 'Offline CacheStorage is not available in this browser.' };
+  }
+
+  try {
+    onProgress?.(4);
+    let targetVideoUrl = rawVideoUrl;
+    const meta = resolveUniversalVideoSource(rawVideoUrl, 0);
+    if (meta.asyncProvider?.provider === 'archive') {
+      const direct = await resolveArchiveOrgDirectStream(meta.asyncProvider.id);
+      if (direct) targetVideoUrl = direct;
+    } else if (meta.asyncProvider?.provider === 'okru' || meta.asyncProvider?.provider === 'vk') {
+      const extracted = await resolveOkRuOrVkNativeStream(meta.asyncProvider.rawUrl);
+      if (extracted.ok && extracted.streams.length > 0) {
+        const wantHeight = quality.includes('480') ? 480 : quality.includes('720') ? 720 : 1080;
+        const picked =
+          extracted.streams.find((s) => s.height === wantHeight) ||
+          extracted.streams.find((s) => s.height <= wantHeight) ||
+          extracted.streams[0];
+        if (picked?.proxiedUrl) targetVideoUrl = picked.proxiedUrl;
+        else if (extracted.proxiedHlsUrl) targetVideoUrl = extracted.proxiedHlsUrl;
+      }
+    } else if (meta.type === 'video' && meta.src) {
+      targetVideoUrl = meta.src;
+    }
+
+    if (!/^https?:\/\/|^\//i.test(targetVideoUrl)) {
+      return { ok: false, error: 'No direct stream URL available to download offline.' };
+    }
+
+    onProgress?.(10);
+    const cache = await caches.open(ASIAFLIX_OFFLINE_CACHE);
+    const cacheSafeVideoUrl = buildProxiedMediaUrl(targetVideoUrl);
+
+    const fetchWithFallback = async (urlToFetch: string): Promise<Response> => {
+      try {
+        const res = await fetch(urlToFetch);
+        if (res.ok) return res;
+      } catch {
+        // retry via proxy
+      }
+      const proxied = urlToFetch.includes('/api/okru-proxy') ? urlToFetch : buildProxiedMediaUrl(urlToFetch);
+      const res2 = await fetch(proxied);
+      if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
+      return res2;
+    };
+
+    const videoResp = await fetchWithFallback(cacheSafeVideoUrl);
+    const contentLength = Number(videoResp.headers.get('content-length') || 0);
+    const contentType = videoResp.headers.get('content-type') || 'video/mp4';
+
+    let finalSizeBytes = 0;
+    if (videoResp.body && typeof videoResp.body.getReader === 'function') {
+      const reader = videoResp.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          received += value.byteLength;
+          if (contentLength > 0) {
+            const pct = Math.min(92, 10 + Math.round((received / contentLength) * 82));
+            onProgress?.(pct);
+          } else {
+            onProgress?.(Math.min(88, 12 + Math.round(received / (1024 * 1024))));
+          }
+        }
+      }
+      finalSizeBytes = received;
+      const mergedBlob = new Blob(chunks as BlobPart[], { type: contentType });
+      await cache.put(
+        cacheSafeVideoUrl,
+        new Response(mergedBlob, {
+          status: 200,
+          headers: { 'Content-Type': contentType, 'Content-Length': String(finalSizeBytes) },
+        })
+      );
+    } else {
+      const blob = await videoResp.blob();
+      finalSizeBytes = blob.size;
+      await cache.put(
+        cacheSafeVideoUrl,
+        new Response(blob, {
+          status: 200,
+          headers: { 'Content-Type': contentType, 'Content-Length': String(finalSizeBytes) },
+        })
+      );
+    }
+
+    onProgress?.(94);
+
+    let cachedAudioUrl: string | undefined;
+    if (rawAudioUrl && /^https?:\/\//i.test(rawAudioUrl)) {
+      try {
+        const audioRes = await resolveExternalAudioStream(rawAudioUrl);
+        if (audioRes.ok && audioRes.src) {
+          const audResp = await fetchWithFallback(audioRes.src);
+          const audBlob = await audResp.blob();
+          if (audBlob.size > 0) {
+            finalSizeBytes += audBlob.size;
+            cachedAudioUrl = audioRes.src;
+            await cache.put(
+              cachedAudioUrl,
+              new Response(audBlob, { status: 200, headers: { 'Content-Type': audBlob.type || 'audio/mp4' } })
+            );
+          }
+        }
+      } catch {
+        // optional audio cache failure is non-fatal
+      }
+    }
+
+    let cachedSubUrl: string | undefined;
+    if (rawSubUrl && /^https?:\/\//i.test(rawSubUrl)) {
+      try {
+        const subFetchUrl = normalizeSubtitleUrl(rawSubUrl);
+        const subResp = await fetchWithFallback(subFetchUrl);
+        const subBlob = await subResp.blob();
+        if (subBlob.size > 0) {
+          finalSizeBytes += subBlob.size;
+          cachedSubUrl = rawSubUrl;
+          await cache.put(
+            cachedSubUrl,
+            new Response(subBlob, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+          );
+        }
+      } catch {
+        // optional sub cache failure is non-fatal
+      }
+    }
+
+    onProgress?.(100);
+    const key = makeOfflineVaultKey(dramaId, epNum, track);
+    const item: OfflineVaultItem = {
+      key,
+      dramaId,
+      dramaTitle,
+      poster,
+      epNum,
+      track,
+      quality,
+      cachedVideoUrl: cacheSafeVideoUrl,
+      cachedAudioUrl,
+      cachedSubUrl,
+      sizeBytes: Math.max(finalSizeBytes, 1024),
+      downloadedAt: Date.now(),
+    };
+    await saveOfflineItemMeta(item);
+    return { ok: true, item };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Download failed';
+    return { ok: false, error: msg };
+  }
+}
+
+// ============================================================
+// 2. WIKIPEDIA ACTOR & CAST PROFILE HUB HELPER
+// ============================================================
+export interface ActorWikiProfile {
+  name: string;
+  bio: string;
+  photoUrl?: string;
+  wikiUrl?: string;
+}
+
+const actorWikiMemCache = new Map<string, ActorWikiProfile>();
+const ACTOR_WIKI_SESSION_KEY = 'asiaflix_actor_wiki_v1';
+
+export async function fetchActorWikiProfile(actorName: string): Promise<ActorWikiProfile> {
+  const cleanName = actorName.trim();
+  const key = cleanName.toLowerCase();
+  if (!cleanName) {
+    return { name: actorName, bio: 'Featured cast member on AsiaFlix Prime.' };
+  }
+  const mem = actorWikiMemCache.get(key);
+  if (mem) return mem;
+
+  const sess = readSessionCacheEntry<ActorWikiProfile>(ACTOR_WIKI_SESSION_KEY, key);
+  if (sess) {
+    actorWikiMemCache.set(key, sess);
+    return sess;
+  }
+
+  try {
+    const resp = await fetch(
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName.replace(/\s+/g, '_'))}`
+    );
+    if (resp.ok) {
+      const data = (await resp.json()) as {
+        title?: string;
+        extract?: string;
+        thumbnail?: { source?: string };
+        originalimage?: { source?: string };
+        content_urls?: { desktop?: { page?: string } };
+      };
+      if (data && (data.extract || data.thumbnail?.source)) {
+        const profile: ActorWikiProfile = {
+          name: data.title || cleanName,
+          bio: data.extract || `${cleanName} is a featured Asian drama actor.`,
+          photoUrl: data.thumbnail?.source || data.originalimage?.source,
+          wikiUrl: data.content_urls?.desktop?.page,
+        };
+        actorWikiMemCache.set(key, profile);
+        writeSessionCacheEntry(ACTOR_WIKI_SESSION_KEY, key, profile, 6 * 60 * 60 * 1000);
+        return profile;
+      }
+    }
+  } catch {
+    // fallback below
+  }
+
+  const fallback: ActorWikiProfile = {
+    name: cleanName,
+    bio: `${cleanName} stars in popular Asian dramas available to stream on AsiaFlix Prime.`,
+  };
+  actorWikiMemCache.set(key, fallback);
+  return fallback;
+}
+
+// ============================================================
+// 3. AUTO-SKIP INTRO PREFERENCE HELPER
+// ============================================================
+export const AUTO_SKIP_INTRO_STORAGE_KEY = 'asiaflix_auto_skip_intro_v1';
+
+export function getAutoSkipIntroPref(profileDefault?: boolean): boolean {
+  if (typeof window === 'undefined') return Boolean(profileDefault);
+  try {
+    const raw = localStorage.getItem(AUTO_SKIP_INTRO_STORAGE_KEY);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+  } catch {
+    // ignore
+  }
+  return Boolean(profileDefault);
+}
+
+export function setAutoSkipIntroPref(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(AUTO_SKIP_INTRO_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}
+
 
 
 

@@ -1,19 +1,22 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { DramaItem, HeroBannerSlide } from '../types/drama';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { DramaItem, HeroBannerSlide, VipProfile, WatchlistEntry } from '../types/drama';
 import {
   Play,
   Bookmark,
   BookmarkCheck,
   Info,
   Star,
-  ChevronLeft,
   ChevronRight,
-  Send,
+  Search,
+  Bell,
+  Menu,
+  Flame,
 } from 'lucide-react';
 import { WeekendMegaLineupSection } from './WeekendMegaLineupSection';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { getWatchTimestampForDrama } from '../services/vipPlayerHelper';
 import { AdultsOnlyBadge } from './AdultsOnlyBadge';
+import { OFFICIAL_WATERMARK_LOGO_URL, useTransparentLogo } from './AnimatedChannelLogo';
 
 interface AppPosterCardProps {
   drama: DramaItem;
@@ -49,24 +52,24 @@ const AppPosterCard: React.FC<AppPosterCardProps> = ({
       ? {
           label: '🔊 IN HINDI',
           className:
-            'bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white border border-red-400/50 shadow-[0_2px_10px_rgba(229,9,20,0.6)] font-extrabold',
+            'bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white border border-[#ff1e56]/60 shadow-[0_2px_10px_rgba(229,9,20,0.55)] font-extrabold',
         }
       : drama.defaultAudio === 'Hindi Fan Dubbed' || drama.defaultAudio === 'Fan Dubbed'
       ? {
           label: '🎙️ FAN DUB',
           className:
-            'bg-gradient-to-r from-[#7928ca] to-[#ff0080] text-white border border-purple-400/50 shadow-[0_2px_10px_rgba(121,40,202,0.6)] font-extrabold',
+            'bg-gradient-to-r from-[#ff1e56] to-[#ff7a00] text-white border border-orange-400/50 shadow-[0_2px_10px_rgba(255,30,86,0.5)] font-extrabold',
         }
       : {
           label: '🌐 ORIGINAL',
           className:
-            'bg-gradient-to-r from-[#0061ff] to-[#00c6ff] text-white border border-cyan-300/50 shadow-[0_2px_10px_rgba(0,198,255,0.5)] font-extrabold',
+            'bg-gradient-to-r from-[#0061ff] to-[#00c6ff] text-white border border-cyan-300/50 shadow-[0_2px_10px_rgba(0,198,255,0.45)] font-extrabold',
         };
 
   return (
     <article
       onClick={() => onSelectDrama(drama)}
-      className={`group cursor-pointer flex flex-col bg-[#10111a] rounded-xl border border-white/[0.08] hover:border-[#e50914]/60 overflow-hidden transition-transform duration-200 active:scale-[0.98] ${
+      className={`group cursor-pointer flex flex-col bg-[#0b0c14] rounded-xl border border-white/10 hover:border-[#ff1e56]/60 overflow-hidden transition-transform duration-200 active:scale-[0.98] ${
         inGrid
           ? 'w-full'
           : 'w-[31%] min-w-[116px] max-w-[175px] sm:w-[168px] md:w-[182px] lg:w-[192px] shrink-0 snap-start'
@@ -84,7 +87,7 @@ const AppPosterCard: React.FC<AppPosterCardProps> = ({
               'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700';
           }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#08090e] via-transparent to-black/25" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#050509] via-transparent to-black/25" />
 
         {/* Top-left rank / audio micro badge */}
         <div className="absolute top-1.5 left-1.5 flex items-center gap-1 pointer-events-none">
@@ -146,14 +149,14 @@ const AppPosterCard: React.FC<AppPosterCardProps> = ({
           <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/20 overflow-hidden pointer-events-none">
             <div
               style={{ width: `${progressPct}%` }}
-              className="h-full bg-gradient-to-r from-[#e50914] to-[#ff2a5f] shadow-[0_0_8px_rgba(229,9,20,0.85)] transition-all"
+              className="h-full bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] shadow-[0_0_8px_rgba(229,9,20,0.85)] transition-all"
             />
           </div>
         )}
       </div>
 
       <div className="p-2 flex flex-col gap-0.5 min-w-0">
-        <h3 className="text-xs sm:text-[13px] font-bold text-white line-clamp-2 leading-tight group-hover:text-red-400 transition-colors">
+        <h3 className="text-xs sm:text-[13px] font-bold text-white line-clamp-2 leading-tight group-hover:text-[#ff1e56] transition-colors">
           {drama.title}
         </h3>
         <p className="text-[10px] text-zinc-400 truncate">
@@ -173,6 +176,7 @@ interface AppCatalogRowProps {
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (id: string) => boolean;
   showProgressBar?: boolean;
+  seeAllAction?: () => void;
 }
 
 const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
@@ -184,6 +188,7 @@ const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
   onToggleWatchlist,
   isWatchlisted,
   showProgressBar = false,
+  seeAllAction,
 }) => {
   const uniqueList = useMemo(() => {
     const seen = new Set<string>();
@@ -198,7 +203,7 @@ const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
 
   return (
     <section id={id} className="space-y-2.5 px-3 sm:px-6 max-w-[1440px] mx-auto w-full">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight truncate">
             {title}
@@ -207,9 +212,20 @@ const AppCatalogRow: React.FC<AppCatalogRowProps> = ({
             <p className="text-[11px] sm:text-xs text-zinc-400 truncate">{subtitle}</p>
           )}
         </div>
-        <span className="text-[11px] font-semibold text-zinc-400 shrink-0 tabular-nums">
-          {uniqueList.length}
-        </span>
+        {seeAllAction ? (
+          <button
+            type="button"
+            onClick={seeAllAction}
+            className="inline-flex items-center gap-0.5 text-xs font-bold text-[#ff1e56] hover:text-[#ff7a00] shrink-0 cursor-pointer"
+          >
+            <span>See All</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <span className="text-[11px] font-semibold text-zinc-400 shrink-0 tabular-nums">
+            {uniqueList.length}
+          </span>
+        )}
       </div>
 
       <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-2 snap-x">
@@ -255,7 +271,7 @@ interface AppHomeFeedProps {
   selectedStatus: string;
   onResetFilters: () => void;
   onOpenRequest: () => void;
-  onSelectDrama: (drama: DramaItem) => void;
+  onSelectDrama: (drama: DramaItem, epNum?: number) => void;
   onToggleWatchlist: (drama: DramaItem) => void;
   isWatchlisted: (id: string) => boolean;
   onOpenAdminWeekend: () => void;
@@ -263,6 +279,22 @@ interface AppHomeFeedProps {
   weekendTiming?: string;
   weekendActive?: boolean;
   isAdminAuthenticated?: boolean;
+  // Transparent App Header + Hub Wiring
+  logoUrl?: string;
+  vipProfile?: VipProfile | null;
+  unreadNotifsCount?: number;
+  watchlistEntries?: WatchlistEntry[];
+  onGoHome?: () => void;
+  onOpenSearch?: () => void;
+  onOpenNotifications?: () => void;
+  onOpenProfile?: () => void;
+  onOpenWatchlist?: () => void;
+  onOpenAppMenu?: () => void;
+  onOpenAdmin?: () => void;
+  activeAppQuickChip?: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule';
+  onSelectAppQuickChip?: (
+    chip: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed' | 'schedule'
+  ) => void;
 }
 
 export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
@@ -299,9 +331,44 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
   weekendAnnouncement,
   weekendTiming,
   weekendActive,
-  isAdminAuthenticated,
+  isAdminAuthenticated = false,
+  logoUrl,
+  vipProfile,
+  unreadNotifsCount = 0,
+  watchlistEntries = [],
+  onGoHome,
+  onOpenSearch,
+  onOpenNotifications,
+  onOpenProfile,
+  onOpenWatchlist,
+  onOpenAppMenu,
+  onOpenAdmin,
+  activeAppQuickChip = 'all',
+  onSelectAppQuickChip,
 }) => {
   const [heroIdx, setHeroIdx] = useState(0);
+  const touchStartXRef = useRef<number | null>(null);
+  const logoClicksRef = useRef(0);
+  const logoTimerRef = useRef<number | null>(null);
+  const transparentLogoSrc = useTransparentLogo(logoUrl || OFFICIAL_WATERMARK_LOGO_URL);
+
+  const handleLogoTap = () => {
+    if (isAdminAuthenticated && onOpenAdmin) {
+      onOpenAdmin();
+      return;
+    }
+    logoClicksRef.current += 1;
+    if (logoTimerRef.current) window.clearTimeout(logoTimerRef.current);
+    if (logoClicksRef.current >= 2 && onOpenAdmin) {
+      logoClicksRef.current = 0;
+      onOpenAdmin();
+      return;
+    }
+    logoTimerRef.current = window.setTimeout(() => {
+      logoClicksRef.current = 0;
+    }, 1100);
+    onGoHome?.();
+  };
 
   const heroSlides = useMemo(() => {
     const customSlides = (heroBanners || []).filter((b) => b && b.isActive !== false);
@@ -318,7 +385,7 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
       scheduleInfo: d.details || d.scheduleInfo,
       synopsis: d.synopsis,
       telegramUrl: d.telegramUrl,
-      badge: idx === 0 ? '👑 #1 Spotlight' : undefined,
+      badge: idx === 0 ? '🔥 Trending Now' : undefined,
       dramaId: d.id,
       isActive: true,
     }));
@@ -360,219 +427,511 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
     return out;
   }, [spotlightDramas, trendingDramas, dramas]);
 
+  const myListDramas = useMemo(() => {
+    if (watchlistEntries.length > 0) {
+      const byId = new Map(dramas.map((d) => [d.id, d]));
+      const mapped = watchlistEntries
+        .map((e) => byId.get(e.dramaId))
+        .filter((d): d is DramaItem => Boolean(d));
+      if (mapped.length > 0) return mapped;
+    }
+    return dramas.filter((d) => isWatchlisted(d.id));
+  }, [watchlistEntries, dramas, isWatchlisted]);
+
+  const primaryContinueDrama = continueWatchingDramas[0] || null;
+  const primaryContinueTs = primaryContinueDrama
+    ? getWatchTimestampForDrama(primaryContinueDrama.id)
+    : null;
+  const continueRemainingMins =
+    primaryContinueTs && primaryContinueTs.duration > 0
+      ? Math.max(1, Math.round((primaryContinueTs.duration - primaryContinueTs.currentTime) / 60))
+      : 42;
+  const continueProgressPct =
+    primaryContinueTs && primaryContinueTs.duration > 0
+      ? Math.min(
+          100,
+          Math.max(8, Math.round((primaryContinueTs.currentTime / primaryContinueTs.duration) * 100))
+        )
+      : primaryContinueTs && primaryContinueTs.currentTime > 0
+      ? 36
+      : 24;
+
+  const isValidPhoto = (val?: string) =>
+    Boolean(val && (val.startsWith('data:image/') || /^https?:\/\//i.test(val)));
+
+  // Reusable Transparent Header Right Controls
+  const renderHeaderActions = () => (
+    <div className="flex items-center gap-2 shrink-0">
+      {onOpenSearch && (
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          className="w-9 h-9 rounded-full bg-black/45 hover:bg-white/15 backdrop-blur-md border border-white/15 text-white flex items-center justify-center transition-colors cursor-pointer"
+          aria-label="Search Dramas"
+        >
+          <Search className="w-4 h-4" />
+        </button>
+      )}
+      {onOpenNotifications && (
+        <button
+          type="button"
+          onClick={onOpenNotifications}
+          className="relative w-9 h-9 rounded-full bg-black/45 hover:bg-white/15 backdrop-blur-md border border-white/15 text-white flex items-center justify-center transition-colors cursor-pointer"
+          aria-label="Notifications"
+        >
+          <Bell className="w-4 h-4" />
+          {unreadNotifsCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white text-[9px] font-black flex items-center justify-center shadow-[0_0_10px_rgba(229,9,20,0.8)]">
+              {unreadNotifsCount}
+            </span>
+          )}
+        </button>
+      )}
+      {onOpenProfile && (
+        <button
+          type="button"
+          onClick={onOpenProfile}
+          className="w-8 h-8 rounded-full border-2 border-[#ff1e56] overflow-hidden bg-gradient-to-br from-[#e50914] via-[#ff1e56] to-[#ff7a00] flex items-center justify-center text-xs font-black text-white shadow-[0_0_14px_rgba(255,30,86,0.55)] cursor-pointer shrink-0"
+          aria-label="Open Profile"
+          title={vipProfile ? `${vipProfile.name} • Profile` : 'Sign In / Profile'}
+        >
+          {isValidPhoto(vipProfile?.avatar) ? (
+            <img
+              src={vipProfile?.avatar}
+              alt={vipProfile?.name || 'Profile'}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            (vipProfile?.name?.trim()?.[0] || 'A').toUpperCase()
+          )}
+        </button>
+      )}
+    </div>
+  );
+
+  const browseCategoryPills: Array<{
+    id: 'all' | 'K-Drama' | 'C-Drama' | 'Asian Movies' | 'Hindi Dubbed';
+    label: string;
+  }> = [
+    { id: 'all', label: '🎬 All' },
+    { id: 'K-Drama', label: '🇰🇷 K-Dramas' },
+    { id: 'C-Drama', label: '🇨🇳 C-Dramas' },
+    { id: 'Asian Movies', label: '🎥 Movies' },
+    { id: 'Hindi Dubbed', label: '🎧 Hindi Dubbed' },
+  ];
+
   return (
-    <div className="flex-1 w-full pb-28 lg:pb-14 space-y-6 sm:space-y-8">
-      {/* If Category/Audio/Search Filter Active: Clean Responsive Poster Grid */}
+    <div className="flex-1 w-full pb-28 lg:pb-14 space-y-6 bg-[#050509]">
+      {/* If Category/Audio/Search Filter Active: Compact App Header + Responsive Poster Grid */}
       {isFiltered ? (
-        <section className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3 space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h2 className="text-base sm:text-xl font-extrabold text-white truncate">
-                {selectedCategory !== 'all'
-                  ? selectedCategory
-                  : selectedAudio !== 'all'
-                  ? selectedAudio
-                  : selectedStatus !== 'all'
-                  ? selectedStatus
-                  : 'Filtered Results'}
-              </h2>
-              <p className="text-xs text-zinc-400">
-                {filteredDramas.length} titles available
-              </p>
-            </div>
+        <>
+          <header className="sticky top-0 z-40 w-full px-4 py-3 bg-[#050509]/95 backdrop-blur-xl border-b border-white/10 flex items-center justify-between gap-3">
             <button
               type="button"
-              onClick={onResetFilters}
-              className="px-3 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] text-xs font-bold text-red-400 border border-white/10 cursor-pointer shrink-0"
+              onClick={handleLogoTap}
+              className="flex items-center gap-2 min-w-0 cursor-pointer"
             >
-              Reset
-            </button>
-          </div>
-
-          {filteredDramas.length === 0 ? (
-            <div className="py-16 px-4 text-center rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-              <p className="text-sm font-bold text-zinc-200">No titles match this filter.</p>
-              <div className="flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={onResetFilters}
-                  className="px-4 py-2 rounded-xl bg-white/10 text-white text-xs font-bold cursor-pointer"
-                >
-                  Show All Titles
-                </button>
-                <button
-                  type="button"
-                  onClick={onOpenRequest}
-                  className="px-4 py-2 rounded-xl bg-[#e50914] text-white text-xs font-bold cursor-pointer"
-                >
-                  Request Drama
-                </button>
+              <img
+                src={transparentLogoSrc}
+                alt="AsiaFlix Prime"
+                referrerPolicy="no-referrer"
+                style={{
+                  filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 12px rgba(255,42,133,0.7))',
+                  mixBlendMode: 'screen',
+                  background: 'transparent',
+                }}
+                className="w-8 h-8 object-contain shrink-0"
+              />
+              <div className="flex items-baseline gap-1">
+                <span className="text-base font-black text-white tracking-tight">AsiaFlix</span>
+                <span className="text-base font-black bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] bg-clip-text text-transparent">
+                  Prime
+                </span>
               </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2.5 sm:gap-4">
-              {filteredDramas.map((d) => (
-                <AppPosterCard
-                  key={`app-grid-${d.id}`}
-                  drama={d}
-                  onSelectDrama={onSelectDrama}
-                  onToggleWatchlist={onToggleWatchlist}
-                  isWatchlisted={isWatchlisted(d.id)}
-                  inGrid={true}
-                />
-              ))}
+            </button>
+            {renderHeaderActions()}
+          </header>
+
+          {/* Category Quick Switcher inside Filtered Mode */}
+          {onSelectAppQuickChip && (
+            <div className="px-3 sm:px-6 max-w-[1440px] mx-auto flex items-center gap-2 overflow-x-auto no-scrollbar">
+              {browseCategoryPills.map((pill) => {
+                const isActive = activeAppQuickChip === pill.id;
+                return (
+                  <button
+                    key={pill.id}
+                    type="button"
+                    onClick={() => onSelectAppQuickChip(pill.id)}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 border transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] text-white border-[#ff1e56]/60 shadow-[0_0_16px_rgba(229,9,20,0.45)]'
+                        : 'bg-[#0b0c14]/90 text-zinc-200 border-white/12 hover:border-[#ff1e56]/40'
+                    }`}
+                  >
+                    {pill.label}
+                  </button>
+                );
+              })}
+              {onOpenAppMenu && (
+                <button
+                  type="button"
+                  onClick={onOpenAppMenu}
+                  className="px-3.5 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 border bg-[#0b0c14]/90 border-white/12 text-zinc-200 flex items-center gap-1 cursor-pointer"
+                >
+                  <Menu className="w-3.5 h-3.5" />
+                  <span>More</span>
+                </button>
+              )}
             </div>
           )}
-        </section>
+
+          <section className="max-w-[1440px] mx-auto px-3 sm:px-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h2 className="text-base sm:text-xl font-extrabold text-white truncate">
+                  {selectedCategory !== 'all'
+                    ? selectedCategory
+                    : selectedAudio !== 'all'
+                    ? selectedAudio
+                    : selectedStatus !== 'all'
+                    ? selectedStatus
+                    : 'Filtered Results'}
+                </h2>
+                <p className="text-xs text-zinc-400">{filteredDramas.length} titles available</p>
+              </div>
+              <button
+                type="button"
+                onClick={onResetFilters}
+                className="px-3 py-1.5 rounded-lg bg-[#0b0c14]/90 hover:bg-white/[0.14] text-xs font-bold text-[#ff1e56] border border-white/12 cursor-pointer shrink-0"
+              >
+                Reset
+              </button>
+            </div>
+
+            {filteredDramas.length === 0 ? (
+              <div className="py-16 px-4 text-center rounded-2xl bg-[#0b0c14]/90 border border-white/12 space-y-3">
+                <p className="text-sm font-bold text-zinc-200">No titles match this filter.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onResetFilters}
+                    className="px-4 py-2 rounded-xl bg-white/10 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Show All Titles
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onOpenRequest}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white text-xs font-bold cursor-pointer"
+                  >
+                    Request Drama
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2.5 sm:gap-4">
+                {filteredDramas.map((d) => (
+                  <AppPosterCard
+                    key={`app-grid-${d.id}`}
+                    drama={d}
+                    onSelectDrama={onSelectDrama}
+                    onToggleWatchlist={onToggleWatchlist}
+                    isWatchlisted={isWatchlisted(d.id)}
+                    inGrid={true}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </>
       ) : (
         <>
-          {/* 1. Panoramic Widescreen App Hero Showcase */}
-          {activeSlide && heroDrama && (() => {
-            const heroTelegramUrl =
-              heroDrama.telegramHindi ||
-              heroDrama.telegramFanDub ||
-              heroDrama.telegramOrig ||
-              heroDrama.telegramUrl;
-            const heroAgeInfo = getAgeRatingMeta(heroDrama.ageRating);
-            return (
-              <section className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3">
-                <div className="min-h-[235px] sm:min-h-[340px] sm:aspect-[21/9] w-full relative rounded-2xl overflow-hidden border border-white/10 bg-[#07070c] flex items-end shadow-2xl">
+          {/* 1. Full-Bleed 16:9 App Hero Banner with Overlaid Transparent Header */}
+          {activeSlide && heroDrama && (
+            <section
+              onTouchStart={(e) => {
+                touchStartXRef.current = e.touches[0]?.clientX ?? null;
+              }}
+              onTouchEnd={(e) => {
+                if (touchStartXRef.current === null || heroSlides.length <= 1) return;
+                const endX = e.changedTouches[0]?.clientX ?? touchStartXRef.current;
+                const delta = endX - touchStartXRef.current;
+                touchStartXRef.current = null;
+                if (Math.abs(delta) > 40) {
+                  if (delta < 0) {
+                    setHeroIdx((i) => (i + 1) % heroSlides.length);
+                  } else {
+                    setHeroIdx((i) => (i - 1 + heroSlides.length) % heroSlides.length);
+                  }
+                }
+              }}
+              className="relative w-full aspect-[16/10] sm:aspect-[16/9] min-h-[345px] sm:min-h-[420px] max-h-[540px] overflow-hidden bg-[#050509] flex items-end select-none"
+            >
+              {/* Transparent Top Header Overlaid Directly on Top of Hero Banner */}
+              <header className="px-4 py-3 flex items-center justify-between absolute top-0 inset-x-0 z-30 bg-gradient-to-b from-black/85 via-black/40 to-transparent">
+                <button
+                  type="button"
+                  onClick={handleLogoTap}
+                  className="flex items-center gap-2 min-w-0 cursor-pointer"
+                >
                   <img
-                    src={activeSlide.backdropUrl || heroDrama.backdrop || heroDrama.poster}
-                    alt={activeSlide.title}
+                    src={transparentLogoSrc}
+                    alt="AsiaFlix Prime"
                     referrerPolicy="no-referrer"
-                    className="absolute inset-0 w-full h-full object-cover object-top sm:object-center"
+                    style={{
+                      filter: 'url(#asiaflix-remove-black) drop-shadow(0 0 12px rgba(255,42,133,0.75))',
+                      mixBlendMode: 'screen',
+                      background: 'transparent',
+                    }}
+                    className="w-8 h-8 object-contain shrink-0"
                   />
-                  {/* Bottom 42% Gradient Only (keeps upper 60% artwork & faces completely uncovered) */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-[#07070c] via-[#07070c]/80 to-transparent" />
-                  <div className="pointer-events-none absolute inset-y-0 left-0 w-[62%] bg-gradient-to-r from-[#07070c]/70 via-[#07070c]/20 to-transparent" />
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-base sm:text-lg font-black text-white tracking-tight">
+                      AsiaFlix
+                    </span>
+                    <span className="text-base sm:text-lg font-black bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] bg-clip-text text-transparent">
+                      Prime
+                    </span>
+                  </div>
+                </button>
+                {renderHeaderActions()}
+              </header>
 
-                  <div className="relative z-10 p-3 sm:p-6 max-w-2xl w-full flex flex-col justify-end">
-                    <div className="flex flex-wrap items-center gap-1 text-[9px] sm:text-xs font-bold text-zinc-100">
-                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-gradient-to-r from-[#e50914] to-[#ff2a5f] text-white font-black uppercase tracking-wider shadow">
-                        {activeSlide.badge && !activeSlide.badge.includes(',') && activeSlide.badge.length < 24
-                          ? activeSlide.badge
-                          : '🔥 VIP PICK'}
-                      </span>
-                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-white/15 backdrop-blur-sm text-white font-bold">
-                        {heroDrama.category}
-                      </span>
-                      {heroDrama.ageRating &&
-                        (heroAgeInfo.is18Plus ? (
-                          <AdultsOnlyBadge size="xs" />
-                        ) : (
-                          <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-bold ${heroAgeInfo.pillClass}`}>
-                            {heroAgeInfo.label}
-                          </span>
-                        ))}
-                      <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-zinc-200 font-bold">
-                        {heroDrama.releaseYear}
-                      </span>
-                      <span className="inline-flex items-center gap-0.5 text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-black">
-                        <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
-                        {heroDrama.rating}
-                      </span>
-                      {heroDrama.defaultAudio && (
-                        <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-extrabold">
-                          {heroDrama.defaultAudio}
-                        </span>
-                      )}
-                    </div>
+              {/* Hero Backdrop Image */}
+              <img
+                key={activeSlide.id + activeSlide.backdropUrl}
+                src={
+                  activeSlide.backdropUrl ||
+                  heroDrama.backdrop ||
+                  heroDrama.thumbnailUrl ||
+                  heroDrama.poster
+                }
+                alt={activeSlide.title}
+                referrerPolicy="no-referrer"
+                className="absolute inset-0 w-full h-full object-cover object-center transition-all duration-700"
+              />
+              {/* Seamless Edge Gradients (Zero Split Line) */}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#050509]/85 via-[#050509]/35 to-transparent" />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050509] via-[#050509]/45 to-transparent" />
 
-                    <h1 className="text-base sm:text-2xl font-black text-white leading-tight mt-1 line-clamp-1 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
-                      {heroDrama.title}
-                    </h1>
+              {/* Bottom-Left Overlay Content */}
+              <div className="relative z-20 max-w-[1440px] mx-auto w-full px-4 pb-5 sm:px-8 sm:pb-8 space-y-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white text-[10px] font-black uppercase tracking-wider shadow-[0_0_15px_rgba(229,9,20,0.55)]">
+                    <Flame className="w-3 h-3 fill-white" />
+                    <span>
+                      {activeSlide.badge &&
+                      !activeSlide.badge.includes(',') &&
+                      activeSlide.badge.length < 24
+                        ? activeSlide.badge
+                        : 'Trending Now'}
+                    </span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-zinc-100 text-[10px] font-bold">
+                    {heroDrama.category}
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-amber-300 text-[10px] font-black">
+                    <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                    {heroDrama.rating}
+                  </span>
+                </div>
 
-                    <p className="text-[10px] sm:text-xs text-gray-200 line-clamp-2 max-w-[92%] mt-0.5 leading-snug drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]">
-                      {heroDrama.synopsis || activeSlide.synopsis}
-                    </p>
+                <h1 className="text-2xl sm:text-4xl font-black text-white leading-tight line-clamp-1 drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] max-w-xl">
+                  {heroDrama.title}
+                </h1>
 
-                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => onSelectDrama(heroDrama)}
-                        className="bg-[#e50914] hover:bg-[#f6121d] text-white text-[11px] sm:text-xs font-extrabold px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-red-600/35 cursor-pointer transition-transform active:scale-95"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-white" />
-                        <span>Watch Now</span>
-                      </button>
+                <p className="text-xs sm:text-sm text-zinc-200 line-clamp-2 max-w-[82%] sm:max-w-lg leading-snug drop-shadow-[0_1px_6px_rgba(0,0,0,0.95)]">
+                  {heroDrama.synopsis || activeSlide.synopsis}
+                </p>
 
-                      {heroTelegramUrl && (
-                        <a
-                          href={heroTelegramUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-white/15 hover:bg-[#0088cc]/45 backdrop-blur-md border border-white/20 text-white text-[11px] sm:text-xs font-bold px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl flex items-center gap-1.5 transition-colors"
-                        >
-                          <Send className="w-3.5 h-3.5 text-[#38bdf8]" />
-                          <span>Open in Telegram</span>
-                        </a>
-                      )}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => onSelectDrama(heroDrama, 1)}
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] text-white text-xs sm:text-sm font-black shadow-[0_0_25px_rgba(229,9,20,0.5)] hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>Play</span>
+                  </button>
 
-                      <button
-                        type="button"
-                        onClick={() => onToggleWatchlist(heroDrama)}
-                        className={`px-2.5 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold border flex items-center gap-1 cursor-pointer backdrop-blur-md transition-colors ${
-                          isWatchlisted(heroDrama.id)
-                            ? 'bg-amber-500/25 border-amber-400/55 text-amber-200'
-                            : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
-                        }`}
-                        aria-label={isWatchlisted(heroDrama.id) ? 'Saved in Watchlist' : 'Add to Watchlist'}
-                        title={isWatchlisted(heroDrama.id) ? 'Saved in Watchlist' : 'Add to Watchlist'}
-                      >
-                        {isWatchlisted(heroDrama.id) ? (
-                          <BookmarkCheck className="w-3.5 h-3.5 text-amber-400" />
-                        ) : (
-                          <Bookmark className="w-3.5 h-3.5" />
-                        )}
-                        <span className="hidden sm:inline">
-                          {isWatchlisted(heroDrama.id) ? 'Saved' : 'Watchlist'}
-                        </span>
-                      </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectDrama(heroDrama)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/20 text-white text-xs sm:text-sm font-bold active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Info className="w-3.5 h-3.5" />
+                    <span>More Info</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onToggleWatchlist(heroDrama)}
+                    className={`w-9 h-9 rounded-full backdrop-blur-md border flex items-center justify-center transition-colors cursor-pointer ${
+                      isWatchlisted(heroDrama.id)
+                        ? 'bg-amber-400 text-black border-amber-200'
+                        : 'bg-white/15 hover:bg-white/25 text-white border-white/20'
+                    }`}
+                    aria-label={isWatchlisted(heroDrama.id) ? 'Saved in My List' : 'Add to My List'}
+                  >
+                    {isWatchlisted(heroDrama.id) ? (
+                      <BookmarkCheck className="w-4 h-4" />
+                    ) : (
+                      <Bookmark className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Bottom-Right Crimson-Pink Pagination Dots */}
+              {heroSlides.length > 1 && (
+                <div className="absolute bottom-5 right-4 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-md border border-white/10">
+                  {heroSlides.map((sl, sIdx) => (
+                    <button
+                      key={`dot-${sl.id}-${sIdx}`}
+                      type="button"
+                      onClick={() => setHeroIdx(sIdx)}
+                      aria-label={`Hero slide ${sIdx + 1}`}
+                      className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                        sIdx === heroIdx % heroSlides.length
+                          ? 'w-5 bg-gradient-to-r from-[#e50914] to-[#ff1e56]'
+                          : 'w-1.5 bg-white/35 hover:bg-white/70'
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 2. Continue Watching Featured Card + See All */}
+          {primaryContinueDrama && (
+            <section id="app-sec-continue" className="px-3 sm:px-6 max-w-[1440px] mx-auto w-full space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                  Continue Watching
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => onOpenProfile?.()}
+                  className="inline-flex items-center gap-0.5 text-xs font-bold text-[#ff1e56] hover:text-[#ff7a00] cursor-pointer"
+                >
+                  <span>See All</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div
+                onClick={() =>
+                  onSelectDrama(primaryContinueDrama, primaryContinueTs?.ep || 1)
+                }
+                className="flex items-center gap-3 p-2.5 sm:p-3 rounded-2xl bg-[#0b0c14]/90 border border-white/12 hover:border-[#ff1e56]/50 shadow-xl cursor-pointer group transition-all"
+              >
+                <div className="relative w-32 sm:w-44 aspect-video rounded-xl overflow-hidden bg-zinc-900 shrink-0 border border-white/10">
+                  <img
+                    src={
+                      primaryContinueDrama.backdrop ||
+                      primaryContinueDrama.thumbnailUrl ||
+                      primaryContinueDrama.poster
+                    }
+                    alt={primaryContinueDrama.title}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent" />
+                </div>
+
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="text-sm sm:text-base font-black text-white truncate">
+                        {primaryContinueDrama.title}
+                      </h3>
+                      <p className="text-[11px] sm:text-xs text-zinc-400 font-semibold mt-0.5">
+                        S1 E{primaryContinueTs?.ep || 1} • {continueRemainingMins} min remaining
+                      </p>
                     </div>
                   </div>
 
-                  {heroSlides.length > 1 && (
-                    <div className="flex items-center gap-2 absolute bottom-2.5 right-3 sm:bottom-4 sm:right-4 z-20">
-                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/10">
-                        {heroSlides.map((sl, sIdx) => (
-                          <button
-                            key={`dot-${sl.id}-${sIdx}`}
-                            type="button"
-                            onClick={() => setHeroIdx(sIdx)}
-                            aria-label={`Hero slide ${sIdx + 1}`}
-                            className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                              sIdx === heroIdx % heroSlides.length
-                                ? 'w-5 bg-[#e50914]'
-                                : 'w-1.5 bg-white/40 hover:bg-white/75'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setHeroIdx((i) => (i - 1 + heroSlides.length) % heroSlides.length)}
-                        className="hidden sm:flex w-8 h-8 rounded-lg bg-black/60 border border-white/15 text-white items-center justify-center cursor-pointer hover:bg-black/85"
-                        aria-label="Previous Hero Slide"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setHeroIdx((i) => (i + 1) % heroSlides.length)}
-                        className="hidden sm:flex w-8 h-8 rounded-lg bg-black/60 border border-white/15 text-white items-center justify-center cursor-pointer hover:bg-black/85"
-                        aria-label="Next Hero Slide"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </section>
-            );
-          })()}
+                  <div className="h-1.5 w-full rounded-full bg-white/12 overflow-hidden">
+                    <div
+                      style={{ width: `${continueProgressPct}%` }}
+                      className="h-full bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] rounded-full"
+                    />
+                  </div>
 
-          {/* 2. Top 10 Trending Spotlight Strip */}
+                  <div className="flex items-center justify-between pt-0.5">
+                    <span className="text-[10px] font-bold text-zinc-400">
+                      {primaryContinueTs?.track || primaryContinueDrama.defaultAudio}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectDrama(primaryContinueDrama, primaryContinueTs?.ep || 1);
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white text-[11px] font-black shadow-[0_0_16px_rgba(229,9,20,0.45)] cursor-pointer"
+                    >
+                      <Play className="w-3 h-3 fill-white" />
+                      <span>Resume</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* 3. My List Horizontal Poster Row */}
+          {myListDramas.length > 0 && (
+            <AppCatalogRow
+              id="app-sec-mylist"
+              title="My List"
+              dramas={myListDramas}
+              onSelectDrama={onSelectDrama}
+              onToggleWatchlist={onToggleWatchlist}
+              isWatchlisted={isWatchlisted}
+              seeAllAction={onOpenWatchlist}
+            />
+          )}
+
+          {/* 4. Browse Categories Horizontal Pills + More Drawer */}
+          <section className="px-3 sm:px-6 max-w-[1440px] mx-auto w-full space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                Browse Categories
+              </h2>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+              {browseCategoryPills.map((pill) => {
+                const isActive = activeAppQuickChip === pill.id;
+                return (
+                  <button
+                    key={pill.id}
+                    type="button"
+                    onClick={() => onSelectAppQuickChip?.(pill.id)}
+                    className={`px-3.5 py-2 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 border transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] text-white border-[#ff1e56]/60 shadow-[0_0_18px_rgba(229,9,20,0.45)]'
+                        : 'bg-[#0b0c14]/90 hover:border-[#ff1e56]/40 text-zinc-200 border-white/12'
+                    }`}
+                  >
+                    {pill.label}
+                  </button>
+                );
+              })}
+              {onOpenAppMenu && (
+                <button
+                  type="button"
+                  onClick={onOpenAppMenu}
+                  className="px-3.5 py-2 rounded-full text-xs font-extrabold whitespace-nowrap shrink-0 border bg-[#0b0c14]/90 hover:border-[#ff1e56]/40 text-zinc-200 border-white/12 inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Menu className="w-3.5 h-3.5 text-[#ff1e56]" />
+                  <span>More</span>
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* 5. Top 10 Trending Spotlight Strip */}
           {top10Spotlight.length > 0 && (
             <section id="app-sec-trending" className="max-w-[1440px] mx-auto px-3 sm:px-6 space-y-2.5">
               <div className="flex items-baseline justify-between gap-2">
@@ -601,21 +960,7 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
             </section>
           )}
 
-          {/* 3. Continue Watching Row */}
-          {continueWatchingDramas.length > 0 && (
-            <AppCatalogRow
-              id="app-sec-continue"
-              title="▶️ Continue Watching"
-              subtitle="Jump straight back into your active series"
-              dramas={continueWatchingDramas}
-              onSelectDrama={onSelectDrama}
-              onToggleWatchlist={onToggleWatchlist}
-              isWatchlisted={isWatchlisted}
-              showProgressBar={true}
-            />
-          )}
-
-          {/* 4. Clean / Collapsible Weekly Airing Schedule */}
+          {/* 6. Weekly Airing Schedule */}
           <div id="app-sec-schedule">
             <WeekendMegaLineupSection
               weekendDramas={weekendDramas}
@@ -631,7 +976,7 @@ export const AppHomeFeed: React.FC<AppHomeFeedProps> = ({
             />
           </div>
 
-          {/* 5. Organized Poster Rows (3 Cards Visible cleanly on Phone, scaling up on Tablet/Laptop App) */}
+          {/* 7. Organized Catalog Poster Rows */}
           <AppCatalogRow
             id="app-sec-recommended"
             title="🎯 Recommended for You"

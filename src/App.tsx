@@ -6,7 +6,7 @@ import { MarqueeNotice } from './components/MarqueeNotice';
 import { AudienceNotificationBanner } from './components/AudienceNotificationBanner';
 import { Navbar } from './components/Navbar';
 import { MobileBottomNav } from './components/MobileBottomNav';
-import { Search, X, Play, Star, Clock, Film } from 'lucide-react';
+import { Search, X, Play, Star, Clock, Film, Mic } from 'lucide-react';
 import { HeroBanner } from './components/HeroBanner';
 import { SpotlightBar } from './components/SpotlightBar';
 import { LiveIssueBoard } from './components/LiveIssueBoard';
@@ -22,7 +22,7 @@ import { SupportDeskModal } from './components/SupportDeskModal';
 import { ArcadeHubModal } from './components/ArcadeHubModal';
 import { AdminStudioModal } from './components/AdminStudioModal';
 import { ClipsFeedModal } from './components/ClipsFeedModal';
-import { UserProfileModal, VIP_PROFILE_UPDATED_EVENT, loadVipProfile } from './components/UserProfileModal';
+import { UserProfileModal, VIP_PROFILE_UPDATED_EVENT, loadVipProfile, clearVipProfile } from './components/UserProfileModal';
 import { PolicySafetySection } from './components/PolicySafetySection';
 import { Footer } from './components/Footer';
 import { LiveToastNotification } from './components/LiveToastNotification';
@@ -582,6 +582,7 @@ export default function App() {
   const [isFirstTimeProfileGateOpen, setIsFirstTimeProfileGateOpen] = useState<boolean>(false);
   const [isClipsOpen, setIsClipsOpen] = useState<boolean>(false);
   const [initialClipId, setInitialClipId] = useState<string | null>(null);
+  const [isInstantVoiceListening, setIsInstantVoiceListening] = useState<boolean>(false);
   const [isResumeBarDismissed, setIsResumeBarDismissed] = useState<boolean>(false);
   const [watchTimestampsVersion, setWatchTimestampsVersion] = useState<number>(0);
   const [isAppDownloadModalOpen, setIsAppDownloadModalOpen] = useState<boolean>(() => {
@@ -619,8 +620,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    // First-time VIP profile onboarding gate (never overlap launch splash)
-    if (showAppSplash || vipProfile) return;
+    // STRICT APP-ONLY RULE: Never auto-trigger profile login gate in regular website browser mode
+    if (!isInstalledApp || showAppSplash || vipProfile) return;
     try {
       if (sessionStorage.getItem('asiaflix_profile_gate_dismissed') === '1') return;
     } catch {
@@ -632,7 +633,7 @@ export default function App() {
       }
     }, 450);
     return () => window.clearTimeout(gateTimer);
-  }, [showAppSplash, vipProfile]);
+  }, [isInstalledApp, showAppSplash, vipProfile]);
 
   useEffect(() => {
     // Preload & pre-key Official Channel Logo so first-click 8s Cinema Intro & Watermark render at 0ms
@@ -3743,6 +3744,7 @@ export default function App() {
                     preferredSubLang: vipProfile.preferredSubLang,
                     autoPlayNext: vipProfile.autoPlayNext,
                     dataSaverDefault: vipProfile.dataSaverDefault,
+                    autoSkipIntro: vipProfile.autoSkipIntro,
                   }
                 : undefined
             }
@@ -3765,43 +3767,45 @@ export default function App() {
             </>
           )}
 
-          {/* Header / Navbar (Dual-Mode: Website Mode untouched vs Sleek Native App Top Bar) */}
-          <Navbar
-            unreadNotifsCount={unreadCount}
-            watchlistCount={watchlist.length}
-            sakuraEnabled={particleMode !== 'off'}
-            particleMode={particleMode}
-            onToggleSakura={handleCycleParticleMode}
-            onOpenNotifications={() => setIsNotificationsOpen(true)}
-            onOpenWatchlist={() => setIsWatchlistOpen(true)}
-            onOpenArcade={() => setIsArcadeOpen(true)}
-            onOpenSupport={() => setIsSupportOpen(true)}
-            onOpenRequest={() => setIsRequestOpen(true)}
-            onOpenAdmin={() => setIsAdminOpen(true)}
-            isAdminAuthenticated={isAdminAuthenticated}
-            logoUrl={customLogoUrl}
-            sheetSyncCount={dramas.length}
-            isSheetSyncing={sheetSyncState.isSyncing}
-            onRefreshSheet={() => fetchGoogleSheetData()}
-            onOpenSearch={() => setIsInstantSearchOpen(true)}
-            onOpenSearchModal={() => setIsInstantSearchOpen(true)}
-            onGoHome={handleGoHome}
-            vipStats={vipStats}
-            vipProfile={vipProfile}
-            onOpenProfile={() => setIsProfileModalOpen(true)}
-            onOpenClips={() => {
-              setInitialClipId(null);
-              setIsClipsOpen(true);
-            }}
-            onSurpriseMe={handleSurpriseMe}
-            onInstallApp={handleInstallApp}
-            onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
-            isAppInstalled={isAppInstalled}
-            isInstalledApp={isInstalledApp}
-            onOpenAppMenu={() => setIsAppDrawerOpen(true)}
-            activeAppQuickChip={activeAppQuickChip}
-            onSelectAppQuickChip={handleSelectAppQuickChip}
-          />
+          {/* Header / Navbar (Website Mode Only — App Mode uses overlaid transparent header on App Hero Banner) */}
+          {!isInstalledApp && (
+            <Navbar
+              unreadNotifsCount={unreadCount}
+              watchlistCount={watchlist.length}
+              sakuraEnabled={particleMode !== 'off'}
+              particleMode={particleMode}
+              onToggleSakura={handleCycleParticleMode}
+              onOpenNotifications={() => setIsNotificationsOpen(true)}
+              onOpenWatchlist={() => setIsWatchlistOpen(true)}
+              onOpenArcade={() => setIsArcadeOpen(true)}
+              onOpenSupport={() => setIsSupportOpen(true)}
+              onOpenRequest={() => setIsRequestOpen(true)}
+              onOpenAdmin={() => setIsAdminOpen(true)}
+              isAdminAuthenticated={isAdminAuthenticated}
+              logoUrl={customLogoUrl}
+              sheetSyncCount={dramas.length}
+              isSheetSyncing={sheetSyncState.isSyncing}
+              onRefreshSheet={() => fetchGoogleSheetData()}
+              onOpenSearch={() => setIsInstantSearchOpen(true)}
+              onOpenSearchModal={() => setIsInstantSearchOpen(true)}
+              onGoHome={handleGoHome}
+              vipStats={vipStats}
+              vipProfile={vipProfile}
+              onOpenProfile={() => setIsProfileModalOpen(true)}
+              onOpenClips={() => {
+                setInitialClipId(null);
+                setIsClipsOpen(true);
+              }}
+              onSurpriseMe={handleSurpriseMe}
+              onInstallApp={handleInstallApp}
+              onOpenAppDownloadModal={() => setIsAppDownloadModalOpen(true)}
+              isAppInstalled={isAppInstalled}
+              isInstalledApp={isInstalledApp}
+              onOpenAppMenu={() => setIsAppDrawerOpen(true)}
+              activeAppQuickChip={activeAppQuickChip}
+              onSelectAppQuickChip={handleSelectAppQuickChip}
+            />
+          )}
 
           {isInstalledApp ? (
             <>
@@ -3837,7 +3841,7 @@ export default function App() {
                   setSelectedStatus('all');
                 }}
                 onOpenRequest={() => setIsRequestOpen(true)}
-                onSelectDrama={handleOpenDrama}
+                onSelectDrama={(drama, epNum) => handleOpenDrama(drama, epNum ?? null)}
                 onToggleWatchlist={handleToggleWatchlist}
                 isWatchlisted={isDramaWatchlisted}
                 onOpenAdminWeekend={() => handleOpenAdminWithTab('weekend')}
@@ -3845,6 +3849,19 @@ export default function App() {
                 weekendTiming={weekendSettings.timing}
                 weekendActive={weekendSettings.isActive}
                 isAdminAuthenticated={isAdminAuthenticated}
+                logoUrl={customLogoUrl}
+                vipProfile={vipProfile}
+                unreadNotifsCount={unreadCount}
+                watchlistEntries={watchlist}
+                onGoHome={handleGoHome}
+                onOpenSearch={() => setIsInstantSearchOpen(true)}
+                onOpenNotifications={() => setIsNotificationsOpen(true)}
+                onOpenProfile={() => setIsProfileModalOpen(true)}
+                onOpenWatchlist={() => setIsWatchlistOpen(true)}
+                onOpenAppMenu={() => setIsAppDrawerOpen(true)}
+                onOpenAdmin={() => setIsAdminOpen(true)}
+                activeAppQuickChip={activeAppQuickChip}
+                onSelectAppQuickChip={handleSelectAppQuickChip}
               />
 
               {/* App-Exclusive: "Resume Watching" Floating Mini-Bar */}
@@ -4504,6 +4521,76 @@ export default function App() {
                 placeholder="Search Asian dramas, movies, actors, or genres..."
                 className="w-full bg-transparent text-white text-sm sm:text-base font-semibold outline-none placeholder-zinc-500"
               />
+              {typeof window !== 'undefined' &&
+                ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const SpeechRec =
+                        (
+                          window as unknown as {
+                            SpeechRecognition?: new () => {
+                              lang: string;
+                              interimResults: boolean;
+                              maxAlternatives: number;
+                              onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+                              onerror: (() => void) | null;
+                              onend: (() => void) | null;
+                              start: () => void;
+                            };
+                            webkitSpeechRecognition?: new () => {
+                              lang: string;
+                              interimResults: boolean;
+                              maxAlternatives: number;
+                              onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+                              onerror: (() => void) | null;
+                              onend: (() => void) | null;
+                              start: () => void;
+                            };
+                          }
+                        ).SpeechRecognition ||
+                        (
+                          window as unknown as {
+                            webkitSpeechRecognition?: new () => {
+                              lang: string;
+                              interimResults: boolean;
+                              maxAlternatives: number;
+                              onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+                              onerror: (() => void) | null;
+                              onend: (() => void) | null;
+                              start: () => void;
+                            };
+                          }
+                        ).webkitSpeechRecognition;
+                      if (!SpeechRec || isInstantVoiceListening) return;
+                      try {
+                        const rec = new SpeechRec();
+                        rec.lang = 'en-IN';
+                        rec.interimResults = false;
+                        rec.maxAlternatives = 1;
+                        setIsInstantVoiceListening(true);
+                        rec.onresult = (ev) => {
+                          const spoken = ev.results?.[0]?.[0]?.transcript?.trim();
+                          if (spoken) setInstantSearchQuery(spoken);
+                        };
+                        rec.onerror = () => setIsInstantVoiceListening(false);
+                        rec.onend = () => setIsInstantVoiceListening(false);
+                        rec.start();
+                      } catch {
+                        setIsInstantVoiceListening(false);
+                      }
+                    }}
+                    className={`p-1.5 rounded-full transition-all cursor-pointer shrink-0 ${
+                      isInstantVoiceListening
+                        ? 'bg-[#e50914] text-white animate-pulse shadow-[0_0_12px_rgba(229,9,20,0.65)]'
+                        : 'text-zinc-400 hover:text-white hover:bg-white/10'
+                    }`}
+                    title="Voice Search"
+                    aria-label="Voice Search"
+                  >
+                    <Mic className="w-4 h-4" />
+                  </button>
+                )}
               {instantSearchQuery && (
                 <button
                   onClick={() => setInstantSearchQuery('')}
@@ -4869,11 +4956,12 @@ export default function App() {
         preferredAudio={vipProfile?.defaultAudio}
         initialClipId={initialClipId}
         customLogoUrl={customLogoUrl}
+        isAdminAuthenticated={isAdminAuthenticated}
       />
 
-      {/* 16. VIP USER PROFILE HUB & FIRST-TIME PROFILE GATE */}
+      {/* 16. APP-ONLY VIP USER PROFILE HUB & FIRST-TIME PROFILE GATE */}
       <UserProfileModal
-        isOpen={isProfileModalOpen || isFirstTimeProfileGateOpen}
+        isOpen={isProfileModalOpen || (isInstalledApp && isFirstTimeProfileGateOpen)}
         onClose={() => {
           setIsProfileModalOpen(false);
           if (isFirstTimeProfileGateOpen) {
@@ -4886,14 +4974,19 @@ export default function App() {
           }
           if (activeAppTab === 'profile') setActiveAppTab('home');
         }}
-        forceGate={isFirstTimeProfileGateOpen && !vipProfile}
+        forceGate={isInstalledApp && isFirstTimeProfileGateOpen && !vipProfile}
         profile={vipProfile}
         onSaveProfile={(next) => {
           setVipProfile(next);
           setIsFirstTimeProfileGateOpen(false);
         }}
+        onSignOut={() => {
+          clearVipProfile();
+          setVipProfile(null);
+        }}
         dramas={dramas}
         watchlistCount={watchlist.length}
+        watchlistEntries={watchlist}
         onOpenWatchlist={() => setIsWatchlistOpen(true)}
         onOpenDrama={(drama, epNum, track) => {
           handleOpenDrama(drama, epNum ?? null);
@@ -4909,6 +5002,9 @@ export default function App() {
         onOpenAdmin={() => setIsAdminOpen(true)}
         isAdminAuthenticated={isAdminAuthenticated}
         customLogoUrl={customLogoUrl}
+        unreadNotifsCount={unreadCount}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenSupport={() => setIsSupportOpen(true)}
       />
     </div>
   );

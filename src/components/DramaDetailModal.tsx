@@ -45,8 +45,20 @@ import {
   EyeOff,
   Sliders,
   Trash2,
+  Bell,
+  Download,
+  GripHorizontal,
+  HardDrive,
+  Loader2,
 } from 'lucide-react';
-import { isAiringToday } from '../services/scheduleHelper';
+import {
+  isAiringToday,
+  isDramaReminded,
+  toggleEpisodeReminder,
+  getNextEpisodeDropDate,
+  formatDropCountdown,
+  EPISODE_REMINDERS_UPDATED_EVENT,
+} from '../services/scheduleHelper';
 import { getAgeRatingMeta } from '../services/ageRatingHelper';
 import { createDramaSlug } from '../services/urlHelper';
 import { SubtitleVoiceEngine } from '../services/subtitleVoiceEngine';
@@ -77,6 +89,7 @@ import {
   DanmakuCue,
   parseSrtOrVttContent,
   normalizeSubtitleUrl,
+  fetchSubtitleTextWithFallback,
   resolveUniversalVideoSource,
   resolveArchiveOrgDirectStream,
   resolveArchiveOrgMultiQualityStreams,
@@ -98,6 +111,18 @@ import {
   translateSubtitleCues,
   TIMESTAMPS_UPDATED_EVENT,
   WatchTimestampEntry,
+  OFFLINE_VAULT_UPDATED_EVENT,
+  OfflineVaultItem,
+  getOfflineDownloadsSync,
+  getOfflineDownloads,
+  downloadEpisodeToOfflineVault,
+  resolveOfflineCachedStream,
+  makeOfflineVaultKey,
+  ActorWikiProfile,
+  fetchActorWikiProfile,
+  AUTO_SKIP_INTRO_STORAGE_KEY,
+  getAutoSkipIntroPref,
+  setAutoSkipIntroPref,
 } from '../services/vipPlayerHelper';
 
 const OFFICIAL_LOGO_URL = '/logo-watermark.png';
@@ -129,6 +154,7 @@ interface DramaDetailModalProps {
     preferredSubLang?: string;
     autoPlayNext?: boolean;
     dataSaverDefault?: boolean;
+    autoSkipIntro?: boolean;
   };
 }
 
@@ -581,8 +607,32 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   const [bufferedEnd, setBufferedEnd] = useState<number>(0);
   const [activeHudPopover, setActiveHudPopover] = useState<'none' | 'audio' | 'quality' | 'speed' | 'sleep'>('none');
   const [hoverSeekInfo, setHoverSeekInfo] = useState<{ pct: number; time: number } | null>(null);
+  const [isAutoSkipIntro, setIsAutoSkipIntro] = useState<boolean>(() =>
+    getAutoSkipIntroPref(vipProfileDefaults?.autoSkipIntro)
+  );
+  const [sessionDataMb, setSessionDataMb] = useState<number>(0);
+  const autoSkippedEpKeyRef = useRef<string>('');
+  const stageSingleTapTimerRef = useRef<number | null>(null);
   const audioProxyRetriedRef = useRef<boolean>(false);
   const autoNextCancelledForEpRef = useRef<boolean>(false);
+
+  // Flagship OTT Features 1-6 States
+  const [offlineItems, setOfflineItems] = useState<OfflineVaultItem[]>(() => getOfflineDownloadsSync());
+  const [downloadProgressMap, setDownloadProgressMap] = useState<Record<string, number>>({});
+  const [offlinePlayableUrls, setOfflinePlayableUrls] = useState<{
+    key: string;
+    videoUrl: string;
+    audioUrl?: string;
+  } | null>(null);
+  const [activeActorModal, setActiveActorModal] = useState<{
+    name: string;
+    loading: boolean;
+    profile: ActorWikiProfile | null;
+  } | null>(null);
+  const [isReminded, setIsReminded] = useState<boolean>(() => (drama ? isDramaReminded(drama.id) : false));
+  const [countdownTickMs, setCountdownTickMs] = useState<number>(() => Date.now());
+  const [miniPlayerOffset, setMiniPlayerOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const miniDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
   useEffect(() => {
     const checkViewport = () => {
@@ -671,9 +721,21 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     setIsLightsOff(false);
     setIsTheaterMode(false);
     setPlaybackSpeed(1);
-    setSelectedQuality(vipProfileDefaults?.dataSaverDefault ? '480p Saver' : '1080p FHD (Ultra)');
+    const navConn =
+      typeof navigator !== 'undefined'
+        ? (navigator as unknown as { connection?: { saveData?: boolean; effectiveType?: string } }).connection
+        : undefined;
+    const isSlowNet = Boolean(
+      navConn?.saveData ||
+        navConn?.effectiveType === '2g' ||
+        navConn?.effectiveType === '3g' ||
+        navConn?.effectiveType === 'slow-2g'
+    );
+    setSelectedQuality(vipProfileDefaults?.dataSaverDefault || isSlowNet ? '480p Saver' : '1080p FHD (Ultra)');
     setStreamReloadNonce(0);
-    setHudToast(null);
+    setHudToast(
+      isSlowNet && !vipProfileDefaults?.dataSaverDefault ? '📶 Slow network detected — 480p Saver enabled' : null
+    );
     setIframeControlNotice(false);
     setIsVideoPlaying(false);
     setIsVideoLoading(true);
@@ -796,18 +858,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     }
   }, [playbackSpeed, activeStreamEp, activeAudio, isStreamUnlocked, streamReloadNonce, activeMirrorIndex]);
 
-  // Keep SubtitleVoiceEngine synced with parsed cues, external audio mode, and video playback speed
+  // Keep SubtitleVoiceEngine & active visual cue synced whenever parsed/translated cues update
   useEffect(() => {
     const engine = voiceEngineRef.current;
+    const tNow = videoRef.current?.currentTime ?? 0;
+    if (activeSubLang !== 'off' && parsedSubCues.length > 0) {
+      const idxNow = parsedSubCues.findIndex((c) => tNow >= c.start && tNow <= c.end);
+      const cueNow = idxNow >= 0 ? parsedSubCues[idxNow] : null;
+      activeCueRef.current = cueNow;
+      setActiveCue(cueNow);
+    } else {
+      activeCueRef.current = null;
+      setActiveCue(null);
+    }
     if (!engine) return;
     engine.setCues(parsedSubCues);
     if (isSubtitleAudioOn && parsedSubCues.length > 0 && activeSubLang !== 'off') {
-      const tNow = videoRef.current?.currentTime ?? 0;
       const idx = parsedSubCues.findIndex((c) => tNow >= c.start && tNow <= c.end);
       const upcoming = idx >= 0 ? idx : parsedSubCues.findIndex((c) => c.start > tNow);
       engine.enable(idx, upcoming, videoRef.current ? videoRef.current.paused : true);
     }
-  }, [parsedSubCues]);
+  }, [parsedSubCues, activeSubLang]);
 
   useEffect(() => {
     voiceEngineRef.current?.setPlaybackRate(playbackSpeed);
@@ -874,6 +945,175 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     });
   }, [drama?.id, streamablesByTrack]);
 
+  // Sync Auto-Skip preference when profile defaults update (only if user has no explicit local override)
+  useEffect(() => {
+    try {
+      const explicit = localStorage.getItem(AUTO_SKIP_INTRO_STORAGE_KEY);
+      if (explicit === null && vipProfileDefaults?.autoSkipIntro !== undefined) {
+        setIsAutoSkipIntro(Boolean(vipProfileDefaults.autoSkipIntro));
+      }
+    } catch {
+      // ignore
+    }
+  }, [vipProfileDefaults?.autoSkipIntro]);
+
+  // Hydrate & subscribe to Offline Downloads Vault
+  useEffect(() => {
+    void getOfflineDownloads().then((items) => setOfflineItems(items));
+    const syncVault = () => {
+      void getOfflineDownloads().then((items) => setOfflineItems(items));
+    };
+    window.addEventListener(OFFLINE_VAULT_UPDATED_EVENT, syncVault);
+    return () => window.removeEventListener(OFFLINE_VAULT_UPDATED_EVENT, syncVault);
+  }, []);
+
+  // Resolve cached Blob URL when playing an episode saved in Offline Vault
+  useEffect(() => {
+    if (!drama || activeStreamEp === null || !isStreamUnlocked) {
+      setOfflinePlayableUrls((prev) => {
+        if (prev?.videoUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.videoUrl);
+        if (prev?.audioUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.audioUrl);
+        return null;
+      });
+      return;
+    }
+    const vaultKey = makeOfflineVaultKey(drama.id, activeStreamEp, activeAudio);
+    const matched = offlineItems.find((it) => it.key === vaultKey);
+    if (!matched) {
+      setOfflinePlayableUrls((prev) => {
+        if (prev?.videoUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.videoUrl);
+        if (prev?.audioUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.audioUrl);
+        return null;
+      });
+      return;
+    }
+
+    let cancelled = false;
+    let createdVid = '';
+    let createdAud = '';
+    void (async () => {
+      const vidBlobUrl = await resolveOfflineCachedStream(matched.cachedVideoUrl);
+      const audBlobUrl = matched.cachedAudioUrl
+        ? await resolveOfflineCachedStream(matched.cachedAudioUrl)
+        : null;
+      if (cancelled) {
+        if (vidBlobUrl?.startsWith('blob:')) URL.revokeObjectURL(vidBlobUrl);
+        if (audBlobUrl?.startsWith('blob:')) URL.revokeObjectURL(audBlobUrl);
+        return;
+      }
+      if (vidBlobUrl) {
+        createdVid = vidBlobUrl;
+        if (audBlobUrl) createdAud = audBlobUrl;
+        setOfflinePlayableUrls((prev) => {
+          if (prev?.videoUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.videoUrl);
+          if (prev?.audioUrl?.startsWith('blob:')) URL.revokeObjectURL(prev.audioUrl);
+          return { key: vaultKey, videoUrl: vidBlobUrl, audioUrl: audBlobUrl || undefined };
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (createdVid.startsWith('blob:')) URL.revokeObjectURL(createdVid);
+      if (createdAud.startsWith('blob:')) URL.revokeObjectURL(createdAud);
+    };
+  }, [drama?.id, activeStreamEp, activeAudio, isStreamUnlocked, offlineItems]);
+
+  // Subscribe to Episode Drop Reminders + 1s live countdown timer when ongoing schedule exists
+  useEffect(() => {
+    if (!drama) return;
+    setIsReminded(isDramaReminded(drama.id));
+    const syncRem = () => setIsReminded(isDramaReminded(drama.id));
+    window.addEventListener(EPISODE_REMINDERS_UPDATED_EVENT, syncRem);
+    return () => window.removeEventListener(EPISODE_REMINDERS_UPDATED_EVENT, syncRem);
+  }, [drama?.id]);
+
+  useEffect(() => {
+    if (!drama) return;
+    const schedStr =
+      drama.activeTrackSchedules?.[0]?.scheduleText || drama.schedule || '';
+    if (!schedStr.trim()) return;
+    const intervalId = window.setInterval(() => {
+      setCountdownTickMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [drama?.id, drama?.schedule, drama?.activeTrackSchedules]);
+
+  // Reset Mini-Player drag position when returning to full cinema mode
+  useEffect(() => {
+    if (!isMiniPlayer) {
+      setMiniPlayerOffset({ x: 0, y: 0 });
+    }
+  }, [isMiniPlayer]);
+
+  // Lock-screen & system MediaSession API integration
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !drama || activeStreamEp === null || !isStreamUnlocked) {
+      return;
+    }
+    const ms = navigator.mediaSession;
+    try {
+      if (typeof MediaMetadata !== 'undefined') {
+        ms.metadata = new MediaMetadata({
+          title: `${drama.title} — Ep ${activeStreamEp}`,
+          artist: 'AsiaFlix Prime',
+          album: activeAudio,
+          artwork: [
+            {
+              src: drama.thumbnailUrl || drama.backdrop || drama.poster || '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+            },
+          ],
+        });
+      }
+      ms.setActionHandler('play', () => {
+        videoRef.current?.play().catch(() => {});
+      });
+      ms.setActionHandler('pause', () => {
+        videoRef.current?.pause();
+      });
+      ms.setActionHandler('seekbackward', () => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+        }
+      });
+      ms.setActionHandler('seekforward', () => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = videoRef.current.currentTime + 10;
+        }
+      });
+      ms.setActionHandler('previoustrack', () => {
+        const list = streamablesByTrack[activeAudio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : (activeAudio as keyof typeof streamablesByTrack)] || [];
+        const idx = list.findIndex((s) => s.epNum === activeStreamEp);
+        if (idx > 0) {
+          setActiveStreamEp(list[idx - 1].epNum);
+        }
+      });
+      ms.setActionHandler('nexttrack', () => {
+        const list = streamablesByTrack[activeAudio === 'Fan Dubbed' ? 'Hindi Fan Dubbed' : (activeAudio as keyof typeof streamablesByTrack)] || [];
+        const idx = list.findIndex((s) => s.epNum === activeStreamEp);
+        if (idx >= 0 && idx < list.length - 1) {
+          setActiveStreamEp(list[idx + 1].epNum);
+        }
+      });
+    } catch {
+      // ignore unsupported MediaSession handlers
+    }
+    return () => {
+      try {
+        ms.setActionHandler('play', null);
+        ms.setActionHandler('pause', null);
+        ms.setActionHandler('seekbackward', null);
+        ms.setActionHandler('seekforward', null);
+        ms.setActionHandler('previoustrack', null);
+        ms.setActionHandler('nexttrack', null);
+      } catch {
+        // ignore
+      }
+    };
+  }, [drama?.id, drama?.title, drama?.poster, drama?.backdrop, drama?.thumbnailUrl, activeStreamEp, activeAudio, isStreamUnlocked, streamablesByTrack]);
+
   if (!drama) return null;
 
   const isMovie =
@@ -931,13 +1171,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   const sheetSubtitleTracks = useMemo(() => {
     const epSubs = currentEpObj?.subtitleTracks || [];
-    const dramaSubs = drama.subtitleTracks || [];
+    const allowDramaFallback = isMovie || drama.episodes.length <= 1;
+    const dramaSubs = allowDramaFallback ? drama.subtitleTracks || [] : [];
     const merged = [...epSubs];
     dramaSubs.forEach((s) => {
       if (!merged.some((x) => x.url === s.url)) merged.push(s);
     });
     return merged;
-  }, [currentEpObj, drama.subtitleTracks]);
+  }, [currentEpObj, drama.subtitleTracks, drama.episodes.length, isMovie]);
 
   const availableSubLanguages = useMemo(() => {
     const epMatch =
@@ -951,9 +1192,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           )
         : undefined);
 
+    const allowDramaFallback = isMovie || drama.episodes.length <= 1;
     const subMap: Record<string, SubtitleTrackItem> =
       epMatch?.subtitles ||
-      (drama.subtitles && Object.keys(drama.subtitles).length > 0 ? drama.subtitles : {});
+      (allowDramaFallback && drama.subtitles && Object.keys(drama.subtitles).length > 0 ? drama.subtitles : {});
 
     type SubOptionItem = SubtitleTrackItem & {
       displayLabel: string;
@@ -1043,6 +1285,24 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
     return finalOptions;
   }, [currentEpObj, activeEpNumForLookup, drama.episodes, drama.subtitles, sheetSubtitleTracks, isMovie]);
+
+  // Reset captions to 'off' when switching to an episode that has no uploaded subtitles
+  useEffect(() => {
+    if (
+      activeSubLang !== 'off' &&
+      activeSubLang !== 'local' &&
+      availableSubLanguages.length === 0
+    ) {
+      setActiveSubLang('off');
+      setParsedSubCues([]);
+      setActiveCue(null);
+      activeCueRef.current = null;
+      if (isSubtitleAudioOn) {
+        voiceEngineRef.current?.disable();
+        setIsSubtitleAudioOn(false);
+      }
+    }
+  }, [activeEpNumForLookup, availableSubLanguages.length]);
   const trackCustomAudio = (() => {
     if (activeEpNumForLookup === null) return undefined;
     const lookupField =
@@ -1239,7 +1499,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     };
   }, [asyncResolveKey]);
 
+  const activeOfflineKey =
+    drama && activeStreamEp !== null ? makeOfflineVaultKey(drama.id, activeStreamEp, activeAudio) : '';
+
   const effectiveVideoSrc = useMemo(() => {
+    if (
+      offlinePlayableUrls &&
+      activeOfflineKey &&
+      offlinePlayableUrls.key === activeOfflineKey &&
+      offlinePlayableUrls.videoUrl
+    ) {
+      return offlinePlayableUrls.videoUrl;
+    }
     if (!resolvedPlayerSource || resolvedPlayerSource.type !== 'video') return '';
     if (resolvedPlayerSource.asyncProvider) {
       return asyncResolvedStream.key === asyncResolveKey && asyncResolvedStream.status === 'ready'
@@ -1247,10 +1518,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
         : '';
     }
     return resolvedPlayerSource.src;
-  }, [resolvedPlayerSource, asyncResolvedStream, asyncResolveKey]);
+  }, [resolvedPlayerSource, asyncResolvedStream, asyncResolveKey, offlinePlayableUrls, activeOfflineKey]);
 
   const isHlsVideoSrc = useMemo(() => {
-    if (!effectiveVideoSrc) return false;
+    if (!effectiveVideoSrc || effectiveVideoSrc.startsWith('blob:')) return false;
     if (/\.m3u8(\?|$)/i.test(effectiveVideoSrc)) return true;
     if (/[?&]url=[^&]*\.m3u8/i.test(effectiveVideoSrc)) return true;
     try {
@@ -1353,7 +1624,14 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
   }, [resolvedExternalAudioSrc.src, resolvedExternalAudioSrc.isHls, forceBuiltinAudio]);
 
   const activeExternalAudioUrl =
-    resolvedExternalAudioSrc.rawKey === (trackCustomAudio || '') ? resolvedExternalAudioSrc.src : '';
+    offlinePlayableUrls &&
+    activeOfflineKey &&
+    offlinePlayableUrls.key === activeOfflineKey &&
+    offlinePlayableUrls.audioUrl
+      ? offlinePlayableUrls.audioUrl
+      : resolvedExternalAudioSrc.rawKey === (trackCustomAudio || '')
+      ? resolvedExternalAudioSrc.src
+      : '';
   const isExternalAudioActive =
     Boolean(trackCustomAudio) && !forceBuiltinAudio && resolvedPlayerSource?.type === 'video';
   const shouldMuteVideoForExternalAudio = isExternalAudioActive && isExternalAudioConfirmedPlaying;
@@ -2030,11 +2308,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     if (resolvedUrl && (/^https?:\/\//i.test(resolvedUrl) || /^data:/i.test(resolvedUrl))) {
       let cancelled = false;
       setIsSubLoading(true);
-      fetch(resolvedUrl)
-        .then((r) => {
-          if (!r.ok) throw new Error('Subtitle fetch failed');
-          return r.text();
-        })
+      fetchSubtitleTextWithFallback(resolvedUrl)
         .then(async (txt) => {
           const baseCues = parseSrtOrVttContent(txt);
           if (cancelled) return;
@@ -2277,6 +2551,10 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     clickEvent?: React.MouseEvent
   ) => {
     pendingRestoreTimeRef.current = null;
+    if (epNum !== activeStreamEp) {
+      setSessionDataMb(0);
+      autoSkippedEpKeyRef.current = '';
+    }
     setMediaErrorState(null);
     setForceBuiltinAudio(false);
     setIsExternalAudioConfirmedPlaying(false);
@@ -2538,6 +2816,68 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
     triggerShareToast(`✅ Direct Episode ${activeStreamEp} Link Copied!`);
     showHudFeedback(`🔗 Ep ${activeStreamEp} Link Copied!`);
     setTimeout(() => setEpLinkCopied(false), 2500);
+  };
+
+  const handleDownloadEpisode = async (
+    epNum: number,
+    rawVideoUrl: string,
+    rawAudioUrl?: string,
+    rawSubUrl?: string
+  ) => {
+    const key = makeOfflineVaultKey(drama.id, epNum, activeAudio);
+    if (downloadProgressMap[key] !== undefined && downloadProgressMap[key] < 100) return;
+    setDownloadProgressMap((prev) => ({ ...prev, [key]: 5 }));
+    showHudFeedback(`📥 Caching Ep ${epNum} for Offline...`);
+    const res = await downloadEpisodeToOfflineVault({
+      dramaId: drama.id,
+      dramaTitle: drama.title,
+      poster: drama.poster,
+      epNum,
+      track: activeAudio,
+      quality: selectedQuality,
+      rawVideoUrl,
+      rawAudioUrl,
+      rawSubUrl,
+      onProgress: (pct) => {
+        setDownloadProgressMap((prev) => ({ ...prev, [key]: pct }));
+      },
+    });
+    if (res.ok && res.item) {
+      setOfflineItems((prev) => [res.item!, ...prev.filter((i) => i.key !== res.item!.key)]);
+      setDownloadProgressMap((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      showHudFeedback(`✅ Ep ${epNum} Saved to Offline Vault!`);
+    } else {
+      setDownloadProgressMap((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      showHudFeedback(`⚠️ ${res.error || 'Offline cache unavailable for this host'}`);
+    }
+  };
+
+  const handleOpenActorHub = (actorName: string) => {
+    setActiveActorModal({ name: actorName, loading: true, profile: null });
+    void fetchActorWikiProfile(actorName).then((profile) => {
+      setActiveActorModal((curr) =>
+        curr && curr.name === actorName ? { name: actorName, loading: false, profile } : curr
+      );
+    });
+  };
+
+  const handleToggleReminder = () => {
+    const res = toggleEpisodeReminder({
+      id: drama.id,
+      title: drama.title,
+      poster: drama.poster,
+      schedule: drama.activeTrackSchedules?.[0]?.scheduleText || drama.schedule || 'Weekly Drop 7:00 PM IST',
+    });
+    setIsReminded(res.reminded);
+    showHudFeedback(res.reminded ? '🔔 Drop Reminder Armed!' : '🔕 Reminder Removed');
   };
 
   const handleResumeSavedProgress = (clickEvent?: React.MouseEvent) => {
@@ -2867,24 +3207,81 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
       ? '💬 Captions'
       : availableSubLanguages.find((s) => s.code === activeSubLang)?.label || '💬 Captions';
 
-  const handleCycleMobileSubtitle = () => {
-    if (availableSubLanguages.length === 0) return;
-    const order = ['off', ...availableSubLanguages.map((s) => s.code)];
-    const curIdx = order.indexOf(activeSubLang);
-    const nextCode = order[(curIdx + 1) % order.length];
-    handleSelectSubLang(nextCode);
+  const handleTogglePlayPause = () => {
+    const vid = videoRef.current;
+    videoAudioNodeRef.current?.ctx.resume().catch(() => {});
+    bumpPlayerControlsActivity();
+    if (!vid || resolvedPlayerSource?.type !== 'video') return;
+    if (vid.paused) {
+      if (!shouldMuteVideoForExternalAudio) {
+        vid.muted = isAudioMuted;
+        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+      }
+      vid.play().catch(() => {});
+    } else {
+      vid.pause();
+    }
   };
 
-  const handleCycleSpeed = () => {
-    const curIdx = SPEED_OPTIONS.findIndex((s) => s === playbackSpeed);
-    const nextRate = SPEED_OPTIONS[(curIdx + 1) % SPEED_OPTIONS.length] ?? 1;
-    handleSpeedChange(nextRate);
+  const handleToggleMute = () => {
+    const nextMuted = !isAudioMuted;
+    setIsAudioMuted(nextMuted);
+    const vid = videoRef.current;
+    const aud = audioRef.current;
+    if (vid && !shouldMuteVideoForExternalAudio) {
+      vid.muted = nextMuted;
+      vid.volume = nextMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+    }
+    if (aud && isExternalAudioActive) {
+      aud.muted = nextMuted;
+      aud.volume = nextMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
+    }
+    showHudFeedback(nextMuted ? '🔇 Audio Muted' : '🔊 Audio Unmuted');
   };
 
-  const handleCycleQuality = () => {
-    const curIdx = QUALITY_OPTIONS.findIndex((q) => q.id === selectedQuality);
-    const nextQ = QUALITY_OPTIONS[(curIdx + 1) % QUALITY_OPTIONS.length] ?? QUALITY_OPTIONS[0];
-    handleQualityChange(nextQ.id);
+  const handleVolumeSliderChange = (nextVol: number) => {
+    const clamped = Math.min(1, Math.max(0, nextVol));
+    setAudioVolume(clamped);
+    const muted = clamped === 0;
+    setIsAudioMuted(muted);
+    const vid = videoRef.current;
+    const aud = audioRef.current;
+    if (vid && !shouldMuteVideoForExternalAudio) {
+      vid.muted = muted;
+      vid.volume = clamped;
+    }
+    if (aud && isExternalAudioActive) {
+      aud.muted = muted;
+      aud.volume = clamped;
+    }
+  };
+
+  const handleTimelineScrub = (nextSec: number) => {
+    const vid = videoRef.current;
+    if (!vid || resolvedPlayerSource?.type !== 'video') return;
+    const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : videoDuration;
+    const clamped = Math.max(0, Math.min(dur || nextSec, nextSec));
+    voiceEngineRef.current?.onSeekingStop();
+    try {
+      vid.currentTime = clamped;
+    } catch {}
+    setCurrentVideoTime(clamped);
+    syncAudioToVideo(!vid.paused, true);
+    syncSubtitleAndVoiceOnTime(clamped, true, vid.paused);
+    bumpPlayerControlsActivity();
+  };
+
+  const handleCycleFitMode = () => {
+    const order: Array<{ id: VideoFitMode; label: string }> = [
+      { id: 'contain', label: '16:9 Fit' },
+      { id: 'cover', label: 'Fill / Zoom' },
+      { id: 'cinema219', label: '21:9 CinemaScope' },
+      { id: 'stretch', label: 'Full Stretch' },
+    ];
+    const curIdx = order.findIndex((o) => o.id === videoFitMode);
+    const next = order[(curIdx + 1) % order.length];
+    setVideoFitMode(next.id);
+    showHudFeedback(`↔️ Screen: ${next.label}`);
   };
 
   const renderVideoViewport = () => {
@@ -3008,7 +3405,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 seekRipple.side === 'left' ? 'left-6 sm:left-10' : 'right-6 sm:right-10'
               }`}
             >
-              {seekRipple.side === 'left' ? '⏪ -10s' : '⏩ +10s'}
+              {seekRipple.side === 'left' ? '-10s' : '+10s'}
             </div>
           )}
 
@@ -3158,36 +3555,65 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           ) : resolvedPlayerSource.type === 'video' ? (
             <div className="relative w-full h-full bg-black flex items-center justify-center">
-              {/* Double-Tap Left/Right Seek Gesture Zones */}
-              {!isTouchLocked && !isMiniPlayer && isVideoPlaying && (
+              {/* Interactive Video Tap & Double-Tap Left/Right Seek Gesture Zones */}
+              {!isTouchLocked && !isMiniPlayer && (
                 <>
                   <div
                     onClick={() => {
-                      bumpPlayerControlsActivity();
                       const now = Date.now();
-                      if (now - lastTapLeftRef.current <= 320) {
-                        handleSeek(-10, '⏪ -10s');
+                      if (now - lastTapLeftRef.current <= 300) {
+                        if (stageSingleTapTimerRef.current) {
+                          window.clearTimeout(stageSingleTapTimerRef.current);
+                          stageSingleTapTimerRef.current = null;
+                        }
+                        handleSeek(-10, '-10s');
                         lastTapLeftRef.current = 0;
+                        bumpPlayerControlsActivity();
                       } else {
                         lastTapLeftRef.current = now;
+                        if (stageSingleTapTimerRef.current) window.clearTimeout(stageSingleTapTimerRef.current);
+                        stageSingleTapTimerRef.current = window.setTimeout(() => {
+                          setActiveHudPopover('none');
+                          setIsCaptionMenuOpen(false);
+                          handleTogglePlayPause();
+                        }, 240);
                       }
                     }}
                     className="absolute top-0 bottom-14 left-0 w-[30%] z-20 cursor-pointer"
-                    aria-label="Double tap left to rewind 10 seconds"
+                    aria-label="Tap to play/pause or double tap left to rewind 10 seconds"
                   />
                   <div
                     onClick={() => {
-                      bumpPlayerControlsActivity();
+                      setActiveHudPopover('none');
+                      setIsCaptionMenuOpen(false);
+                      handleTogglePlayPause();
+                    }}
+                    className="absolute top-0 bottom-14 left-[30%] right-[30%] z-20 cursor-pointer"
+                    aria-label="Tap center to toggle play and pause"
+                  />
+                  <div
+                    onClick={() => {
                       const now = Date.now();
-                      if (now - lastTapRightRef.current <= 320) {
-                        handleSeek(10, '⏩ +10s');
+                      if (now - lastTapRightRef.current <= 300) {
+                        if (stageSingleTapTimerRef.current) {
+                          window.clearTimeout(stageSingleTapTimerRef.current);
+                          stageSingleTapTimerRef.current = null;
+                        }
+                        handleSeek(10, '+10s');
                         lastTapRightRef.current = 0;
+                        bumpPlayerControlsActivity();
                       } else {
                         lastTapRightRef.current = now;
+                        if (stageSingleTapTimerRef.current) window.clearTimeout(stageSingleTapTimerRef.current);
+                        stageSingleTapTimerRef.current = window.setTimeout(() => {
+                          setActiveHudPopover('none');
+                          setIsCaptionMenuOpen(false);
+                          handleTogglePlayPause();
+                        }, 240);
                       }
                     }}
                     className="absolute top-0 bottom-14 right-0 w-[30%] z-20 cursor-pointer"
-                    aria-label="Double tap right to forward 10 seconds"
+                    aria-label="Tap to play/pause or double tap right to forward 10 seconds"
                   />
                 </>
               )}
@@ -3530,11 +3956,18 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     });
                   }
 
-                  // 5. VIP Watch Minutes & Daily Streak Accumulator
+                  // 5. VIP Watch Minutes, Live MB Data Usage & Auto-Skip Intro
                   if (!vid.paused) {
                     if (lastPlaybackTickMsRef.current !== null) {
                       const dt = (nowWall - lastPlaybackTickMsRef.current) / 1000;
                       if (dt > 0 && dt < 5) {
+                        const mbPerSec =
+                          selectedQuality.includes('480')
+                            ? 3.5 / 60
+                            : selectedQuality.includes('720')
+                            ? 8.5 / 60
+                            : 16.5 / 60;
+                        setSessionDataMb((prev) => prev + dt * mbPerSec);
                         watchSecondsAccRef.current += dt;
                         if (watchSecondsAccRef.current >= 15) {
                           const flush = watchSecondsAccRef.current;
@@ -3544,14 +3977,31 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                       }
                     }
                     lastPlaybackTickMsRef.current = nowWall;
+
+                    const epSkipKey = `${drama.id}-${activeStreamEp}-${activeAudio}`;
+                    if (
+                      isAutoSkipIntro &&
+                      vid.currentTime >= 2 &&
+                      vid.currentTime < 82 &&
+                      Number.isFinite(vid.duration) &&
+                      vid.duration > 100 &&
+                      autoSkippedEpKeyRef.current !== epSkipKey
+                    ) {
+                      autoSkippedEpKeyRef.current = epSkipKey;
+                      try {
+                        vid.currentTime = 85;
+                      } catch {}
+                      syncAudioToVideo(true, true);
+                      showHudFeedback('⚡ Auto-Skipped Intro (+85s)');
+                    }
                   }
 
-                  // 6. 85% Smart Pre-Loader for Next Episode
+                  // 6. Final 45-Second / 85% Smart Pre-Loader for Next Episode
                   if (
                     nextStreamItem &&
                     Number.isFinite(vid.duration) &&
                     vid.duration > 30 &&
-                    vid.currentTime / vid.duration >= 0.85 &&
+                    (vid.duration - vid.currentTime <= 45 || vid.currentTime / vid.duration >= 0.85) &&
                     preloadedNextUrlRef.current !== nextStreamItem.streamUrl
                   ) {
                     preloadedNextUrlRef.current = nextStreamItem.streamUrl;
@@ -3740,69 +4190,411 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </div>
               )}
 
-              {/* Click-to-Toggle Play/Pause Surface + 100% Transparent Holographic Play Ring when Paused */}
-              {!isCinematicIntroPlaying && !mediaErrorState && (
+              {/* Center Stage Play/Pause + Flanked -10s / +10s Overlay */}
+              {!isCinematicIntroPlaying &&
+                !mediaErrorState &&
+                !isTouchLocked &&
+                !isMiniPlayer &&
+                (!isVideoPlaying || isPlayerControlsActive) && (
+                  <div className="pointer-events-none absolute inset-0 z-[26] flex items-center justify-center gap-5 sm:gap-9 bg-transparent">
+                    {/* Quick Rewind -10s */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        bumpPlayerControlsActivity();
+                        handleSeek(-10, '-10s');
+                      }}
+                      className="pointer-events-auto w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/25 text-white flex items-center justify-center shadow-[0_4px_20px_rgba(0,0,0,0.5)] hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                      aria-label="Rewind 10 seconds"
+                    >
+                      <span className="text-xs sm:text-sm font-black tracking-tight leading-none">-10s</span>
+                    </button>
+
+                    {/* Center Holographic / Glass Play-Pause Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleTogglePlayPause();
+                      }}
+                      aria-label={isVideoPlaying ? 'Pause video' : 'Play video'}
+                      className="pointer-events-auto w-16 h-16 sm:w-22 sm:h-22 bg-transparent flex items-center justify-center relative cursor-pointer group active:scale-95 transition-transform"
+                    >
+                      {!isVideoPlaying ? (
+                        <>
+                          <div
+                            style={{
+                              borderRadius: '9999px',
+                              background:
+                                'conic-gradient(from 0deg, transparent 0%, #ff1e56 35%, #ffac41 50%, #00f2fe 85%, transparent 100%)',
+                              mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                              WebkitMask:
+                                'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
+                              animation: 'spin 2.4s linear infinite',
+                            }}
+                            className="absolute inset-0 pointer-events-none"
+                          />
+                          <div
+                            style={{ animation: 'spin 5s linear infinite reverse' }}
+                            className="absolute inset-2 rounded-full border border-dashed border-white/30 border-t-[#00f2fe]/80 border-b-[#ff2a85]/80 group-hover:scale-110 transition-transform duration-300 pointer-events-none"
+                          />
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="w-8 h-8 sm:w-10 sm:h-10 ml-1 drop-shadow-[0_0_16px_rgba(255,42,133,0.95)] group-hover:scale-115 transition-all duration-300"
+                            aria-hidden="true"
+                          >
+                            <defs>
+                              <linearGradient id="asiaflixHoloPlayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#ffffff" />
+                                <stop offset="55%" stopColor="#ff9ec7" />
+                                <stop offset="100%" stopColor="#ff2a85" />
+                              </linearGradient>
+                            </defs>
+                            <path
+                              d="M7.5 5.25C7.5 4.35 8.48 3.79 9.26 4.25L19.12 10.0C19.89 10.45 19.89 11.55 19.12 12.0L9.26 17.75C8.48 18.21 7.5 17.65 7.5 16.75V5.25Z"
+                              fill="url(#asiaflixHoloPlayGrad)"
+                            />
+                          </svg>
+                        </>
+                      ) : (
+                        <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-[0_4px_24px_rgba(0,0,0,0.65)] group-hover:scale-110 transition-all">
+                          <Pause className="w-6 h-6 sm:w-7 sm:h-7 fill-current" />
+                        </div>
+                      )}
+                    </button>
+
+                    {/* Quick Forward +10s */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        bumpPlayerControlsActivity();
+                        handleSeek(10, '+10s');
+                      }}
+                      className="pointer-events-auto w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/25 text-white flex items-center justify-center shadow-[0_4px_20px_rgba(0,0,0,0.5)] hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                      aria-label="Forward 10 seconds"
+                    >
+                      <span className="text-xs sm:text-sm font-black tracking-tight leading-none">+10s</span>
+                    </button>
+                  </div>
+                )}
+
+              {/* Floating Bottom-Right Skip Intro + Auto-Skip Toggle Pill */}
+              {!isCinematicIntroPlaying &&
+                !mediaErrorState &&
+                !isTouchLocked &&
+                !isMiniPlayer &&
+                (isPlayerControlsActive || !isVideoPlaying || currentVideoTime < 95) && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ bottom: '66px', right: '14px' }}
+                    className="absolute z-[32] flex items-center gap-1.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAutoSkipIntro((prev) => {
+                          const next = !prev;
+                          setAutoSkipIntroPref(next);
+                          showHudFeedback(next ? '⚡ Auto-Skip Intro: ON' : '⚡ Auto-Skip Intro: OFF');
+                          return next;
+                        });
+                      }}
+                      className={`px-2.5 py-1.5 rounded-full text-[10px] sm:text-[11px] font-black backdrop-blur-md border transition-all cursor-pointer ${
+                        isAutoSkipIntro
+                          ? 'bg-emerald-500/90 text-black border-emerald-200 shadow-[0_0_14px_rgba(16,185,129,0.55)]'
+                          : 'bg-black/65 hover:bg-black/85 text-zinc-200 border-white/20'
+                      }`}
+                    >
+                      Auto-Skip: {isAutoSkipIntro ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        bumpPlayerControlsActivity();
+                        handleSeek(85, '⚡ +85s Intro Skipped!');
+                      }}
+                      className="px-3 py-1.5 rounded-full bg-gradient-to-r from-[#e50914] to-[#ff2a85] hover:from-red-600 hover:to-pink-500 text-white text-[11px] sm:text-xs font-black border border-white/25 shadow-[0_4px_20px_rgba(229,9,20,0.6)] hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                    >
+                      ⚡ Skip Intro (+85s)
+                    </button>
+                  </div>
+                )}
+
+              {/* Complete In-Player Bottom HUD: Draggable Timeline Scrubber + Control Bar */}
+              {!isCinematicIntroPlaying && !mediaErrorState && !isTouchLocked && !isMiniPlayer && (
                 <div
-                  onClick={() => {
-                    const vid = videoRef.current;
-                    videoAudioNodeRef.current?.ctx.resume().catch(() => {});
-                    if (!vid) return;
-                    if (vid.paused) {
-                      if (!shouldMuteVideoForExternalAudio) {
-                        vid.muted = isAudioMuted;
-                        vid.volume = isAudioMuted ? 0 : Math.min(1, Math.max(0, audioVolume));
-                      }
-                      vid.play().catch(() => {});
-                    } else {
-                      vid.pause();
-                    }
-                  }}
-                  className={`absolute inset-0 z-20 cursor-pointer group bg-transparent ${
-                    isVideoPlaying ? 'pointer-events-none' : ''
+                  onClick={(e) => e.stopPropagation()}
+                  className={`absolute inset-x-0 bottom-0 z-[33] bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-7 pb-2 px-2.5 sm:px-3.5 transition-opacity duration-300 ${
+                    isPlayerControlsActive ||
+                    !isVideoPlaying ||
+                    activeHudPopover !== 'none' ||
+                    isCaptionMenuOpen
+                      ? 'opacity-100'
+                      : 'opacity-0 pointer-events-none'
                   }`}
                 >
-                  {!isVideoPlaying && !isVideoLoading && !isMidStreamBuffering && (
-                    <div className="absolute inset-0 flex items-center justify-center p-4 bg-transparent">
-                      <div className="w-20 h-20 sm:w-24 sm:h-24 bg-transparent flex items-center justify-center relative cursor-pointer group">
-                        {/* Outer Ring: Razor-sharp rotating conic-gradient neon laser ring */}
-                        <div
-                          style={{
-                            borderRadius: '9999px',
-                            background:
-                              'conic-gradient(from 0deg, transparent 0%, #ff1e56 35%, #ffac41 50%, #00f2fe 85%, transparent 100%)',
-                            mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
-                            WebkitMask:
-                              'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))',
-                            animation: 'spin 2.4s linear infinite',
-                          }}
-                          className="absolute inset-0 pointer-events-none"
-                        />
-                        {/* Inner Ring: Counter-rotating dashed cyan/pink energy ring */}
-                        <div
-                          style={{ animation: 'spin 5s linear infinite reverse' }}
-                          className="absolute inset-2 rounded-full border border-dashed border-white/30 border-t-[#00f2fe]/80 border-b-[#ff2a85]/80 group-hover:scale-110 transition-transform duration-300 pointer-events-none"
-                        />
-                        {/* Center Play Emblem: High-contrast glowing white-to-pink SVG play triangle */}
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="w-9 h-9 sm:w-11 sm:h-11 ml-1 drop-shadow-[0_0_16px_rgba(255,42,133,0.95)] group-hover:scale-125 transition-all duration-300"
-                          aria-hidden="true"
-                        >
-                          <defs>
-                            <linearGradient id="asiaflixHoloPlayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                              <stop offset="0%" stopColor="#ffffff" />
-                              <stop offset="55%" stopColor="#ff9ec7" />
-                              <stop offset="100%" stopColor="#ff2a85" />
-                            </linearGradient>
-                          </defs>
-                          <path
-                            d="M7.5 5.25C7.5 4.35 8.48 3.79 9.26 4.25L19.12 10.0C19.89 10.45 19.89 11.55 19.12 12.0L9.26 17.75C8.48 18.21 7.5 17.65 7.5 16.75V5.25Z"
-                            fill="url(#asiaflixHoloPlayGrad)"
-                          />
-                        </svg>
+                  {/* Full-Width Draggable Seek Scrubber Bar with Buffered Progress, Neon Fill & Chapter Markers */}
+                  <div
+                    className="relative w-full h-5 flex items-center group/scrub mb-1"
+                    onMouseMove={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+                      const dur = videoDuration > 0 ? videoDuration : 100;
+                      setHoverSeekInfo({ pct: pct * 100, time: pct * dur });
+                    }}
+                    onMouseLeave={() => setHoverSeekInfo(null)}
+                  >
+                    {hoverSeekInfo && (
+                      <div
+                        style={{ left: `${Math.max(6, Math.min(94, hoverSeekInfo.pct))}%` }}
+                        className="pointer-events-none -translate-x-1/2 absolute -top-7 px-2 py-0.5 rounded-md bg-black/90 border border-white/20 text-[10px] font-mono font-black text-white shadow-lg"
+                      >
+                        {formatTimeSeconds(hoverSeekInfo.time)}
                       </div>
+                    )}
+
+                    {/* Track Background + Buffered + Watched Neon Fill */}
+                    <div className="relative w-full h-1.5 group-hover/scrub:h-2 transition-all rounded-full bg-white/20 overflow-hidden pointer-events-none">
+                      <div
+                        style={{
+                          width: `${
+                            videoDuration > 0
+                              ? Math.min(100, (bufferedEnd / videoDuration) * 100)
+                              : 0
+                          }%`,
+                        }}
+                        className="absolute inset-y-0 left-0 bg-white/35 rounded-full"
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            videoDuration > 0
+                              ? Math.min(100, (currentVideoTime / videoDuration) * 100)
+                              : 0
+                          }%`,
+                        }}
+                        className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#e50914] to-[#ff2a85] shadow-[0_0_10px_rgba(255,42,133,0.9)] rounded-full"
+                      />
+                      {/* Chapter Markers: 85s Intro End & 85% Climax */}
+                      {videoDuration > 120 && (
+                        <span
+                          style={{ left: `${(85 / videoDuration) * 100}%` }}
+                          className="absolute inset-y-0 w-[2px] bg-amber-300/90"
+                        />
+                      )}
+                      {videoDuration > 120 && (
+                        <span
+                          style={{ left: '85%' }}
+                          className="absolute inset-y-0 w-[2px] bg-cyan-300/80"
+                        />
+                      )}
                     </div>
-                  )}
+
+                    <input
+                      type="range"
+                      min={0}
+                      max={videoDuration > 0 ? videoDuration : 100}
+                      step={0.1}
+                      value={Math.min(currentVideoTime, videoDuration > 0 ? videoDuration : 100)}
+                      onChange={(e) => handleTimelineScrub(Number(e.target.value))}
+                      aria-label="Seek video timeline"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Bottom HUD Controls Row */}
+                  <div className="flex items-center justify-between gap-1.5 min-w-0">
+                    {/* Left: Play/Pause, -10s/+10s, Mute + Volume, Timestamp & Data Usage Badge */}
+                    <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+                      <button
+                        type="button"
+                        onClick={handleTogglePlayPause}
+                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-white/10 hover:bg-[#e50914] text-white flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        aria-label={isVideoPlaying ? 'Pause' : 'Play'}
+                      >
+                        {isVideoPlaying ? (
+                          <Pause className="w-3.5 h-3.5 fill-current" />
+                        ) : (
+                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          handleSeek(-10, '-10s');
+                        }}
+                        className="px-1.5 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-black shrink-0 cursor-pointer"
+                        title="Rewind 10s"
+                      >
+                        -10s
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          handleSeek(10, '+10s');
+                        }}
+                        className="px-1.5 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-black shrink-0 cursor-pointer"
+                        title="Forward 10s"
+                      >
+                        +10s
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleToggleMute}
+                        className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center shrink-0 cursor-pointer"
+                        aria-label={isAudioMuted ? 'Unmute' : 'Mute'}
+                      >
+                        {isAudioMuted || audioVolume === 0 ? (
+                          <VolumeX className="w-3.5 h-3.5 text-red-400" />
+                        ) : (
+                          <Volume2 className="w-3.5 h-3.5 text-emerald-300" />
+                        )}
+                      </button>
+
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={isAudioMuted ? 0 : audioVolume}
+                        onChange={(e) => handleVolumeSliderChange(Number(e.target.value))}
+                        aria-label="Volume"
+                        className="hidden sm:block w-14 h-1 accent-[#ff2a85] cursor-pointer shrink-0"
+                      />
+
+                      <span className="text-[10px] sm:text-[11px] font-mono font-bold text-white/90 tabular-nums whitespace-nowrap px-1 shrink-0">
+                        {formatTimeSeconds(currentVideoTime)} / {formatTimeSeconds(videoDuration)}
+                      </span>
+
+                      <span
+                        title="Estimated session stream data usage based on selected quality"
+                        className="hidden xs:inline-flex sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-400/35 text-[9.5px] font-bold text-cyan-200 tabular-nums whitespace-nowrap shrink-0"
+                      >
+                        📊 {sessionDataMb.toFixed(1)} MB
+                      </span>
+                    </div>
+
+                    {/* Right: In-Player Popover Triggers (Audio, Captions, Quality, Speed, Lock, Fit, Fullscreen) */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          setIsCaptionMenuOpen(false);
+                          setActiveHudPopover((p) => (p === 'audio' ? 'none' : 'audio'));
+                        }}
+                        className={`px-1.5 sm:px-2 h-7 rounded-lg text-[10px] font-black border transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                          activeHudPopover === 'audio'
+                            ? 'bg-[#e50914] text-white border-red-300'
+                            : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
+                        }`}
+                        title="Audio Track & Lip-Sync"
+                      >
+                        <Headphones className="w-3 h-3" />
+                        <span className="hidden md:inline">Audio</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          setActiveHudPopover('none');
+                          setIsCaptionMenuOpen((prev) => !prev);
+                        }}
+                        className={`px-1.5 sm:px-2 h-7 rounded-lg text-[10px] font-black border transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                          isCaptionMenuOpen || activeSubLang !== 'off'
+                            ? 'bg-cyan-400 text-black border-cyan-200'
+                            : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
+                        }`}
+                        title="Captions & AI Voice Dubbing"
+                      >
+                        <Captions className="w-3 h-3" />
+                        <span className="hidden md:inline">CC</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          setIsCaptionMenuOpen(false);
+                          setActiveHudPopover((p) => (p === 'quality' ? 'none' : 'quality'));
+                        }}
+                        className={`px-1.5 sm:px-2 h-7 rounded-lg text-[10px] font-black border transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                          activeHudPopover === 'quality'
+                            ? 'bg-amber-400 text-black border-amber-200'
+                            : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
+                        }`}
+                        title="Video Quality & Auto HDR"
+                      >
+                        <Gem className="w-3 h-3" />
+                        <span className="hidden sm:inline">
+                          {selectedQuality.includes('1080')
+                            ? '1080p'
+                            : selectedQuality.includes('720')
+                            ? '720p'
+                            : '480p'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bumpPlayerControlsActivity();
+                          setIsCaptionMenuOpen(false);
+                          setActiveHudPopover((p) => (p === 'speed' ? 'none' : 'speed'));
+                        }}
+                        className={`px-1.5 h-7 rounded-lg text-[10px] font-black border transition-all cursor-pointer flex items-center gap-0.5 shrink-0 ${
+                          activeHudPopover === 'speed'
+                            ? 'bg-pink-500 text-white border-pink-300'
+                            : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
+                        }`}
+                        title="Playback Speed"
+                      >
+                        <Gauge className="w-3 h-3 hidden sm:inline" />
+                        <span>{playbackSpeed}x</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveHudPopover('none');
+                          setIsCaptionMenuOpen(false);
+                          setIsTouchLocked(true);
+                        }}
+                        className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/15 flex items-center justify-center cursor-pointer shrink-0"
+                        title="Lock Screen Touch"
+                        aria-label="Lock Screen Touch"
+                      >
+                        <Lock className="w-3 h-3" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleCycleFitMode}
+                        className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/15 flex items-center justify-center cursor-pointer shrink-0 text-[11px] font-black"
+                        title="Cycle Fit / Fill / 21:9"
+                        aria-label="Fit or Fill screen"
+                      >
+                        ↔️
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleFullscreen}
+                        className="w-7 h-7 rounded-lg bg-white/10 hover:bg-[#e50914] text-white border border-white/15 flex items-center justify-center cursor-pointer shrink-0"
+                        title="Fullscreen"
+                        aria-label="Fullscreen"
+                      >
+                        <Maximize className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -3830,11 +4622,227 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             />
           )}
 
+          {/* In-Player Scroll-Up Audio & Lip-Sync Popover */}
+          {activeHudPopover === 'audio' && !isMiniPlayer && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-14 right-2.5 sm:right-4 z-[45] w-[285px] sm:w-[320px] max-w-[calc(100%-20px)] max-h-[72%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/95 backdrop-blur-xl border border-red-400/40 shadow-[0_12px_40px_rgba(0,0,0,0.92)] p-3.5 space-y-3 text-xs animate-fade-in"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-black text-white flex items-center gap-1.5">
+                  <Headphones className="w-3.5 h-3.5 text-[#ff2a85]" />
+                  <span>Audio &amp; Lip-Sync</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveHudPopover('none')}
+                  className="w-6 h-6 rounded-lg bg-white/10 hover:bg-[#e50914] text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Audio Track
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {playerTrackSwitcherList.map((item) => (
+                    <button
+                      type="button"
+                      key={`hud-aud-${item.track}`}
+                      onClick={() => handleSwitchPlayerTrack(item.track)}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border cursor-pointer ${
+                        activeAudio === item.track
+                          ? 'bg-[#e50914] text-white border-red-300'
+                          : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                    Lip-Sync Offset
+                  </span>
+                  <span className="text-[11px] font-mono font-black text-cyan-300">
+                    {audioSyncOffset >= 0 ? `+${audioSyncOffset.toFixed(1)}s` : `${audioSyncOffset.toFixed(1)}s`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Number((audioSyncOffset - 0.5).toFixed(1));
+                      setAudioSyncOffset(next);
+                      showHudFeedback(`🎧 Audio Sync: ${next >= 0 ? '+' : ''}${next}s`);
+                    }}
+                    className="flex-1 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-black cursor-pointer"
+                  >
+                    -0.5s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudioSyncOffset(0);
+                      showHudFeedback('🎧 Audio Sync Reset (0.0s)');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/15 text-zinc-300 font-bold cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Number((audioSyncOffset + 0.5).toFixed(1));
+                      setAudioSyncOffset(next);
+                      showHudFeedback(`🎧 Audio Sync: ${next >= 0 ? '+' : ''}${next}s`);
+                    }}
+                    className="flex-1 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-black cursor-pointer"
+                  >
+                    +0.5s
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                  Volume Boost
+                </span>
+                <div className="flex items-center gap-1">
+                  {([100, 150, 200] as const).map((lvl) => (
+                    <button
+                      type="button"
+                      key={`hud-boost-${lvl}`}
+                      onClick={() => {
+                        setVolumeBoost(lvl);
+                        showHudFeedback(`🔊 Volume Boost: ${lvl}%`);
+                      }}
+                      className={`px-2 py-1 rounded text-[10px] font-black cursor-pointer ${
+                        volumeBoost === lvl ? 'bg-amber-400 text-black' : 'bg-white/10 text-zinc-200'
+                      }`}
+                    >
+                      {lvl}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* In-Player Scroll-Up Quality & Auto HDR Popover */}
+          {activeHudPopover === 'quality' && !isMiniPlayer && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-14 right-2.5 sm:right-4 z-[45] w-[265px] max-w-[calc(100%-20px)] max-h-[72%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/95 backdrop-blur-xl border border-amber-400/40 shadow-[0_12px_40px_rgba(0,0,0,0.92)] p-3.5 space-y-2.5 text-xs animate-fade-in"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-black text-white flex items-center gap-1.5">
+                  <Gem className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Stream Quality</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveHudPopover('none')}
+                  className="w-6 h-6 rounded-lg bg-white/10 hover:bg-[#e50914] text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                {QUALITY_OPTIONS.map((q) => (
+                  <button
+                    type="button"
+                    key={`hud-q-${q.id}`}
+                    onClick={() => {
+                      handleQualityChange(q.id);
+                      setActiveHudPopover('none');
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                      selectedQuality === q.id
+                        ? 'bg-amber-400 text-black border-amber-200 font-black'
+                        : 'bg-white/[0.06] hover:bg-white/10 text-zinc-100 border-white/10 font-bold'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-[11px]">{q.label}</div>
+                      <div className={`text-[9.5px] ${selectedQuality === q.id ? 'text-black/75' : 'text-zinc-400'}`}>
+                        {q.shortBadge}
+                      </div>
+                    </div>
+                    {selectedQuality === q.id && <Check className="w-4 h-4 shrink-0" />}
+                  </button>
+                ))}
+              </div>
+
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-200">✨ Auto HDR Clarity</span>
+                <button
+                  type="button"
+                  onClick={handleToggleAutoHdr}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black border cursor-pointer ${
+                    isAutoHdrOn
+                      ? 'bg-emerald-500 text-black border-emerald-300'
+                      : 'bg-white/10 text-zinc-300 border-white/15'
+                  }`}
+                >
+                  {isAutoHdrOn ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* In-Player Scroll-Up Speed Popover */}
+          {activeHudPopover === 'speed' && !isMiniPlayer && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-14 right-2.5 sm:right-4 z-[45] w-[220px] max-w-[calc(100%-20px)] max-h-[72%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/95 backdrop-blur-xl border border-pink-400/40 shadow-[0_12px_40px_rgba(0,0,0,0.92)] p-3.5 space-y-2.5 text-xs animate-fade-in"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-black text-white flex items-center gap-1.5">
+                  <Gauge className="w-3.5 h-3.5 text-[#ff2a85]" />
+                  <span>Playback Speed</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveHudPopover('none')}
+                  className="w-6 h-6 rounded-lg bg-white/10 hover:bg-[#e50914] text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {SPEED_OPTIONS.map((rate) => (
+                  <button
+                    type="button"
+                    key={`hud-spd-${rate}`}
+                    onClick={() => {
+                      handleSpeedChange(rate);
+                      setActiveHudPopover('none');
+                    }}
+                    className={`py-2 rounded-xl text-[11px] font-black border cursor-pointer ${
+                      playbackSpeed === rate
+                        ? 'bg-gradient-to-r from-[#e50914] to-[#ff2a85] text-white border-pink-300'
+                        : 'bg-white/[0.06] hover:bg-white/15 text-zinc-200 border-white/10'
+                    }`}
+                  >
+                    {rate === 1 ? '1.0x Normal' : `${rate}x`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Compact Glassmorphic In-Player Captions Settings Popover */}
           {isCaptionMenuOpen && !isMiniPlayer && (
             <div
               onClick={(e) => e.stopPropagation()}
-              className="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 z-[45] w-[285px] sm:w-[330px] max-w-[calc(100%-20px)] max-h-[82%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/90 backdrop-blur-xl border border-cyan-400/35 shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-3.5 space-y-3 text-xs animate-fade-in"
+              className="absolute bottom-14 right-2.5 sm:right-4 z-[45] w-[285px] sm:w-[330px] max-w-[calc(100%-20px)] max-h-[72%] overflow-y-auto no-scrollbar rounded-2xl bg-[#0a0c16]/95 backdrop-blur-xl border border-cyan-400/35 shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-3.5 space-y-3 text-xs animate-fade-in"
             >
               <div className="flex items-center justify-between border-b border-white/10 pb-2">
                 <span className="font-black text-white flex items-center gap-1.5">
@@ -3853,73 +4861,81 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </button>
               </div>
 
-              {/* Languages List */}
+              {/* Vertical Scrollable Single-Column Languages List */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
                   Subtitle Language ({availableSubLanguages.length > 0 ? `${availableSubLanguages.length} Languages` : 'None'})
                 </span>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
                   <button
                     type="button"
                     onClick={() => handleSelectSubLang('off')}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
                       activeSubLang === 'off'
-                        ? 'bg-[#e50914] text-white border-red-400'
-                        : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
+                        ? 'bg-[#e50914] text-white border-red-400 shadow-[0_0_12px_rgba(229,9,20,0.35)]'
+                        : 'bg-white/[0.05] text-zinc-200 border-white/10 hover:bg-white/10'
                     }`}
                   >
-                    🚫 Off
+                    <span>🚫 Off</span>
+                    {activeSubLang === 'off' && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
-                  {availableSubLanguages.map((sub) => (
-                    <button
-                      type="button"
-                      key={`pop-sub-${sub.code}`}
-                      onClick={() => handleSelectSubLang(sub.code)}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
-                        activeSubLang === sub.code
-                          ? 'bg-cyan-400 text-black border-cyan-200'
-                          : 'bg-white/[0.06] text-zinc-200 border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      {sub.label}
-                    </button>
-                  ))}
+                  {availableSubLanguages.map((sub) => {
+                    const isActive = activeSubLang === sub.code;
+                    return (
+                      <button
+                        type="button"
+                        key={`pop-sub-${sub.code}`}
+                        onClick={() => handleSelectSubLang(sub.code)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
+                          isActive
+                            ? 'bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white border-[#ff1e56]/70 shadow-[0_0_12px_rgba(229,9,20,0.4)]'
+                            : 'bg-white/[0.05] text-zinc-200 border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="truncate">{sub.label}</span>
+                        {isActive && <Check className="w-3.5 h-3.5 shrink-0" />}
+                      </button>
+                    );
+                  })}
                   {isAdmin && uploadedSubCues && (
                     <button
                       type="button"
                       onClick={() => handleSelectSubLang('local')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
                         activeSubLang === 'local'
-                          ? 'bg-cyan-400 text-black border-cyan-200'
-                          : 'bg-white/[0.06] text-zinc-200 border-white/10'
+                          ? 'bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white border-[#ff1e56]/70'
+                          : 'bg-white/[0.05] text-zinc-200 border-white/10 hover:bg-white/10'
                       }`}
                     >
-                      📄 {uploadedSubCues.label}
+                      <span className="truncate">📄 {uploadedSubCues.label}</span>
+                      {activeSubLang === 'local' && <Check className="w-3.5 h-3.5 shrink-0" />}
                     </button>
                   )}
                 </div>
                 {availableSubLanguages.length === 0 && !(isAdmin && uploadedSubCues) && (
-                  <p className="text-[10px] text-zinc-400">
-                    No external subtitle file mapped for this episode.
+                  <p className="text-[11px] text-zinc-400 pt-1">
+                    No captions uploaded for this episode
                   </p>
                 )}
               </div>
 
-              {/* Caption Voice Dub Toggle */}
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
-                <span className="text-[11px] font-bold text-zinc-200">🔊 Caption Voice Dub</span>
-                <button
-                  type="button"
-                  onClick={handleToggleSubtitleAudio}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition-all ${
-                    isSubtitleAudioOn
-                      ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.45)]'
-                      : 'bg-white/[0.06] text-zinc-300 border-white/15 hover:text-white'
-                  }`}
-                >
-                  {isSubtitleAudioOn ? 'ON' : 'OFF'}
-                </button>
-              </div>
+              {/* Caption Voice Dub Toggle (Only shown when real captions exist for this episode) */}
+              {(availableSubLanguages.length > 0 || (isAdmin && uploadedSubCues)) && (
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                  <span className="text-[11px] font-bold text-zinc-200">🔊 Caption Voice Dub</span>
+                  <button
+                    type="button"
+                    onClick={handleToggleSubtitleAudio}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition-all ${
+                      isSubtitleAudioOn
+                        ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.45)]'
+                        : 'bg-white/[0.06] text-zinc-300 border-white/15 hover:text-white'
+                    }`}
+                  >
+                    {isSubtitleAudioOn ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+              )}
 
               {/* Font Color Presets & Size */}
               <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
@@ -4096,7 +5112,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               }}
               className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
                 isAmbilightOn
-                  ? 'bg-gradient-to-r from-[#e50914] to-[#a855f7] text-white border-purple-300/60 shadow-[0_0_16px_rgba(168,85,247,0.45)]'
+                  ? 'bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] text-white border-[#ff1e56]/60 shadow-[0_0_16px_rgba(229,9,20,0.45)]'
                   : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
               }`}
             >
@@ -4163,7 +5179,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               onClick={handleToggleABLoop}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 cursor-pointer transition-all ${
                 loopPointA !== null
-                  ? 'bg-purple-600 text-white border-purple-300/60 shadow-[0_0_15px_rgba(168,85,247,0.45)]'
+                  ? 'bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white border-[#ff1e56]/60 shadow-[0_0_15px_rgba(229,9,20,0.45)]'
                   : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
               }`}
             >
@@ -4235,7 +5251,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
               onClick={handleStartWatchParty}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 cursor-pointer ${
                 watchPartyRoom
-                  ? 'bg-purple-600 text-white border-purple-300/60 shadow-[0_0_14px_rgba(168,85,247,0.45)]'
+                  ? 'bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white border-[#ff1e56]/60 shadow-[0_0_14px_rgba(229,9,20,0.45)]'
                   : 'bg-[#141622] hover:bg-[#1e2235] text-zinc-200 border-white/15'
               }`}
             >
@@ -4602,6 +5618,9 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-400/35 text-[9.5px] font-bold text-cyan-200 tabular-nums whitespace-nowrap">
+                    📊 {sessionDataMb.toFixed(1)} MB
+                  </span>
                   <button
                     onClick={handleCopyEpisodeLink}
                     className="px-2 py-1 rounded bg-[#f59e0b]/15 border border-[#f59e0b]/40 text-amber-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
@@ -4686,6 +5705,39 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                     }`}
                   >
                     {isLightsOff ? 'Lights On' : 'Lights Off'}
+                  </button>
+                  <button
+                    onClick={() =>
+                      currentPlayingStream &&
+                      void handleDownloadEpisode(
+                        currentPlayingStream.epNum,
+                        currentPlayingStream.streamUrl,
+                        trackCustomAudio,
+                        currentEpObj?.subtitleTracks?.[0]?.url
+                      )
+                    }
+                    className={`text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap border font-bold shrink-0 cursor-pointer flex items-center gap-1 ${
+                      offlineItems.some((it) => it.key === activeOfflineKey)
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                        : 'bg-[#141622] border-white/15 text-zinc-200'
+                    }`}
+                  >
+                    {downloadProgressMap[activeOfflineKey] !== undefined ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>{downloadProgressMap[activeOfflineKey]}%</span>
+                      </>
+                    ) : offlineItems.some((it) => it.key === activeOfflineKey) ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" />
+                        <span>Offline</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3 h-3" />
+                        <span>Download</span>
+                      </>
+                    )}
                   </button>
                   <button
                     onClick={() => setIsStudioToolsOpen((prev) => !prev)}
@@ -4942,36 +5994,79 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Row 2: Full-Width Grid Action Buttons (Never Overflow Screen) */}
-                      {(hasStreamLink || hasTelegramLink) && (
-                        <div
-                          className={`grid gap-2 w-full ${
-                            hasStreamLink && hasTelegramLink ? 'grid-cols-2' : 'grid-cols-1'
-                          }`}
-                        >
-                          {hasStreamLink && (
-                            <button
-                              onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
-                              className="w-full justify-center bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-2 rounded-lg text-xs font-extrabold shadow flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-white shrink-0" />
-                              <span className="truncate">Stream HD</span>
-                            </button>
-                          )}
-                          {hasTelegramLink && (
-                            <a
-                              href={ep.telegramUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="w-full justify-center bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors"
-                              title="Open on Telegram"
-                            >
-                              <Send className="w-3.5 h-3.5 shrink-0" />
-                              <span className="truncate">Telegram</span>
-                            </a>
-                          )}
-                        </div>
-                      )}
+                      {/* Row 2: Full-Width Grid Action Buttons + Offline Download */}
+                      {(hasStreamLink || hasTelegramLink) && (() => {
+                        const epVaultKey = makeOfflineVaultKey(drama.id, numericEp, activeAudio);
+                        const isSavedOffline = offlineItems.some((it) => it.key === epVaultKey);
+                        const dlPct = downloadProgressMap[epVaultKey];
+                        const epAudioLink =
+                          activeAudio === 'Hindi Dubbed'
+                            ? ep.hindiCustomAudioLink
+                            : activeAudio.includes('Fan')
+                            ? ep.fanDubCustomAudioLink
+                            : ep.origCustomAudioLink;
+                        return (
+                          <div className="flex flex-wrap gap-2 w-full">
+                            {hasStreamLink && (
+                              <button
+                                onClick={(e) => handleOpenStream(numericEp, activeAudio, ep.episodeNumber, e)}
+                                className="flex-1 min-w-[110px] justify-center bg-[#e50914] hover:bg-[#f6121d] text-white px-3 py-2 rounded-lg text-xs font-extrabold shadow flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-white shrink-0" />
+                                <span className="truncate">Stream HD</span>
+                              </button>
+                            )}
+                            {hasStreamLink && streamUrl && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDownloadEpisode(
+                                    numericEp,
+                                    streamUrl,
+                                    epAudioLink,
+                                    ep.subtitleTracks?.[0]?.url
+                                  );
+                                }}
+                                className={`px-3 py-2 rounded-lg text-xs font-extrabold border flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+                                  isSavedOffline
+                                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                                    : 'bg-white/[0.06] hover:bg-white/[0.12] border-white/15 text-zinc-200'
+                                }`}
+                              >
+                                {dlPct !== undefined ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                                    <span>{dlPct}%</span>
+                                  </>
+                                ) : isSavedOffline ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Offline</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Save</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                            {hasTelegramLink && (
+                              <a
+                                href={ep.telegramUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-1 min-w-[100px] justify-center bg-[#0088cc]/20 hover:bg-[#0088cc]/35 border border-[#0088cc]/50 text-[#38bdf8] text-xs font-extrabold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors"
+                                title="Open on Telegram"
+                              >
+                                <Send className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">Telegram</span>
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })
@@ -5200,12 +6295,39 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 </p>
               </div>
 
-              {/* Release Schedule */}
+              {/* Release Schedule + Live Drop Countdown & Remind Me */}
               <div className="p-3 rounded-xl bg-[#0d0e15] border border-white/10 space-y-2">
-                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Release Schedule</span>
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Release Schedule</span>
+                  </span>
+                  {(drama.schedule || hasActiveTrackSchedules) && (
+                    <button
+                      type="button"
+                      onClick={handleToggleReminder}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black border flex items-center gap-1 cursor-pointer transition-all ${
+                        isReminded
+                          ? 'bg-amber-400 text-black border-amber-200'
+                          : 'bg-white/[0.06] hover:bg-white/[0.12] text-amber-200 border-amber-400/30'
+                      }`}
+                    >
+                      <Bell className={`w-3 h-3 ${isReminded ? 'fill-current' : ''}`} />
+                      <span>{isReminded ? 'Reminded' : 'Remind Me'}</span>
+                    </button>
+                  )}
+                </div>
+                {(() => {
+                  const schedText = drama.activeTrackSchedules?.[0]?.scheduleText || drama.schedule;
+                  const nextDrop = getNextEpisodeDropDate(schedText, new Date(countdownTickMs));
+                  const countdown = formatDropCountdown(nextDrop, countdownTickMs);
+                  if (!countdown) return null;
+                  return (
+                    <div className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-[11px] font-black text-amber-200 tabular-nums">
+                      ⏳ Next Ep in {countdown.formatted}
+                    </div>
+                  );
+                })()}
                 {hasActiveTrackSchedules && drama.activeTrackSchedules ? (
                   <div className="space-y-1.5">
                     {drama.activeTrackSchedules.map((track) => (
@@ -5226,20 +6348,25 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Lead Cast */}
+              {/* Interactive Lead Cast Hub */}
               {((drama.leadCast && drama.leadCast.length > 0) || (drama.cast && drama.cast.length > 0)) && (
                 <div className="p-4 rounded-xl bg-[#0d0e15] border border-white/10 space-y-2">
-                  <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Lead Cast</h4>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Lead Cast</h4>
+                    <span className="text-[10px] text-zinc-500 font-semibold">Tap actor for bio &amp; shows</span>
+                  </div>
                   <div className="flex flex-wrap gap-2 text-xs text-zinc-200">
                     {Array.from(
                       new Set(drama.leadCast && drama.leadCast.length > 0 ? drama.leadCast : drama.cast)
                     ).map((actor, idx) => (
-                      <span
+                      <button
                         key={`mob-cast-${actor}-${idx}`}
-                        className="px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] font-bold"
+                        type="button"
+                        onClick={() => handleOpenActorHub(actor)}
+                        className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-[#e50914]/25 border border-white/[0.12] hover:border-red-400/50 font-bold cursor-pointer transition-all"
                       >
                         🎭 {actor}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -5280,21 +6407,54 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
 
   return (
     <div
+      style={
+        isMiniPlayer
+          ? { transform: `translate3d(${miniPlayerOffset.x}px, ${miniPlayerOffset.y}px, 0)` }
+          : undefined
+      }
       className={
         isMiniPlayer
-          ? 'fixed bottom-6 right-6 z-[65] w-[350px] sm:w-[410px] rounded-2xl border-2 border-[#e50914] bg-[#0a0b10] shadow-[0_20px_60px_rgba(0,0,0,0.95)] overflow-hidden text-white'
+          ? 'fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-[65] w-60 sm:w-72 rounded-2xl border-2 border-[#e50914] bg-[#0a0b10] shadow-[0_20px_60px_rgba(0,0,0,0.95)] overflow-hidden text-white touch-none'
           : `relative w-full min-w-full min-h-screen text-white flex flex-col animate-fade-in transition-colors duration-300 ${
               isLightsOff && isPlayerActive ? 'bg-black' : 'bg-[#050508]'
             }`
       }
     >
-      {/* Mini-Player Compact Header Bar */}
+      {/* Draggable Mini-Player Compact Header Bar */}
       {isMiniPlayer && (
-        <div className="px-3 py-2 bg-[#11131e] border-b border-white/10 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-[#e50914] animate-pulse shrink-0" />
-            <span className="text-xs font-black text-white truncate">
-              {drama.title} • {isMovie ? 'Movie' : `Ep ${activeStreamEp ?? 1}`}
+        <div
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            miniDragRef.current = {
+              startX: e.clientX,
+              startY: e.clientY,
+              origX: miniPlayerOffset.x,
+              origY: miniPlayerOffset.y,
+            };
+          }}
+          onPointerMove={(e) => {
+            if (!miniDragRef.current) return;
+            const dx = e.clientX - miniDragRef.current.startX;
+            const dy = e.clientY - miniDragRef.current.startY;
+            setMiniPlayerOffset({
+              x: miniDragRef.current.origX + dx,
+              y: miniDragRef.current.origY + dy,
+            });
+          }}
+          onPointerUp={() => {
+            miniDragRef.current = null;
+          }}
+          onPointerCancel={() => {
+            miniDragRef.current = null;
+          }}
+          className="px-2.5 py-1.5 bg-[#11131e] border-b border-white/10 flex items-center justify-between gap-1.5 cursor-grab active:cursor-grabbing select-none"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <GripHorizontal className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#e50914] animate-pulse shrink-0" />
+            <span className="text-[11px] font-black text-white truncate">
+              {drama.title} · {isMovie ? 'Movie' : `Ep ${activeStreamEp ?? 1}`}
             </span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -5306,28 +6466,27 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   if (vid.paused) vid.play().catch(() => {});
                   else vid.pause();
                 }}
-                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+                className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
                 title={isVideoPlaying ? 'Pause' : 'Play'}
               >
-                {isVideoPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+                {isVideoPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3 fill-white" />}
               </button>
             )}
             {onToggleMiniPlayer && (
               <button
                 onClick={onToggleMiniPlayer}
-                className="px-2 py-1 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-[10px] font-black cursor-pointer flex items-center gap-1"
+                className="px-1.5 py-1 rounded-lg bg-[#e50914] hover:bg-red-600 text-white text-[10px] font-black cursor-pointer flex items-center gap-0.5"
                 title="Expand Full Cinema Page"
               >
                 <Maximize2 className="w-3 h-3" />
-                <span>Expand</span>
               </button>
             )}
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-red-600 text-white cursor-pointer"
+              className="p-1 rounded-lg bg-white/10 hover:bg-red-600 text-white cursor-pointer"
               title="Close Mini-Player"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-3 h-3" />
             </button>
           </div>
         </div>
@@ -5617,7 +6776,7 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                             <span>PRIVACY SHIELD</span>
                           </span>
                           {watchPartyRoom && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-purple-500/25 border border-purple-400/50 text-purple-200 text-[10px] font-black uppercase tracking-wider shrink-0 animate-pulse">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#ff1e56]/25 border border-[#ff1e56]/50 text-pink-200 text-[10px] font-black uppercase tracking-wider shrink-0 animate-pulse">
                               <span>👯‍♂️ PARTY #{watchPartyRoom}</span>
                             </span>
                           )}
@@ -5687,6 +6846,40 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                           >
                             <RotateCw className="w-3.5 h-3.5" />
                             <span>🔄 Reload</span>
+                          </button>
+                          <button
+                            onClick={() =>
+                              currentPlayingStream &&
+                              void handleDownloadEpisode(
+                                currentPlayingStream.epNum,
+                                currentPlayingStream.streamUrl,
+                                trackCustomAudio,
+                                currentEpObj?.subtitleTracks?.[0]?.url
+                              )
+                            }
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                              offlineItems.some((it) => it.key === activeOfflineKey)
+                                ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                                : 'bg-[#141622] hover:bg-[#1e2235] border-white/15 text-zinc-100'
+                            }`}
+                            title="Cache this episode for offline playback"
+                          >
+                            {downloadProgressMap[activeOfflineKey] !== undefined ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                                <span>{downloadProgressMap[activeOfflineKey]}%</span>
+                              </>
+                            ) : offlineItems.some((it) => it.key === activeOfflineKey) ? (
+                              <>
+                                <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>✅ Offline</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                <span>Download Offline</span>
+                              </>
+                            )}
                           </button>
                           <button
                             onClick={() => setIsStudioToolsOpen((prev) => !prev)}
@@ -6255,17 +7448,45 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                   : 'bg-white/[0.03] border-white/[0.06]'
               }`}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-amber-400" />
                   <span>Release Schedule</span>
                 </span>
-                {isDroppingToday && (
-                  <span className="bg-gradient-to-r from-emerald-400 to-amber-400 text-black text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow animate-pulse">
-                    🔥 New Episode Drops Today!
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {isDroppingToday && (
+                    <span className="bg-gradient-to-r from-emerald-400 to-amber-400 text-black text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow animate-pulse">
+                      🔥 New Episode Drops Today!
+                    </span>
+                  )}
+                  {(drama.schedule || hasActiveTrackSchedules) && (
+                    <button
+                      type="button"
+                      onClick={handleToggleReminder}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black border flex items-center gap-1 cursor-pointer transition-all ${
+                        isReminded
+                          ? 'bg-amber-400 text-black border-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.45)]'
+                          : 'bg-white/[0.06] hover:bg-white/[0.12] text-amber-200 border-amber-400/35'
+                      }`}
+                    >
+                      <Bell className={`w-3 h-3 ${isReminded ? 'fill-current' : ''}`} />
+                      <span>{isReminded ? 'Reminded' : 'Remind Me'}</span>
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {(() => {
+                const schedText = drama.activeTrackSchedules?.[0]?.scheduleText || drama.schedule;
+                const nextDrop = getNextEpisodeDropDate(schedText, new Date(countdownTickMs));
+                const countdown = formatDropCountdown(nextDrop, countdownTickMs);
+                if (!countdown) return null;
+                return (
+                  <div className="px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-xs font-black text-amber-200 tabular-nums">
+                    ⏳ Next Ep in {countdown.formatted}
+                  </div>
+                );
+              })()}
 
               {hasActiveTrackSchedules && drama.activeTrackSchedules ? (
                 <div className="space-y-1.5">
@@ -6330,20 +7551,25 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Lead Cast Section */}
+          {/* Interactive Lead Cast Hub Section */}
           {(drama.leadCast && drama.leadCast.length > 0) || (drama.cast && drama.cast.length > 0) ? (
             <div>
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">Lead Cast</h4>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Lead Cast</h4>
+                <span className="text-[10px] text-zinc-500 font-semibold">Click any actor to view profile &amp; filmography</span>
+              </div>
               <div className="flex flex-wrap gap-2 text-xs text-zinc-200">
                 {Array.from(new Set(drama.leadCast && drama.leadCast.length > 0 ? drama.leadCast : drama.cast)).map(
                   (actor, idx) => (
-                    <span
+                    <button
                       key={`cast-${actor}-${idx}`}
-                      className="px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] font-bold flex items-center gap-1.5"
+                      type="button"
+                      onClick={() => handleOpenActorHub(actor)}
+                      className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-[#e50914]/25 border border-white/[0.12] hover:border-red-400/50 font-bold flex items-center gap-1.5 cursor-pointer transition-all"
                     >
                       <span>🎭</span>
                       <span>{actor}</span>
-                    </span>
+                    </button>
                   )
                 )}
               </div>
@@ -6510,6 +7736,55 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0 ml-auto">
+                          {(() => {
+                            const epVaultKey = makeOfflineVaultKey(drama.id, numericEp, activeAudio);
+                            const isSavedOffline = offlineItems.some((it) => it.key === epVaultKey);
+                            const dlPct = downloadProgressMap[epVaultKey];
+                            const epAudioLink =
+                              activeAudio === 'Hindi Dubbed'
+                                ? ep.hindiCustomAudioLink
+                                : activeAudio.includes('Fan')
+                                ? ep.fanDubCustomAudioLink
+                                : ep.origCustomAudioLink;
+                            if (!hasStreamLink || !streamUrl) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDownloadEpisode(
+                                    numericEp,
+                                    streamUrl,
+                                    epAudioLink,
+                                    ep.subtitleTracks?.[0]?.url
+                                  );
+                                }}
+                                className={`px-2.5 py-2 rounded-lg text-xs font-extrabold border transition-all flex items-center gap-1 cursor-pointer ${
+                                  isSavedOffline
+                                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                                    : 'bg-white/[0.05] hover:bg-white/[0.12] border-white/15 text-zinc-200'
+                                }`}
+                                title={isSavedOffline ? 'Saved in Offline Vault' : 'Download for Offline Playback'}
+                              >
+                                {dlPct !== undefined ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                                    <span>{dlPct}%</span>
+                                  </>
+                                ) : isSavedOffline ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Offline</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="w-3.5 h-3.5 text-sky-400" />
+                                    <span>Save</span>
+                                  </>
+                                )}
+                              </button>
+                            );
+                          })()}
                           {hasStreamLink && hasTelegramLink ? (
                             <>
                               <button
@@ -6758,6 +8033,126 @@ export const DramaDetailModal: React.FC<DramaDetailModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Interactive Actor & Cast Wikipedia Profile Drawer / Modal */}
+      {activeActorModal && (
+        <div
+          onClick={() => setActiveActorModal(null)}
+          className="fixed inset-0 z-[95] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${activeActorModal.name} Profile`}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-lg max-h-[85vh] bg-[#10121c] border border-white/15 rounded-t-3xl sm:rounded-3xl shadow-[0_25px_80px_rgba(0,0,0,0.95)] overflow-hidden flex flex-col"
+          >
+            <div className="px-4 py-3.5 bg-[#151826] border-b border-white/10 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg">🎭</span>
+                <h3 className="text-sm sm:text-base font-black text-white truncate">
+                  {activeActorModal.profile?.name || activeActorModal.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveActorModal(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-[#e50914] text-white flex items-center justify-center cursor-pointer"
+                aria-label="Close Actor Hub"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
+              {activeActorModal.loading ? (
+                <div className="py-10 flex flex-col items-center justify-center gap-2 text-zinc-400">
+                  <Loader2 className="w-7 h-7 animate-spin text-[#e50914]" />
+                  <p className="text-xs font-bold">Loading actor profile...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-start gap-3.5">
+                    {activeActorModal.profile?.photoUrl ? (
+                      <img
+                        src={activeActorModal.profile.photoUrl}
+                        alt={activeActorModal.name}
+                        referrerPolicy="no-referrer"
+                        className="w-20 h-24 rounded-2xl object-cover border border-white/15 shrink-0 bg-zinc-900"
+                      />
+                    ) : (
+                      <div className="w-20 h-24 rounded-2xl bg-gradient-to-br from-[#e50914] to-rose-700 text-white font-black text-2xl flex items-center justify-center shrink-0 border border-white/15">
+                        {activeActorModal.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <p className="text-xs text-zinc-300 leading-relaxed line-clamp-5">
+                        {activeActorModal.profile?.bio}
+                      </p>
+                      {activeActorModal.profile?.wikiUrl && (
+                        <a
+                          href={activeActorModal.profile.wikiUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-400 hover:underline"
+                        >
+                          Read full biography ↗
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const needle = activeActorModal.name.trim().toLowerCase();
+                    const matches = allDramas.filter((d) => {
+                      const pool = [
+                        ...(d.leadCast || []),
+                        ...(d.cast || []),
+                      ].map((c) => c.toLowerCase());
+                      return pool.some((c) => c.includes(needle) || needle.includes(c));
+                    });
+                    if (matches.length === 0) return null;
+                    return (
+                      <div className="space-y-2 pt-2 border-t border-white/10">
+                        <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">
+                          Streaming on AsiaFlix ({matches.length})
+                        </h4>
+                        <div className="space-y-2">
+                          {matches.map((m) => (
+                            <button
+                              key={`actor-show-${m.id}`}
+                              type="button"
+                              onClick={() => {
+                                setActiveActorModal(null);
+                                onSelectDrama?.(m);
+                              }}
+                              className="w-full p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.1] border border-white/10 flex items-center gap-3 text-left cursor-pointer transition-colors"
+                            >
+                              <img
+                                src={m.poster}
+                                alt={m.title}
+                                referrerPolicy="no-referrer"
+                                className="w-11 h-15 rounded-lg object-cover shrink-0 bg-zinc-900"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs sm:text-sm font-black text-white truncate">{m.title}</p>
+                                <p className="text-[11px] text-zinc-400 font-semibold truncate">
+                                  {m.category} · ⭐ {m.rating}
+                                </p>
+                              </div>
+                              <Play className="w-4 h-4 text-[#e50914] fill-current shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

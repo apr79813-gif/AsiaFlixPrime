@@ -1,5 +1,5 @@
-import React from 'react';
-import { Search, X, Calendar, Filter } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, X, Calendar, Filter, Mic } from 'lucide-react';
 import { MoodFilterType } from '../types/drama';
 
 interface FilterBarProps {
@@ -47,6 +47,45 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 }) => {
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: currentYear - 2000 + 1 }).map((_, i) => currentYear - i);
+  const [isListening, setIsListening] = useState(false);
+
+  const handleVoiceSearch = () => {
+    if (typeof window === 'undefined') return;
+    type SpeechRecCtor = new () => {
+      lang: string;
+      interimResults: boolean;
+      maxAlternatives: number;
+      onstart: (() => void) | null;
+      onend: (() => void) | null;
+      onerror: (() => void) | null;
+      onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+      start: () => void;
+    };
+    const win = window as unknown as {
+      SpeechRecognition?: SpeechRecCtor;
+      webkitSpeechRecognition?: SpeechRecCtor;
+    };
+    const Recognition = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!Recognition) return;
+    try {
+      const rec = new Recognition();
+      rec.lang = 'en-IN';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onstart = () => setIsListening(true);
+      rec.onend = () => setIsListening(false);
+      rec.onerror = () => setIsListening(false);
+      rec.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript;
+        if (transcript) {
+          onSearchChange(transcript.trim());
+        }
+      };
+      rec.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
 
   const audioBtnPad = isPhoneDevice ? 'px-4 py-2 text-sm font-black' : 'px-3 py-1.5 text-xs font-bold';
   const catBtnPad = isPhoneDevice ? 'px-4 py-2 text-sm font-black rounded-xl' : 'px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-lg';
@@ -61,19 +100,40 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by drama title, actor, or tag (e.g. Rain or Shine, Lee Jun-ho, Hanuman)..."
+            placeholder={
+              isListening
+                ? 'Listening... Speak drama or actor name (English / Hindi)...'
+                : 'Search by drama title, actor, or tag (e.g. Rain or Shine, Lee Jun-ho)...'
+            }
             className={`w-full bg-white/[0.04] hover:bg-white/[0.06] focus:bg-white/[0.08] border border-white/10 focus:border-[#e50914] rounded-2xl text-white placeholder-zinc-500 outline-none transition-all shadow-inner focus:ring-2 focus:ring-[#e50914]/30 ${
-              isPhoneDevice ? 'pl-13 pr-12 py-4 text-base font-medium' : 'pl-12 pr-10 py-3 sm:py-3.5 text-xs sm:text-sm'
+              isPhoneDevice ? 'pl-13 pr-22 py-4 text-base font-medium' : 'pl-12 pr-20 py-3 sm:py-3.5 text-xs sm:text-sm'
             }`}
           />
-          {searchQuery && (
+          <div className="absolute right-3 flex items-center gap-1">
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className="p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                aria-label="Clear search"
+              >
+                <X className={isPhoneDevice ? 'w-5 h-5' : 'w-4 h-4'} />
+              </button>
+            )}
             <button
-              onClick={() => onSearchChange('')}
-              className="absolute right-3.5 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+              type="button"
+              onClick={handleVoiceSearch}
+              title="1-Tap Voice Search (Hindi / English)"
+              aria-label="Voice Search"
+              className={`p-2 rounded-xl transition-all cursor-pointer ${
+                isListening
+                  ? 'bg-[#e50914] text-white animate-pulse shadow-[0_0_16px_rgba(229,9,20,0.8)]'
+                  : 'bg-white/[0.07] hover:bg-[#e50914] text-zinc-300 hover:text-white'
+              }`}
             >
-              <X className={isPhoneDevice ? 'w-5 h-5' : 'w-4 h-4'} />
+              <Mic className={isPhoneDevice ? 'w-5 h-5' : 'w-4 h-4'} />
             </button>
-          )}
+          </div>
         </div>
       </div>
 

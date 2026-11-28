@@ -50,7 +50,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             activeAppTab === 'clips' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Clapperboard className={`w-5 h-5 ${activeAppTab === 'clips' ? 'text-[#ff2a85]' : ''}`} />
+          <Clapperboard className={`w-5 h-5 ${activeAppTab === 'clips' ? 'text-[#ff1e56]' : ''}`} />
           <span className="text-[10px] font-bold tracking-tight">Clips</span>
         </button>
 
@@ -90,12 +90,14 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             activeAppTab === 'profile' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          {vipAvatar ? (
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs border ${
-              activeAppTab === 'profile' ? 'border-[#e50914] bg-[#e50914]/20' : 'border-white/25 bg-white/10'
-            }`}>
-              {vipAvatar}
-            </span>
+          {vipAvatar && (vipAvatar.startsWith('data:image') || vipAvatar.startsWith('http')) ? (
+            <img
+              src={vipAvatar}
+              alt="Profile"
+              className={`w-5 h-5 rounded-full object-cover border ${
+                activeAppTab === 'profile' ? 'border-[#e50914]' : 'border-white/30'
+              }`}
+            />
           ) : (
             <User className={`w-5 h-5 ${activeAppTab === 'profile' ? 'text-[#e50914]' : ''}`} />
           )}

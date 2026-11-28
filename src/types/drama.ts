@@ -60,6 +60,7 @@ export interface ClipItem {
   thumbnailUrl?: string;
   startTime?: number;
   endTime?: number;
+  scenes?: Array<{ start: number; duration: number; hook?: string }>;
   audio?: AudioType;
   sourceType: 'sheet' | 'auto';
   category: DramaCategory;
@@ -72,10 +73,12 @@ export interface VipProfile {
   id: string;
   name: string;
   contact: string;
+  pinOrPassword?: string;
   avatar: string;
   defaultAudio: AudioType;
   preferredSubLang?: string;
   autoPlayNext?: boolean;
+  autoSkipIntro?: boolean;
   dataSaverDefault?: boolean;
   createdAt: number;
   updatedAt: number;

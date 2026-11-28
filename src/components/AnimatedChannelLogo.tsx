@@ -4,13 +4,90 @@ export const OFFICIAL_WATERMARK_LOGO_URL = '/logo-watermark.png';
 export const FALLBACK_RAW_LOGO_URL =
   'https://raw.githubusercontent.com/apr79813-gif/asiaflix-bot/main/logo.png';
 
+export const CLEAN_LOGO_STORAGE_KEY = 'asiaflix_clean_logo_v2';
+
 const transparentLogoCache = new Map<string, string>();
 const transparentLogoInflight = new Map<string, Promise<string>>();
+let dynamicManifestBlobUrl: string | null = null;
+let hasSyncedDynamicIcons = false;
 
-export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
+function syncHeadIconsAndManifest(pngDataUrl: string) {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !pngDataUrl.startsWith('data:image/png')) {
+    return;
+  }
+  if (hasSyncedDynamicIcons && (window as unknown as { __ASIAFLIX_SYNCED_ICON_URL__?: string }).__ASIAFLIX_SYNCED_ICON_URL__ === pngDataUrl) {
+    return;
+  }
+  hasSyncedDynamicIcons = true;
+  (window as unknown as { __ASIAFLIX_SYNCED_ICON_URL__?: string }).__ASIAFLIX_SYNCED_ICON_URL__ = pngDataUrl;
+
+  try {
+    document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]').forEach((el) => {
+      (el as HTMLLinkElement).href = pngDataUrl;
+    });
+    const appleIcon = document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null;
+    if (appleIcon) {
+      appleIcon.href = pngDataUrl;
+    }
+
+    const manifestLink = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+    if (manifestLink) {
+      const origin = window.location.origin;
+      const manifestPayload = {
+        id: '/',
+        name: 'AsiaFlix Prime',
+        short_name: 'AsiaFlix',
+        description: 'Stream Asian Dramas & Movies in Clean Hindi Audio & 1080p HD.',
+        start_url: `${origin}/`,
+        scope: `${origin}/`,
+        display: 'standalone',
+        orientation: 'portrait',
+        background_color: '#000000',
+        theme_color: '#000000',
+        icons: [
+          { src: pngDataUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: pngDataUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: pngDataUrl, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      };
+      if (dynamicManifestBlobUrl) {
+        try {
+          URL.revokeObjectURL(dynamicManifestBlobUrl);
+        } catch {}
+      }
+      const blob = new Blob([JSON.stringify(manifestPayload)], { type: 'application/manifest+json' });
+      dynamicManifestBlobUrl = URL.createObjectURL(blob);
+      manifestLink.href = dynamicManifestBlobUrl;
+    }
+  } catch {
+    // Ignore head update errors in restricted environments
+  }
+}
+
+export async function getTransparentLogoDataUrl(rawUrl?: string): Promise<string> {
   const candidate = (rawUrl || '').trim() || OFFICIAL_WATERMARK_LOGO_URL;
+  const isDefaultLogo = candidate === OFFICIAL_WATERMARK_LOGO_URL || !rawUrl;
+
   const cached = transparentLogoCache.get(candidate);
-  if (cached) return cached;
+  if (cached) {
+    if (isDefaultLogo) syncHeadIconsAndManifest(cached);
+    return cached;
+  }
+
+  if (isDefaultLogo && typeof window !== 'undefined') {
+    try {
+      const lsCached = localStorage.getItem(CLEAN_LOGO_STORAGE_KEY);
+      if (lsCached && lsCached.startsWith('data:image/png')) {
+        transparentLogoCache.set(candidate, lsCached);
+        (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__ = lsCached;
+        syncHeadIconsAndManifest(lsCached);
+        return lsCached;
+      }
+    } catch {
+      // ignore localStorage read issues
+    }
+  }
+
   const inflight = transparentLogoInflight.get(candidate);
   if (inflight) return inflight;
 
@@ -44,17 +121,23 @@ export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
             const g = data[i + 1];
             const b = data[i + 2];
             const maxChannel = Math.max(r, g, b);
-            if (maxChannel < 45) {
+            if (maxChannel < 55) {
               data[i + 3] = 0;
-            } else if (maxChannel < 75) {
-              data[i + 3] = Math.round(((maxChannel - 45) / 30) * data[i + 3]);
+            } else if (maxChannel < 85) {
+              data[i + 3] = Math.round(((maxChannel - 55) / 30) * 255);
             }
           }
           ctx.putImageData(imageData, 0, 0);
           const pngUrl = canvas.toDataURL('image/png');
           transparentLogoCache.set(candidate, pngUrl);
-          if (candidate === OFFICIAL_WATERMARK_LOGO_URL || !rawUrl) {
+          if (isDefaultLogo) {
             (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__ = pngUrl;
+            try {
+              localStorage.setItem(CLEAN_LOGO_STORAGE_KEY, pngUrl);
+            } catch {
+              // ignore storage quota
+            }
+            syncHeadIconsAndManifest(pngUrl);
           }
           resolve(pngUrl);
         } catch {
@@ -88,6 +171,8 @@ export async function getTransparentLogoUrl(rawUrl?: string): Promise<string> {
   return task;
 }
 
+export const getTransparentLogoUrl = getTransparentLogoDataUrl;
+
 export function useTransparentLogo(rawUrl?: string): string {
   const target = (rawUrl || '').trim() || OFFICIAL_WATERMARK_LOGO_URL;
   const getInitial = () => {
@@ -99,6 +184,10 @@ export function useTransparentLogo(rawUrl?: string): string {
     ) {
       const globalCached = (window as unknown as { __ASIAFLIX_TRANSPARENT_LOGO__?: string }).__ASIAFLIX_TRANSPARENT_LOGO__;
       if (globalCached) return globalCached;
+      try {
+        const lsCached = localStorage.getItem(CLEAN_LOGO_STORAGE_KEY);
+        if (lsCached && lsCached.startsWith('data:image/png')) return lsCached;
+      } catch {}
     }
     return target;
   };
@@ -112,7 +201,7 @@ export function useTransparentLogo(rawUrl?: string): string {
       return;
     }
     setResolved(getInitial());
-    void getTransparentLogoUrl(target).then((png) => {
+    void getTransparentLogoDataUrl(target).then((png) => {
       if (!cancelled) setResolved(png);
     });
     return () => {

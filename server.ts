@@ -523,7 +523,39 @@ function injectWatchOgMeta(
 
 async function startServer(): Promise<void> {
   const app = express();
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '128kb' }));
+
+  // 0. Server-side Subtitle / Caption Translation Proxy (/api/translate)
+  app.post('/api/translate', async (req: Request, res: Response) => {
+    try {
+      const body = req.body || {};
+      const text = typeof body.text === 'string' ? body.text : '';
+      const targetLang = typeof body.targetLang === 'string' ? body.targetLang.trim() : '';
+      if (!text || !targetLang) {
+        res.status(400).json({ error: 'Missing text or targetLang' });
+        return;
+      }
+      const endpoint = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(
+        targetLang
+      )}&dt=t&q=${encodeURIComponent(text.slice(0, 4500))}`;
+      const resp = await fetch(endpoint, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        },
+      });
+      if (!resp.ok) {
+        res.status(502).json({ error: `Translate upstream ${resp.status}` });
+        return;
+      }
+      const data = (await resp.json()) as unknown[];
+      const sentences = Array.isArray(data?.[0]) ? (data[0] as unknown[][]) : [];
+      const translatedText = sentences.map((s) => (typeof s?.[0] === 'string' ? s[0] : '')).join('');
+      res.json({ ok: true, translatedText });
+    } catch {
+      res.status(500).json({ error: 'Translate proxy failed' });
+    }
+  });
 
   // 1. Keyless Neural TTS endpoint (Microsoft Edge Neural TTS + Google GTX fallback)
   app.post('/api/tts', async (req: Request, res: Response) => {

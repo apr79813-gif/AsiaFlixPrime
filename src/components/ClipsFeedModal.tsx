@@ -3,8 +3,6 @@ import Hls from 'hls.js';
 import {
   Bookmark,
   Check,
-  ChevronDown,
-  ChevronUp,
   Clapperboard,
   Flame,
   Heart,
@@ -19,7 +17,6 @@ import {
 import { AudioType, ClipItem, DramaItem } from '../types/drama';
 import {
   buildProxiedMediaUrl,
-  formatTimeSeconds,
   getCachedArchiveOrgDirectStream,
   getCachedOkRuOrVkNativeStream,
   resolveArchiveOrgDirectStream,
@@ -59,7 +56,10 @@ export function getLikedClipsList(): StoredLikedClip[] {
   }
 }
 
-export function toggleClipLikeStorage(clip: ClipItem, forceLike = false): { liked: boolean; list: StoredLikedClip[] } {
+export function toggleClipLikeStorage(
+  clip: ClipItem,
+  forceLike = false
+): { liked: boolean; list: StoredLikedClip[] } {
   const current = getLikedClipsList();
   const exists = current.some((c) => c.id === clip.id);
   let next: StoredLikedClip[];
@@ -102,14 +102,69 @@ function hashCountSeed(seedStr: string, min: number, span: number): number {
     h ^= seedStr.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return min + (Math.abs(h) % span);
+  return min + (Math.abs(h) % Math.max(1, span));
 }
 
-const AUTO_CLIP_SEGMENTS: Array<{ label: string; startTime: number; endTime: number }> = [
-  { label: '🔥 Opening Hook', startTime: 150, endTime: 190 },
-  { label: '⚡ Intense Scene', startTime: 660, endTime: 700 },
-  { label: '💖 Peak Drama Moment', startTime: 1320, endTime: 1360 },
-  { label: '🎬 Climax Highlight', startTime: 1980, endTime: 2020 },
+function formatSocialCount(
+  seedStr: string,
+  kind: 'like' | 'fire',
+  dramaRating: number,
+  delta = 0
+): string {
+  const r = Number.isFinite(dramaRating) && dramaRating > 0 ? dramaRating : 8.5;
+  let val = 0;
+  if (r >= 9.2) {
+    const min = kind === 'like' ? 1_200_000 : 1_000_000;
+    const max = kind === 'like' ? 30_000_000 : 18_000_000;
+    val = hashCountSeed(seedStr, min, max - min) + delta;
+  } else if (r >= 8.6) {
+    const min = kind === 'like' ? 28_000 : 10_000;
+    const max = kind === 'like' ? 850_000 : 420_000;
+    val = hashCountSeed(seedStr, min, max - min) + delta;
+  } else if (r >= 8.0) {
+    const min = kind === 'like' ? 1_400 : 1_000;
+    const max = kind === 'like' ? 9_200 : 6_800;
+    val = hashCountSeed(seedStr, min, max - min) + delta;
+  } else {
+    const min = kind === 'like' ? 180 : 100;
+    const max = kind === 'like' ? 900 : 720;
+    val = hashCountSeed(seedStr, min, max - min) + delta;
+  }
+
+  if (val >= 1_000_000) {
+    const m = val / 1_000_000;
+    return `${m >= 10 ? m.toFixed(0) : m.toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (val >= 10_000) {
+    const k = val / 1_000;
+    return `${k >= 100 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  if (val >= 1_000) {
+    if (r >= 8.0 && r < 8.6 && val >= 2_500) {
+      return `${(val / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+    }
+    return val.toLocaleString();
+  }
+  return String(val);
+}
+
+const REEL_SESSION_SEED = Math.floor(Math.random() * 0x7fffffff) || 133742;
+
+function createSeededRng(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const CLIP_WINDOW_SEGMENTS = [
+  { start: 135, label: 'Opening Scene' },
+  { start: 465, label: 'Plot Twist' },
+  { start: 890, label: 'Highlight Cut' },
+  { start: 1340, label: 'Climax Scene' },
 ];
 
 export function buildAllDramaClips(
@@ -124,13 +179,16 @@ export function buildAllDramaClips(
 
     if (Array.isArray(drama.clips) && drama.clips.length > 0) {
       drama.clips.forEach((c) => {
-        sheetClips.push(c);
+        sheetClips.push({
+          ...c,
+          thumbnailUrl: c.poster || drama.poster,
+        });
       });
     }
 
     const eps = Array.isArray(drama.episodes) ? drama.episodes : [];
     eps.forEach((ep, epIdx) => {
-      if (epIdx > 5) return; // Cap auto-generation per series at first 6 playable eps for fast scroll variety
+      if (epIdx > 5) return;
       const epNum =
         typeof ep.episodeNumber === 'number'
           ? ep.episodeNumber
@@ -142,7 +200,6 @@ export function buildAllDramaClips(
         { audio: 'Original / Eng Sub', url: ep.engSubStreamLink, extAudio: ep.origCustomAudioLink },
       ];
 
-      // Pick track prioritizing preferredAudio first, then any available stream
       const sortedCandidates = [...candidates].sort((a, b) => {
         if (preferredAudio) {
           if (a.audio === preferredAudio && b.audio !== preferredAudio) return -1;
@@ -154,7 +211,8 @@ export function buildAllDramaClips(
       const chosen = sortedCandidates.find((c) => c.url && /^https?:\/\//i.test(c.url.trim()));
       if (!chosen || !chosen.url) return;
 
-      AUTO_CLIP_SEGMENTS.forEach((seg, segIdx) => {
+      CLIP_WINDOW_SEGMENTS.forEach((seg, segIdx) => {
+        const segDur = hashCountSeed(`${drama.id}-ep${epNum}-s${segIdx}-len`, 19, 30); // 19s..48s varied lengths
         bucket.push({
           id: `auto-${drama.id}-ep${epNum}-s${segIdx}`,
           dramaId: drama.id,
@@ -165,9 +223,9 @@ export function buildAllDramaClips(
           externalAudioUrl: chosen.extAudio,
           poster: drama.poster,
           backdrop: drama.backdrop || drama.poster,
-          thumbnailUrl: ep.thumbnailUrl || drama.thumbnailUrl || drama.poster,
-          startTime: seg.startTime,
-          endTime: seg.endTime,
+          thumbnailUrl: drama.poster,
+          startTime: seg.start,
+          endTime: seg.start + segDur,
           audio: chosen.audio,
           sourceType: 'auto',
           category: drama.category,
@@ -178,16 +236,20 @@ export function buildAllDramaClips(
       });
     });
 
-    // Movie fallback if no episode entries exist
-    if (bucket.length === 0 && (drama.movieStreamLink || drama.movieFanDubStreamLink || drama.movieEngSubStreamLink)) {
-      const mUrl = drama.movieStreamLink || drama.movieFanDubStreamLink || drama.movieEngSubStreamLink || '';
+    if (
+      bucket.length === 0 &&
+      (drama.movieStreamLink || drama.movieFanDubStreamLink || drama.movieEngSubStreamLink)
+    ) {
+      const mUrl =
+        drama.movieStreamLink || drama.movieFanDubStreamLink || drama.movieEngSubStreamLink || '';
       const mAudio: AudioType = drama.movieStreamLink
         ? 'Hindi Dubbed'
         : drama.movieFanDubStreamLink
         ? 'Hindi Fan Dubbed'
         : 'Original / Eng Sub';
       if (/^https?:\/\//i.test(mUrl.trim())) {
-        AUTO_CLIP_SEGMENTS.forEach((seg, segIdx) => {
+        CLIP_WINDOW_SEGMENTS.forEach((seg, segIdx) => {
+          const segDur = hashCountSeed(`${drama.id}-movie-s${segIdx}-len`, 20, 30);
           bucket.push({
             id: `auto-${drama.id}-movie-s${segIdx}`,
             dramaId: drama.id,
@@ -197,9 +259,9 @@ export function buildAllDramaClips(
             streamUrl: mUrl.trim(),
             poster: drama.poster,
             backdrop: drama.backdrop || drama.poster,
-            thumbnailUrl: drama.thumbnailUrl || drama.poster,
-            startTime: seg.startTime,
-            endTime: seg.endTime,
+            thumbnailUrl: drama.poster,
+            startTime: seg.start,
+            endTime: seg.start + segDur,
             audio: mAudio,
             sourceType: 'auto',
             category: drama.category,
@@ -216,22 +278,29 @@ export function buildAllDramaClips(
     }
   });
 
-  // Round-robin interleave buckets so user gets diverse dramas on every swipe
-  const interleavedAuto: ClipItem[] = [];
-  let round = 0;
-  let pushed = true;
-  while (pushed && interleavedAuto.length < 180) {
-    pushed = false;
-    for (const bucket of dramaBuckets) {
-      if (bucket[round]) {
-        interleavedAuto.push(bucket[round]);
-        pushed = true;
-      }
-    }
-    round++;
+  const rng = createSeededRng(REEL_SESSION_SEED + dramas.length * 31);
+  const pool: ClipItem[] = [...sheetClips, ...dramaBuckets.flatMap((bucket) => bucket)];
+
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
   }
 
-  return [...sheetClips, ...interleavedAuto];
+  const remaining = pool.slice(0, 220);
+  const ordered: ClipItem[] = [];
+  let lastDramaId = '';
+
+  while (remaining.length > 0 && ordered.length < 180) {
+    let pickIdx = remaining.findIndex((c) => c.dramaId !== lastDramaId);
+    if (pickIdx === -1) pickIdx = 0;
+    const [picked] = remaining.splice(pickIdx, 1);
+    ordered.push(picked);
+    lastDramaId = picked.dramaId;
+  }
+
+  return ordered;
 }
 
 interface ClipSlideProps {
@@ -243,6 +312,7 @@ interface ClipSlideProps {
   showFirstClipLogoReveal: boolean;
   isMuted: boolean;
   onToggleMute: () => void;
+  onUnmuteFromAutoplayNotice: () => void;
   isLiked: boolean;
   onToggleLike: (clip: ClipItem, forceLike?: boolean) => void;
   isWatchlisted: boolean;
@@ -260,6 +330,7 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
   showFirstClipLogoReveal,
   isMuted,
   onToggleMute,
+  onUnmuteFromAutoplayNotice,
   isLiked,
   onToggleLike,
   isWatchlisted,
@@ -280,7 +351,9 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
   const [isHlsStream, setIsHlsStream] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
-  const [currentTime, setCurrentTime] = useState(clip.startTime || 0);
+  const [hasVideoFrame, setHasVideoFrame] = useState(false);
+  const [autoplayMutedFallback, setAutoplayMutedFallback] = useState(false);
+  const [currentTime, setCurrentTime] = useState(clip.startTime ?? 0);
   const [duration, setDuration] = useState(0);
 
   const [extAudioSrc, setExtAudioSrc] = useState<string>('');
@@ -290,8 +363,16 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
 
   const [heartBursts, setHeartBursts] = useState<Array<{ id: number; x: number; y: number }>>([]);
   const [fireBursts, setFireBursts] = useState<number[]>([]);
-  const [fireCount, setFireCount] = useState(() => hashCountSeed(clip.id + '-fire', 48, 420));
-  const baseLikeCount = useMemo(() => hashCountSeed(clip.id + '-like', 120, 1800), [clip.id]);
+  const [fireDelta, setFireDelta] = useState(0);
+  const dramaRating = drama?.rating ?? 8.7;
+  const formattedLikes = useMemo(
+    () => formatSocialCount(`${clip.id}-like`, 'like', dramaRating, isLiked ? 1 : 0),
+    [clip.id, dramaRating, isLiked]
+  );
+  const formattedFires = useMemo(
+    () => formatSocialCount(`${clip.id}-fire`, 'fire', dramaRating, fireDelta),
+    [clip.id, dramaRating, fireDelta]
+  );
   const [showSynopsis, setShowSynopsis] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [tapFeedbackIcon, setTapFeedbackIcon] = useState<'play' | 'pause' | null>(null);
@@ -304,6 +385,8 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
     if (!isNearActive) return;
     let cancelled = false;
     hasSeekedStartRef.current = false;
+    setHasVideoFrame(false);
+    setIsBuffering(true);
 
     const resolveStream = async () => {
       const meta = resolveUniversalVideoSource(clip.streamUrl, 0);
@@ -326,6 +409,7 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
           } else {
             setResolvedType('iframe');
             setResolvedSrc(`https://archive.org/embed/${meta.asyncProvider.id}`);
+            setIsBuffering(false);
           }
         }
         return;
@@ -361,9 +445,10 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
             setResolvedType('iframe');
             setResolvedSrc(
               meta.asyncProvider.provider === 'okru'
-                ? `https://ok.ru/videoembed/${meta.asyncProvider.id}`
+                ? `https://ok.ru/videoembed/${meta.asyncProvider.id}?autoplay=1`
                 : meta.asyncProvider.rawUrl
             );
+            setIsBuffering(false);
           }
         }
         return;
@@ -373,6 +458,7 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
         setResolvedType(meta.type);
         setResolvedSrc(meta.src);
         setIsHlsStream(/\.m3u8(\?|$)/i.test(meta.src));
+        if (meta.type === 'iframe') setIsBuffering(false);
       }
     };
 
@@ -424,8 +510,14 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
       hlsRef.current = hls;
       hls.loadSource(resolvedSrc);
       hls.attachMedia(vid);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (isActive && !isPaused) {
+          vid.play().catch(() => {});
+        }
+      });
     } else {
       vid.src = resolvedSrc;
+      vid.load();
     }
 
     return () => {
@@ -463,16 +555,48 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
     };
   }, [extAudioSrc, extAudioFailed]);
 
-  // Sync play/pause & mute with active state
+  const attemptVideoPlay = useCallback(
+    (vid: HTMLVideoElement, aud: HTMLVideoElement | null, useExternalAudio: boolean) => {
+      vid
+        .play()
+        .then(() => {
+          setAutoplayMutedFallback(false);
+          if (aud && useExternalAudio) {
+            if (Math.abs(aud.currentTime - vid.currentTime) > 0.45) {
+              try {
+                aud.currentTime = vid.currentTime;
+              } catch {
+                // ignore
+              }
+            }
+            aud.play().catch(() => {});
+          }
+        })
+        .catch(() => {
+          // If browser blocked unmuted autoplay, fallback immediately to muted autoplay so the video frame plays!
+          if (!vid.muted) {
+            vid.muted = true;
+            setAutoplayMutedFallback(true);
+            vid.play().catch(() => {});
+          }
+        });
+    },
+    []
+  );
+
+  // Sync play/pause & mute state cleanly
   useEffect(() => {
     const vid = videoRef.current;
     const aud = audioRef.current;
     if (!vid) return;
 
     const useExternalAudio = Boolean(extAudioSrc && !extAudioFailed && extAudioReady);
-    vid.muted = isMuted || useExternalAudio;
+    vid.muted = isMuted || useExternalAudio || autoplayMutedFallback;
+    vid.volume = useExternalAudio || isMuted || autoplayMutedFallback ? 0 : 1.0;
+
     if (aud) {
-      aud.muted = isMuted || !useExternalAudio;
+      aud.muted = isMuted || !useExternalAudio || autoplayMutedFallback;
+      aud.volume = useExternalAudio && !isMuted && !autoplayMutedFallback ? 1.0 : 0;
     }
 
     if (!isActive || isPaused) {
@@ -483,8 +607,12 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
 
     if (startOffset > 0 && !hasSeekedStartRef.current && vid.readyState >= 1) {
       try {
-        if (Math.abs(vid.currentTime - startOffset) > 1.5) {
-          vid.currentTime = startOffset;
+        const clampedStart =
+          vid.duration && vid.duration > 10 && startOffset >= vid.duration - 4
+            ? Math.max(0, startOffset % Math.max(10, vid.duration - 8))
+            : startOffset;
+        if (Math.abs(vid.currentTime - clampedStart) > 1.5) {
+          vid.currentTime = clampedStart;
         }
         hasSeekedStartRef.current = true;
       } catch {
@@ -492,33 +620,47 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
       }
     }
 
-    vid.play().catch(() => {});
-    if (aud && useExternalAudio) {
-      try {
-        if (Math.abs(aud.currentTime - vid.currentTime) > 0.45) {
-          aud.currentTime = vid.currentTime;
-        }
-        aud.play().catch(() => {});
-      } catch {
-        // ignore
-      }
+    if (resolvedSrc) {
+      attemptVideoPlay(vid, aud, useExternalAudio);
     }
-  }, [isActive, isPaused, isMuted, extAudioSrc, extAudioFailed, extAudioReady, startOffset]);
+  }, [
+    isActive,
+    isPaused,
+    isMuted,
+    autoplayMutedFallback,
+    extAudioSrc,
+    extAudioFailed,
+    extAudioReady,
+    startOffset,
+    resolvedSrc,
+    attemptVideoPlay,
+  ]);
+
+  useEffect(() => {
+    if (!isMuted) {
+      setAutoplayMutedFallback(false);
+    }
+  }, [isMuted]);
 
   const handleVideoLoadedMetadata = () => {
     const vid = videoRef.current;
     if (!vid) return;
     setDuration(vid.duration || 0);
-    if (startOffset > 0 && vid.duration > startOffset + 5 && !hasSeekedStartRef.current) {
+    if (startOffset > 0 && !hasSeekedStartRef.current) {
       try {
-        vid.currentTime = startOffset;
+        const clampedStart =
+          vid.duration > 10 && startOffset >= vid.duration - 4
+            ? Math.max(0, startOffset % Math.max(10, vid.duration - 8))
+            : startOffset;
+        vid.currentTime = clampedStart;
         hasSeekedStartRef.current = true;
       } catch {
         // ignore
       }
     }
     if (isActive && !isPaused) {
-      vid.play().catch(() => {});
+      const useExternalAudio = Boolean(extAudioSrc && !extAudioFailed && extAudioReady);
+      attemptVideoPlay(vid, audioRef.current, useExternalAudio);
     }
   };
 
@@ -528,18 +670,22 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
     const t = vid.currentTime;
     setCurrentTime(t);
 
-    if (endOffset > startOffset && t >= endOffset) {
-      try {
-        vid.currentTime = startOffset;
-        if (audioRef.current && extAudioSrc && !extAudioFailed) {
-          audioRef.current.currentTime = startOffset;
+    if (endOffset > startOffset) {
+      const durLimit = vid.duration && vid.duration > 10 ? vid.duration - 4 : endOffset;
+      const effStart = startOffset >= durLimit ? Math.max(0, startOffset % Math.max(10, durLimit)) : startOffset;
+      const effEnd = Math.min(durLimit, effStart + (endOffset - startOffset));
+      if (t >= effEnd) {
+        try {
+          vid.currentTime = effStart;
+          if (audioRef.current && extAudioSrc && !extAudioFailed) {
+            audioRef.current.currentTime = effStart;
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
       }
     }
 
-    // Keep paired external audio synced within 350ms
     const aud = audioRef.current;
     if (aud && extAudioSrc && !extAudioFailed && extAudioReady && isActive && !isPaused) {
       if (Math.abs(aud.currentTime - t) > 0.38) {
@@ -556,13 +702,17 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
   };
 
   const handleSurfaceTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (autoplayMutedFallback) {
+      setAutoplayMutedFallback(false);
+      onUnmuteFromAutoplayNotice();
+    }
+
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
     const tapX = e.clientX - rect.left;
     const tapY = e.clientY - rect.top;
 
     if (now - lastTapRef.current < 280) {
-      // Double-tap -> heart burst + force like
       if (singleTapTimerRef.current) {
         window.clearTimeout(singleTapTimerRef.current);
         singleTapTimerRef.current = null;
@@ -590,7 +740,7 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
   };
 
   const handleFireBoost = () => {
-    setFireCount((c) => c + 1);
+    setFireDelta((c) => c + 1);
     const id = Date.now() + Math.random();
     setFireBursts((prev) => [...prev, id]);
     window.setTimeout(() => {
@@ -615,12 +765,13 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
     window.setTimeout(() => setShareCopied(false), 2000);
   };
 
-  // Segment scrub math
-  const segDuration = endOffset > startOffset ? endOffset - startOffset : Math.max(duration || 40, 1);
-  const segElapsed = endOffset > startOffset
-    ? Math.max(0, Math.min(segDuration, currentTime - startOffset))
-    : Math.max(0, Math.min(segDuration, currentTime));
-  const segPct = Math.max(0, Math.min(100, (segElapsed / segDuration) * 100));
+  const segDuration =
+    endOffset > startOffset ? endOffset - startOffset : Math.max(duration || 40, 1);
+  const segElapsed =
+    endOffset > startOffset
+      ? Math.max(0, Math.min(segDuration, currentTime - startOffset))
+      : Math.max(0, Math.min(segDuration, currentTime));
+  const segPct = Math.max(0, Math.min(100, (segElapsed / Math.max(1, segDuration)) * 100));
 
   const handleScrub = (val: number) => {
     const targetTime = (endOffset > startOffset ? startOffset : 0) + (val / 100) * segDuration;
@@ -641,6 +792,11 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
     }
   };
 
+  const isSameOriginStream =
+    resolvedSrc.startsWith('/') ||
+    resolvedSrc.startsWith('blob:') ||
+    (typeof window !== 'undefined' && resolvedSrc.startsWith(window.location.origin));
+
   return (
     <section className="relative w-full h-full snap-start shrink-0 flex items-center justify-center bg-black overflow-hidden select-none">
       {/* Ambient Blurred Glow Backdrop */}
@@ -653,42 +809,63 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/65 via-black/20 to-black/90 pointer-events-none" />
 
-      {/* Centered Portrait Video Stage (Full-bleed mobile, sleek 9:16 cinema frame on desktop) */}
+      {/* Centered Portrait Video Stage */}
       <div className="relative w-full sm:w-auto sm:aspect-[9/16] h-full max-w-[500px] bg-black sm:rounded-3xl overflow-hidden sm:border sm:border-white/15 sm:shadow-[0_0_80px_rgba(229,9,20,0.28)] flex items-center justify-center">
-        {/* Video or Fallback Iframe */}
         {isNearActive && resolvedType === 'video' ? (
-          <video
-            ref={videoRef}
-            playsInline
-            loop={!(endOffset > startOffset)}
-            preload={isActive ? 'auto' : 'metadata'}
-            crossOrigin="anonymous"
-            poster={clip.thumbnailUrl || clip.backdrop || clip.poster}
-            onLoadedMetadata={handleVideoLoadedMetadata}
-            onWaiting={() => setIsBuffering(true)}
-            onCanPlay={() => setIsBuffering(false)}
-            onPlaying={() => setIsBuffering(false)}
-            onTimeUpdate={handleVideoTimeUpdate}
-            onError={() => {
-              const cur = videoRef.current?.src || '';
-              if (cur && !cur.includes('/api/okru-proxy') && /^https?:\/\//i.test(resolvedSrc)) {
-                const proxied = buildProxiedMediaUrl(resolvedSrc);
-                if (proxied !== resolvedSrc) {
-                  setResolvedSrc(proxied);
-                  return;
+          <>
+            <video
+              ref={videoRef}
+              playsInline
+              loop={!(endOffset > startOffset)}
+              preload={isActive ? 'auto' : 'metadata'}
+              crossOrigin={isSameOriginStream ? 'anonymous' : undefined}
+              onLoadedMetadata={handleVideoLoadedMetadata}
+              onLoadedData={() => {
+                setHasVideoFrame(true);
+                setIsBuffering(false);
+              }}
+              onWaiting={() => setIsBuffering(true)}
+              onCanPlay={() => {
+                setHasVideoFrame(true);
+                setIsBuffering(false);
+              }}
+              onPlaying={() => {
+                setHasVideoFrame(true);
+                setIsBuffering(false);
+              }}
+              onTimeUpdate={handleVideoTimeUpdate}
+              onError={() => {
+                const cur = videoRef.current?.src || '';
+                if (cur && !cur.includes('/api/okru-proxy') && /^https?:\/\//i.test(resolvedSrc)) {
+                  const proxied = buildProxiedMediaUrl(resolvedSrc);
+                  if (proxied !== resolvedSrc) {
+                    setResolvedSrc(proxied);
+                    return;
+                  }
                 }
-              }
-              setIsBuffering(false);
-            }}
-            className="w-full h-full object-cover"
-          />
+                setIsBuffering(false);
+              }}
+              className="w-full h-full object-cover"
+            />
+            {!hasVideoFrame && (
+              <img
+                src={clip.poster}
+                alt={clip.title}
+                referrerPolicy="no-referrer"
+                className="pointer-events-none absolute inset-0 w-full h-full object-cover z-[5]"
+              />
+            )}
+          </>
         ) : isNearActive && resolvedType === 'iframe' && resolvedSrc ? (
-          <iframe
-            src={resolvedSrc}
-            title={clip.title}
-            allow="autoplay; fullscreen; encrypted-media"
-            className="w-full h-full border-0"
-          />
+          <div className="w-full h-full overflow-hidden flex items-center justify-center bg-black">
+            <iframe
+              src={resolvedSrc}
+              title={clip.title}
+              allow="autoplay; fullscreen; encrypted-media"
+              style={{ transform: 'scale(1.24)', transformOrigin: 'center center' }}
+              className="w-full h-full border-0"
+            />
+          </div>
         ) : (
           <img
             src={clip.poster}
@@ -719,16 +896,29 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
 
         {/* Tap / Double-Tap Surface */}
         {resolvedType === 'video' && (
-          <div
-            onClick={handleSurfaceTap}
-            className="absolute inset-0 z-10 cursor-pointer"
-          />
+          <div onClick={handleSurfaceTap} className="absolute inset-0 z-10 cursor-pointer" />
+        )}
+
+        {/* Browser Autoplay Unmute Prompt Chip (only appears if OS forced muted autoplay) */}
+        {isActive && autoplayMutedFallback && !isMuted && resolvedType === 'video' && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setAutoplayMutedFallback(false);
+              onUnmuteFromAutoplayNotice();
+            }}
+            className="absolute top-16 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-[#ff1e56]/60 text-white text-[11px] font-black shadow-lg cursor-pointer"
+          >
+            <VolumeX className="w-3.5 h-3.5 text-[#ff1e56]" />
+            <span>Tap for Sound</span>
+          </button>
         )}
 
         {/* Buffering Spinner */}
         {isActive && isBuffering && resolvedType === 'video' && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-            <div className="w-11 h-11 rounded-full border-3 border-white/20 border-t-[#ff2a85] animate-spin" />
+            <div className="w-11 h-11 rounded-full border-3 border-white/20 border-t-[#ff1e56] animate-spin" />
           </div>
         )}
 
@@ -736,7 +926,11 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
         {tapFeedbackIcon && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center animate-ping">
             <div className="w-16 h-16 rounded-full bg-black/65 backdrop-blur-md border border-white/25 flex items-center justify-center text-white">
-              {tapFeedbackIcon === 'pause' ? <Pause className="w-7 h-7" /> : <Play className="w-7 h-7 fill-current ml-0.5" />}
+              {tapFeedbackIcon === 'pause' ? (
+                <Pause className="w-7 h-7" />
+              ) : (
+                <Play className="w-7 h-7 fill-current ml-0.5" />
+              )}
             </div>
           </div>
         )}
@@ -748,11 +942,11 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
             style={{ left: b.x - 42, top: b.y - 42 }}
             className="pointer-events-none absolute z-30 w-[84px] h-[84px] flex items-center justify-center animate-[afpHeartPop_0.9s_ease-out_forwards]"
           >
-            <Heart className="w-20 h-20 text-[#ff2a85] fill-[#ff2a85] drop-shadow-[0_0_26px_rgba(255,42,133,0.95)]" />
+            <Heart className="w-20 h-20 text-[#ff1e56] fill-[#ff1e56] drop-shadow-[0_0_26px_rgba(255,30,86,0.95)]" />
           </div>
         ))}
 
-        {/* First-Clip 2.8s Transparent Floating Logo Reveal (NO 8s Black-Screen Intro) */}
+        {/* First-Clip 2.8s Transparent Floating Logo Reveal */}
         {isFirstClip && showFirstClipLogoReveal && (
           <div
             aria-hidden="true"
@@ -790,41 +984,37 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
         )}
 
         {/* Bottom Scrim Gradient */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[56%] bg-gradient-to-t from-black via-black/75 to-transparent z-10" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[52%] bg-gradient-to-t from-black via-black/75 to-transparent z-10" />
 
-        {/* Right-Side Floating Vertical Glass Social Stack */}
-        <div className="absolute right-3 bottom-24 z-30 flex flex-col items-center gap-3.5">
-          {/* Like */}
+        {/* Right-Side Minimalist Reels Floating Icons */}
+        <div className="absolute right-3 bottom-16 z-30 flex flex-col items-center gap-4">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onToggleLike(clip);
             }}
-            className="flex flex-col items-center gap-1 group cursor-pointer"
+            aria-label="Like reel"
+            className="flex flex-col items-center gap-0.5 group cursor-pointer active:scale-90 transition-transform"
           >
-            <div
-              className={`w-11 h-11 rounded-full backdrop-blur-xl border flex items-center justify-center transition-all group-active:scale-90 ${
-                isLiked
-                  ? 'bg-[#ff2a85]/25 border-[#ff2a85]/70 text-[#ff2a85] shadow-[0_0_20px_rgba(255,42,133,0.5)]'
-                  : 'bg-black/45 border-white/20 text-white hover:bg-white/15'
+            <Heart
+              className={`w-6 h-6 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] transition-all ${
+                isLiked ? 'text-[#ff1e56] fill-[#ff1e56] scale-110' : 'text-white'
               }`}
-            >
-              <Heart className={`w-5 h-5 ${isLiked ? 'fill-current scale-110' : ''}`} />
-            </div>
-            <span className="text-[11px] font-black text-white drop-shadow">
-              {(baseLikeCount + (isLiked ? 1 : 0)).toLocaleString()}
+            />
+            <span className="text-[10px] font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)] tabular-nums">
+              {formattedLikes}
             </span>
           </button>
 
-          {/* Fire Hype Burst */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               handleFireBoost();
             }}
-            className="relative flex flex-col items-center gap-1 group cursor-pointer"
+            aria-label="Send fire hype"
+            className="relative flex flex-col items-center gap-0.5 group cursor-pointer active:scale-90 transition-transform"
           >
             {fireBursts.map((b) => (
               <span
@@ -834,66 +1024,70 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
                 🔥
               </span>
             ))}
-            <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-amber-500/25 backdrop-blur-xl border border-white/20 hover:border-amber-400/60 text-amber-300 flex items-center justify-center transition-all group-active:scale-90">
-              <Flame className="w-5 h-5 fill-amber-400/40" />
-            </div>
-            <span className="text-[11px] font-black text-amber-200 drop-shadow">{fireCount}</span>
+            <Flame className="w-6 h-6 text-amber-300 fill-amber-400/50 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+            <span className="text-[10px] font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)] tabular-nums">
+              {formattedFires}
+            </span>
           </button>
 
-          {/* Watchlist Toggle */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onToggleWatchlist(drama);
             }}
-            className="flex flex-col items-center gap-1 group cursor-pointer"
+            aria-label="Save drama to watchlist"
+            className="flex flex-col items-center gap-0.5 group cursor-pointer active:scale-90 transition-transform"
           >
-            <div
-              className={`w-11 h-11 rounded-full backdrop-blur-xl border flex items-center justify-center transition-all group-active:scale-90 ${
-                isWatchlisted
-                  ? 'bg-amber-500/25 border-amber-400/70 text-amber-300'
-                  : 'bg-black/45 border-white/20 text-white hover:bg-white/15'
+            <Bookmark
+              className={`w-6 h-6 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] ${
+                isWatchlisted ? 'text-amber-300 fill-amber-300' : 'text-white'
               }`}
-            >
-              <Bookmark className={`w-5 h-5 ${isWatchlisted ? 'fill-current' : ''}`} />
-            </div>
-            <span className="text-[10px] font-black text-white drop-shadow">
+            />
+            <span className="text-[10px] font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
               {isWatchlisted ? 'Saved' : 'Save'}
             </span>
           </button>
 
-          {/* Mute / Unmute */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              setAutoplayMutedFallback(false);
               onToggleMute();
             }}
-            className="flex flex-col items-center gap-1 group cursor-pointer"
+            aria-label={isMuted ? 'Unmute reel' : 'Mute reel'}
+            className="flex flex-col items-center gap-0.5 group cursor-pointer active:scale-90 transition-transform"
           >
-            <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-white/15 backdrop-blur-xl border border-white/20 text-white flex items-center justify-center transition-all">
-              {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5 text-emerald-300" />}
-            </div>
-            <span className="text-[10px] font-bold text-zinc-200">{isMuted ? 'Muted' : 'Sound'}</span>
+            {isMuted || autoplayMutedFallback ? (
+              <VolumeX className="w-6 h-6 text-red-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+            ) : (
+              <Volume2 className="w-6 h-6 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+            )}
+            <span className="text-[10px] font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
+              {isMuted || autoplayMutedFallback ? 'Muted' : 'Sound'}
+            </span>
           </button>
 
-          {/* Share */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               handleShareClip();
             }}
-            className="flex flex-col items-center gap-1 group cursor-pointer"
+            aria-label="Share reel"
+            className="flex flex-col items-center gap-0.5 group cursor-pointer active:scale-90 transition-transform"
           >
-            <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-white/15 backdrop-blur-xl border border-white/20 text-white flex items-center justify-center transition-all">
-              {shareCopied ? <Check className="w-5 h-5 text-emerald-400" /> : <Share2 className="w-5 h-5" />}
-            </div>
-            <span className="text-[10px] font-bold text-zinc-200">{shareCopied ? 'Copied' : 'Share'}</span>
+            {shareCopied ? (
+              <Check className="w-6 h-6 text-emerald-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+            ) : (
+              <Share2 className="w-6 h-6 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />
+            )}
+            <span className="text-[10px] font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
+              {shareCopied ? 'Copied' : 'Share'}
+            </span>
           </button>
 
-          {/* Rotating Drama Poster Disc */}
           <button
             type="button"
             onClick={(e) => {
@@ -901,7 +1095,7 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
               onWatchFullEpisode(clip);
             }}
             title={`Open ${clip.title}`}
-            className="w-11 h-11 rounded-full p-0.5 bg-gradient-to-tr from-[#e50914] via-[#ff2a85] to-amber-400 animate-[spin_7s_linear_infinite] cursor-pointer shadow-lg"
+            className="w-8 h-8 rounded-full p-0.5 bg-gradient-to-tr from-[#e50914] via-[#ff1e56] to-[#ff7a00] animate-[spin_7s_linear_infinite] cursor-pointer shadow-lg"
           >
             <img
               src={clip.poster}
@@ -912,30 +1106,35 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
           </button>
         </div>
 
-        {/* Bottom-Left Metadata & Full Episode CTA */}
-        <div className="absolute left-3.5 right-20 bottom-6 z-30 space-y-2.5">
+        {/* Bottom-Left Compact Reels Metadata & Inline Watch Ep Pill */}
+        <div className="absolute left-3 right-16 bottom-4 z-30 max-w-[78%] space-y-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="px-2 py-0.5 rounded-md bg-[#e50914] text-white text-[10px] font-black uppercase tracking-wider shadow">
-              {clip.category}
+            <span className="text-[11px] font-black text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]">
+              @asiaflix.prime
             </span>
-            {clip.episodeNumber && (
-              <span className="px-2 py-0.5 rounded-md bg-white/15 backdrop-blur-md text-white text-[10px] font-black border border-white/15">
-                EP {clip.episodeNumber}
-              </span>
-            )}
-            {clip.label && (
-              <span className="px-2 py-0.5 rounded-md bg-pink-500/25 border border-pink-400/40 text-pink-100 text-[10px] font-black">
-                {clip.label}
-              </span>
-            )}
             {clip.audio && (
-              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/35 text-emerald-200 text-[10px] font-extrabold">
-                {clip.audio === 'Hindi Dubbed' ? '🇮🇳 Hindi' : clip.audio === 'Hindi Fan Dubbed' ? '🎙️ Fan Dub' : '🌏 Eng Sub'}
+              <span className="px-1.5 py-0.5 rounded bg-black/55 backdrop-blur-md border border-white/15 text-emerald-200 text-[9px] font-extrabold">
+                {clip.audio === 'Hindi Dubbed'
+                  ? '🇮🇳 Hindi'
+                  : clip.audio === 'Hindi Fan Dubbed'
+                  ? '🎙️ Fan Dub'
+                  : '🌏 Eng Sub'}
               </span>
             )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onWatchFullEpisode(clip);
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] text-white text-[10px] font-black shadow-[0_2px_12px_rgba(229,9,20,0.65)] active:scale-95 transition-transform cursor-pointer"
+            >
+              <Play className="w-2.5 h-2.5 fill-current" />
+              <span>Watch Ep {clip.episodeNumber || 1}</span>
+            </button>
           </div>
 
-          <h3 className="text-lg sm:text-xl font-black text-white leading-tight drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] line-clamp-2">
+          <h3 className="text-sm sm:text-base font-black text-white leading-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)] line-clamp-1">
             {clip.title}
           </h3>
 
@@ -945,33 +1144,27 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
                 e.stopPropagation();
                 setShowSynopsis((s) => !s);
               }}
-              className={`text-xs text-zinc-200/90 leading-relaxed cursor-pointer ${
-                showSynopsis ? 'line-clamp-5 bg-black/55 p-2 rounded-xl backdrop-blur-md' : 'line-clamp-2'
+              className={`text-[11px] text-zinc-200/90 leading-snug drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] cursor-pointer ${
+                showSynopsis ? 'line-clamp-4 bg-black/60 p-1.5 rounded-lg backdrop-blur-md' : 'line-clamp-2'
               }`}
             >
               {clip.synopsis}
             </p>
           )}
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onWatchFullEpisode(clip);
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff2a85] hover:from-red-600 hover:to-pink-500 text-white text-xs sm:text-sm font-black shadow-[0_8px_28px_rgba(229,9,20,0.55)] hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
-          >
-            <Play className="w-4 h-4 fill-current" />
-            <span>Watch Full Episode Now</span>
-          </button>
         </div>
 
-        {/* Mini Scrubbable Clip Progress Bar */}
+        {/* Ultra-Thin Flush Bottom Crimson-Pink Progress Bar */}
         {resolvedType === 'video' && (
           <div
             onClick={(e) => e.stopPropagation()}
-            className="absolute inset-x-0 bottom-0 z-30 px-3 pb-1.5 pt-2 flex items-center gap-2"
+            className="absolute inset-x-0 bottom-0 z-30 h-3 flex items-end cursor-pointer group/rprog"
           >
+            <div className="relative w-full h-[2.5px] group-hover/rprog:h-1 bg-white/25 transition-all">
+              <div
+                style={{ width: `${segPct}%` }}
+                className="h-full bg-gradient-to-r from-[#e50914] via-[#ff1e56] to-[#ff7a00] shadow-[0_0_8px_rgba(255,30,86,0.85)]"
+              />
+            </div>
             <input
               type="range"
               min={0}
@@ -979,12 +1172,9 @@ const ClipSlide: React.FC<ClipSlideProps> = ({
               step={0.5}
               value={segPct}
               onChange={(e) => handleScrub(Number(e.target.value))}
-              aria-label="Scrub clip progress"
-              className="w-full h-1 accent-[#ff2a85] bg-white/25 rounded-full cursor-pointer"
+              aria-label="Scrub reel progress"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
-            <span className="text-[10px] font-mono font-bold text-white/75 shrink-0">
-              {formatTimeSeconds(segElapsed)} / {formatTimeSeconds(segDuration)}
-            </span>
           </div>
         )}
       </div>
@@ -1002,6 +1192,7 @@ interface ClipsFeedModalProps {
   preferredAudio?: AudioType;
   initialClipId?: string | null;
   customLogoUrl?: string;
+  isAdminAuthenticated?: boolean;
 }
 
 export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
@@ -1014,6 +1205,7 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
   preferredAudio,
   initialClipId,
   customLogoUrl,
+  isAdminAuthenticated = false,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const transparentLogoSrc = useTransparentLogo(customLogoUrl || OFFICIAL_WATERMARK_LOGO_URL);
@@ -1024,7 +1216,6 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
     return new Set(getLikedClipsList().map((c) => c.id));
   });
   const [showFirstClipLogoReveal, setShowFirstClipLogoReveal] = useState(true);
-  const [filterMode, setFilterMode] = useState<'all' | 'Hindi Dubbed' | 'sheet'>('all');
 
   const dramaById = useMemo(() => {
     const map = new Map<string, DramaItem>();
@@ -1032,7 +1223,7 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
     return map;
   }, [dramas]);
 
-  const allClips = useMemo(() => {
+  const visibleClips = useMemo(() => {
     const built = buildAllDramaClips(dramas, preferredAudio);
     if (initialClipId) {
       const idx = built.findIndex((c) => c.id === initialClipId);
@@ -1043,18 +1234,6 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
     }
     return built;
   }, [dramas, preferredAudio, initialClipId]);
-
-  const visibleClips = useMemo(() => {
-    if (filterMode === 'Hindi Dubbed') {
-      const hindi = allClips.filter((c) => c.audio === 'Hindi Dubbed' || c.audio === 'Hindi Fan Dubbed');
-      return hindi.length > 0 ? hindi : allClips;
-    }
-    if (filterMode === 'sheet') {
-      const sheetOnly = allClips.filter((c) => c.sourceType === 'sheet');
-      return sheetOnly.length > 0 ? sheetOnly : allClips;
-    }
-    return allClips;
-  }, [allClips, filterMode]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1070,7 +1249,21 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
     return () => window.clearTimeout(timer);
   }, [isOpen, initialClipId]);
 
-  // Escape key closes modal
+  const scrollToClipIndex = useCallback(
+    (idx: number) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const clamped = Math.max(0, Math.min(visibleClips.length - 1, idx));
+      container.scrollTo({
+        top: clamped * container.clientHeight,
+        behavior: 'smooth',
+      });
+      setActiveIndex(clamped);
+    },
+    [visibleClips.length]
+  );
+
+  // Escape & ArrowUp/ArrowDown keyboard support
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1084,18 +1277,7 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, activeIndex, visibleClips.length, onClose]);
-
-  const scrollToClipIndex = useCallback((idx: number) => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const clamped = Math.max(0, Math.min(visibleClips.length - 1, idx));
-    container.scrollTo({
-      top: clamped * container.clientHeight,
-      behavior: 'smooth',
-    });
-    setActiveIndex(clamped);
-  }, [visibleClips.length]);
+  }, [isOpen, activeIndex, visibleClips.length, onClose, scrollToClipIndex]);
 
   const handleScroll = () => {
     const container = scrollContainerRef.current;
@@ -1159,81 +1341,34 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
         }
       `}</style>
 
-      {/* Top Glass Header Bar */}
-      <div className="absolute top-0 inset-x-0 z-40 px-3.5 sm:px-6 py-3 flex items-center justify-between gap-3 bg-gradient-to-b from-black/85 via-black/45 to-transparent pointer-events-none">
+      {/* Clean Minimal Top Header Bar (No filter pills, no Reel BGM, no up/down arrows) */}
+      <div className="absolute top-0 inset-x-0 z-40 px-4 sm:px-6 py-3 flex items-center justify-between gap-2 bg-gradient-to-b from-black/80 via-black/35 to-transparent pointer-events-none">
         <div className="flex items-center gap-2 pointer-events-auto">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-xl border border-pink-400/35 text-white">
-            <Clapperboard className="w-4 h-4 text-[#ff2a85]" />
-            <span className="text-xs sm:text-sm font-black tracking-tight">Clips</span>
-            <span className="text-[10px] font-bold text-pink-300/90 ml-1">
-              {visibleClips.length > 0 ? `${activeIndex + 1}/${visibleClips.length}` : '0'}
-            </span>
-          </div>
-
-          <div className="hidden sm:flex items-center gap-1 bg-black/55 backdrop-blur-xl p-1 rounded-full border border-white/15">
-            {([
-              { id: 'all', label: 'All Clips' },
-              { id: 'Hindi Dubbed', label: '🇮🇳 Hindi' },
-              { id: 'sheet', label: '⭐ Curated' },
-            ] as const).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => {
-                  setFilterMode(tab.id);
-                  setActiveIndex(0);
-                  scrollContainerRef.current?.scrollTo({ top: 0 });
-                }}
-                className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold transition-all cursor-pointer ${
-                  filterMode === tab.id
-                    ? 'bg-[#ff2a85] text-white'
-                    : 'text-zinc-300 hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/55 backdrop-blur-xl border border-[#ff1e56]/40 text-white">
+            <Clapperboard className="w-3.5 h-3.5 text-[#ff1e56]" />
+            <span className="text-xs sm:text-sm font-black tracking-tight">🎬 Reels</span>
+            {isAdminAuthenticated && (
+              <span className="text-[10px] font-bold text-amber-300 ml-1">
+                [Admin: {visibleClips.length} Clips]
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2 pointer-events-auto">
-          {/* Desktop Up/Down Slide Buttons */}
-          <div className="hidden md:flex items-center gap-1">
-            <button
-              type="button"
-              disabled={activeIndex <= 0}
-              onClick={() => scrollToClipIndex(activeIndex - 1)}
-              className="w-9 h-9 rounded-full bg-black/60 hover:bg-white/15 disabled:opacity-30 border border-white/20 text-white flex items-center justify-center cursor-pointer"
-              title="Previous Clip"
-            >
-              <ChevronUp className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              disabled={activeIndex >= visibleClips.length - 1}
-              onClick={() => scrollToClipIndex(activeIndex + 1)}
-              className="w-9 h-9 rounded-full bg-black/60 hover:bg-white/15 disabled:opacity-30 border border-white/20 text-white flex items-center justify-center cursor-pointer"
-              title="Next Clip"
-            >
-              <ChevronDown className="w-4 h-4" />
-            </button>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-black/65 hover:bg-[#e50914] border border-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
-            aria-label="Close Clips Feed"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="pointer-events-auto w-10 h-10 rounded-full bg-black/65 hover:bg-[#e50914] border border-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+          aria-label="Close Clips Feed"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Vertical Snap-Scroll Feed */}
       {visibleClips.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-3">
-          <Sparkles className="w-10 h-10 text-[#ff2a85]" />
+          <Sparkles className="w-10 h-10 text-[#ff1e56]" />
           <h3 className="text-lg font-black text-white">No Playable Clips Ready Yet</h3>
           <p className="text-xs text-zinc-400 max-w-sm">
             Clips are automatically generated from every drama episode stream and Google Sheet Clips column.
@@ -1241,7 +1376,7 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2.5 rounded-xl bg-[#e50914] text-white text-xs font-black cursor-pointer"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#e50914] to-[#ff1e56] text-white text-xs font-black cursor-pointer"
           >
             Back to Home
           </button>
@@ -1266,6 +1401,7 @@ export const ClipsFeedModal: React.FC<ClipsFeedModalProps> = ({
                 showFirstClipLogoReveal={showFirstClipLogoReveal}
                 isMuted={isMuted}
                 onToggleMute={() => setIsMuted((m) => !m)}
+                onUnmuteFromAutoplayNotice={() => setIsMuted(false)}
                 isLiked={likedIds.has(clip.id)}
                 onToggleLike={handleToggleLike}
                 isWatchlisted={isWatchlisted(clip.dramaId)}
